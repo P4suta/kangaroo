@@ -2,6 +2,7 @@ import gleam/io
 import gleam/string
 import kangaroo_cli/app
 import kangaroo_cli/fs
+import kangaroo_cli/terminal
 
 /// The entry point of the Kangaroo CLI.
 ///
@@ -41,7 +42,7 @@ pub fn main() -> Nil {
 
 fn run_command(project_dir: String, args: List(String)) -> Result(Nil, String) {
   case args {
-    [] -> watch(project_dir, app.Tui)
+    [] -> watch(project_dir, default_mode())
     ["run"] -> {
       case app.run_once(project_dir) {
         Ok(True) -> {
@@ -58,15 +59,25 @@ fn run_command(project_dir: String, args: List(String)) -> Result(Nil, String) {
         Error(message) -> Error(message)
       }
     }
-    ["watch"] -> watch(project_dir, app.Tui)
+    ["watch"] -> watch(project_dir, default_mode())
+    ["watch", "--tui"] -> watch(project_dir, app.Tui)
     ["watch", "--no-tui"] -> watch(project_dir, app.Stream)
     ["watch", "--json"] -> watch(project_dir, app.Json)
     _ ->
       Error(
         "kangaroo: unknown command: "
         <> string.join(args, " ")
-        <> "\nkangaroo: usage: kangaroo_cli [watch [--no-tui|--json] | run | run --coverage]",
+        <> "\nkangaroo: usage: kangaroo_cli [watch [--tui|--no-tui|--json] | run | run --coverage]",
       )
+  }
+}
+
+/// The TUI is the default watch presentation when stdout is a terminal;
+/// otherwise results stream as plain text.
+fn default_mode() -> app.OutputMode {
+  case terminal.is_tty() {
+    True -> app.Tui
+    False -> app.Stream
   }
 }
 

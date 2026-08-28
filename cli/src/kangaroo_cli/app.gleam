@@ -20,6 +20,8 @@ import kangaroo_cli/graph.{
   type ModuleName, imports, module_name_of_file, module_name_string,
 }
 import kangaroo_cli/stream.{parse_events}
+import kangaroo_cli/keys
+import kangaroo_cli/terminal
 import kangaroo_cli/tui
 import kangaroo_cli/vm
 import kangaroo_cli/watcher.{type FileChange, Added, Modified, Removed, diff}
@@ -56,9 +58,16 @@ pub fn run_once(project_dir: String) -> Result(Bool, String) {
 /// whenever anything changes. The tests run once when the loop starts and
 /// then again after every change. Runs forever.
 pub fn watch(project_dir: String, mode: OutputMode) -> Nil {
+  case mode {
+    Tui -> {
+      terminal.raw_mode(True)
+      terminal.init_keyboard()
+    }
+    _ -> Nil
+  }
   // An empty previous snapshot makes the first poll treat every file as
   // added, triggering the initial run.
-  loop(project_dir, dict.new(), tui.initial(), mode)
+  loop(project_dir, dict.new(), tui.initial(), mode, tui.All)
 }
 
 fn loop(
@@ -66,27 +75,60 @@ fn loop(
   previous: Dict(String, Int),
   ui_state: tui.UiState,
   mode: OutputMode,
+  view: tui.View,
 ) -> Nil {
   fs.sleep(poll_interval_ms)
+
+  case mode {
+    Tui ->
+      case keys.action(terminal.poll_key()) {
+        keys.Quit -> {
+          terminal.raw_mode(False)
+          fs.halt(0)
+        }
+        keys.ToggleView -> {
+          let view = keys.toggle_view(view)
+          io.println(tui.render(ui_state, view))
+          loop(project_dir, previous, ui_state, mode, view)
+        }
+        keys.Rerun -> {
+          // An empty change list runs every test module.
+          let next_ui = do_run(project_dir, [], ui_state, mode, view)
+          loop(project_dir, previous, next_ui, mode, view)
+        }
+        keys.Nothing -> poll_and_run(project_dir, previous, ui_state, mode, view)
+      }
+    _ -> poll_and_run(project_dir, previous, ui_state, mode, view)
+  }
+}
+
+fn poll_and_run(
+  project_dir: String,
+  previous: Dict(String, Int),
+  ui_state: tui.UiState,
+  mode: OutputMode,
+  view: tui.View,
+) -> Nil {
   let current = result.unwrap(snapshot_sources(project_dir), previous)
   let changes = diff(previous, current)
 
   case changes {
-    [] -> loop(project_dir, current, ui_state, mode)
+    [] -> loop(project_dir, current, ui_state, mode, view)
     _ -> {
+      let changed_paths =
+        changes
+        |> list.map(fn(change) {
+          case change {
+            Added(path) -> path
+            Modified(path) -> path
+            Removed(path) -> path
+          }
+        })
+
       case mode {
         Stream -> {
           io.println("")
           changes |> list.each(print_change)
-          let changed_paths =
-            changes
-            |> list.map(fn(change) {
-              case change {
-                Added(path) -> path
-                Modified(path) -> path
-                Removed(path) -> path
-              }
-            })
           case compute_affected(project_dir, changed_paths) {
             Ok([]) -> Nil
             Ok(affected) ->
@@ -104,43 +146,45 @@ fn loop(
         _ -> Nil
       }
 
-      let changed_paths =
-        changes
-        |> list.map(fn(change) {
-          case change {
-            Added(path) -> path
-            Modified(path) -> path
-            Removed(path) -> path
-          }
-        })
-
-      let sink = case mode {
-        Tui -> event_buffer.append
-        Json -> event_buffer.append
-        Stream -> format.print_sink
-      }
-
-      let next_ui = case run_tests(project_dir, changed_paths, sink) {
-        Ok(_) ->
-          case mode {
-            Tui -> {
-              let events = event_buffer.take()
-              let next = list.fold(events, ui_state, tui.apply)
-              io.println(tui.render(next))
-              next
-            }
-            Json -> {
-              let events = event_buffer.take()
-              events
-              |> list.each(fn(event) { io.println(encode.encode(event)) })
-              ui_state
-            }
-            Stream -> ui_state
-          }
-        Error(_) -> ui_state
-      }
-      loop(project_dir, current, next_ui, mode)
+      let next_ui = do_run(project_dir, changed_paths, ui_state, mode, view)
+      loop(project_dir, current, next_ui, mode, view)
     }
+  }
+}
+
+/// Runs the tests and presents the results in the given mode. Returns the
+/// UI state to keep for the next iteration.
+fn do_run(
+  project_dir: String,
+  changed_paths: List(String),
+  ui_state: tui.UiState,
+  mode: OutputMode,
+  view: tui.View,
+) -> tui.UiState {
+  let sink = case mode {
+    Tui -> event_buffer.append
+    Json -> event_buffer.append
+    Stream -> format.print_sink
+  }
+
+  case run_tests(project_dir, changed_paths, sink) {
+    Ok(_) ->
+      case mode {
+        Tui -> {
+          let events = event_buffer.take()
+          let next = list.fold(events, ui_state, tui.apply)
+          io.println(tui.render(next, view))
+          next
+        }
+        Json -> {
+          let events = event_buffer.take()
+          events
+          |> list.each(fn(event) { io.println(encode.encode(event)) })
+          ui_state
+        }
+        Stream -> ui_state
+      }
+    Error(_) -> ui_state
   }
 }
 

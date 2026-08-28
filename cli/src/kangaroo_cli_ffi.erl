@@ -6,7 +6,8 @@
          args/0, halt/1, is_erlang/0, add_code_path/1, add_project_paths/1,
          load_module/1, call_suites/1, list_test_modules/1, cover_start/0,
          cover_compile_beams/1, cover_analyse/1, event_buffer_append/1,
-         event_buffer_take/0]).
+         event_buffer_take/0, is_tty/0, raw_mode/1, init_keyboard/0,
+         poll_key/0]).
 -include_lib("kernel/include/file.hrl").
 
 is_erlang() ->
@@ -291,6 +292,77 @@ event_buffer_take() ->
              end,
     erase(?EVENT_KEY),
     Events.
+
+%% Terminal access for the TUI.
+
+is_tty() ->
+    %% On Linux the VM's own stdout can be inspected directly; the shell
+    %% fallback covers platforms without /proc.
+    case file:read_link("/proc/self/fd/1") of
+        {ok, Target} -> is_tty_target(Target);
+        _ -> string:trim(os:cmd("test -t 1 && echo tty")) =:= "tty"
+    end.
+
+is_tty_target("/dev/tty") ->
+    true;
+is_tty_target("/dev/console") ->
+    true;
+is_tty_target(<<"/dev/pts/", _/binary>>) ->
+    true;
+is_tty_target(<<"/dev/pty/", _/binary>>) ->
+    true;
+is_tty_target(Other) when is_list(Other) ->
+    is_tty_target(unicode:characters_to_binary(Other));
+is_tty_target(_) ->
+    false.
+
+raw_mode(True) ->
+    %% Raw mode disables ISIG, so Ctrl+C arrives as a byte (0x03) that the
+    %% key reader turns into a quit, letting us restore the terminal first.
+    %% The os:cmd shell has no controlling terminal of its own, so the tty
+    %% must be addressed explicitly.
+    os:cmd("stty raw < /dev/tty"),
+    ok;
+raw_mode(False) ->
+    os:cmd("stty sane < /dev/tty"),
+    ok.
+
+init_keyboard() ->
+    Main = self(),
+    spawn(fun() -> keyboard_loop(Main) end),
+    ok.
+
+keyboard_loop(Main) ->
+    case io:get_chars(standard_io, "", 1) of
+        eof ->
+            ok;
+        {error, _Reason} ->
+            ok;
+        Chars when is_list(Chars) ->
+            case Chars of
+                [] ->
+                    keyboard_loop(Main);
+                [Char | _] ->
+                    Main ! {kangaroo_key, Char},
+                    keyboard_loop(Main)
+            end;
+        Bin when is_binary(Bin) ->
+            case Bin of
+                <<>> ->
+                    keyboard_loop(Main);
+                <<Char, _/binary>> ->
+                    Main ! {kangaroo_key, Char},
+                    keyboard_loop(Main)
+            end
+    end.
+
+poll_key() ->
+    receive
+        {kangaroo_key, Char} ->
+            {some, unicode:characters_to_binary([Char])}
+    after 0 ->
+        none
+    end.
 
 format_error(Reason) ->
     unicode:characters_to_binary(io_lib:format("~0p", [Reason])).

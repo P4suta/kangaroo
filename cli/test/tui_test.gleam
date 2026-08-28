@@ -66,7 +66,7 @@ pub fn suites() {
             1,
           ))
           |> tui.apply(RunFinished(1, Summary(1, 1, 0, 5)))
-        let rendered = tui.render(state)
+        let rendered = tui.render(state, tui.All)
         string.contains(rendered, "math") |> expect |> to_equal(True)
         string.contains(rendered, "✓ adds") |> expect |> to_equal(True)
         string.contains(rendered, "✗ subs") |> expect |> to_equal(True)
@@ -81,9 +81,32 @@ pub fn suites() {
           |> tui.apply(RunStarted(1, 2))
           |> tui.apply(CaseStarted("math", "slow"))
           |> tui.apply(CaseFinished("math", "unfinished", Skipped, 0))
-        let rendered = tui.render(state)
+        let rendered = tui.render(state, tui.All)
         string.contains(rendered, "▶ slow") |> expect |> to_equal(True)
         string.contains(rendered, "⊘ unfinished") |> expect |> to_equal(True)
+      }),
+      it("filters to failures only when asked", fn() {
+        let state =
+          tui.initial()
+          |> tui.apply(RunStarted(1, 3))
+          |> tui.apply(CaseFinished("math", "adds", Passed, 1))
+          |> tui.apply(CaseFinished(
+            "math",
+            "subs",
+            Failed([EqualityMismatch("2", "1", None)]),
+            1,
+          ))
+        let rendered = tui.render(state, tui.FailuresOnly)
+        string.contains(rendered, "✗ subs") |> expect |> to_equal(True)
+        string.contains(rendered, "✓ adds") |> expect |> to_equal(False)
+      }),
+      it("hides suites with no failures in the failures view", fn() {
+        let state =
+          tui.initial()
+          |> tui.apply(RunStarted(1, 2))
+          |> tui.apply(CaseFinished("math", "adds", Passed, 1))
+        let rendered = tui.render(state, tui.FailuresOnly)
+        string.contains(rendered, "math") |> expect |> to_equal(False)
       }),
     ]),
   ]

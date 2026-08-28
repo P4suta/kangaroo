@@ -112,13 +112,42 @@ fn upsert_case_in(
   }
 }
 
+/// What the TUI should show.
+pub type View {
+  /// Every case.
+  All
+  /// Only cases that failed (or are still running).
+  FailuresOnly
+}
+
 /// Renders the current state as an ANSI screen. The screen is cleared and
 /// the cursor is placed at the top before drawing.
-pub fn render(state: UiState) -> String {
+pub fn render(state: UiState, view: View) -> String {
   clear_screen()
   <> header()
-  <> suites_section(state.suites)
+  <> suites_section(visible_suites(state.suites, view))
   <> summary_section(state.summary)
+}
+
+fn visible_suites(suites: List(UiSuite), view: View) -> List(UiSuite) {
+  case view {
+    All -> suites
+    FailuresOnly ->
+      suites
+      |> list.map(fn(suite) {
+        UiSuite(
+          suite.name,
+          list.filter(suite.cases, fn(c) {
+            case c.status {
+              Failed(_) -> True
+              Running -> True
+              _ -> False
+            }
+          }),
+        )
+      })
+      |> list.filter(fn(suite) { suite.cases != [] })
+  }
 }
 
 fn clear_screen() -> String {

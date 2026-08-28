@@ -99,6 +99,25 @@ export function event_buffer_take() {
   return taken;
 }
 
+// Terminal access for the TUI. The watch loop is synchronous on
+// JavaScript, so keyboard input is not supported yet.
+export function is_tty() {
+  return Boolean(process.stdin && process.stdin.isTTY);
+}
+export function raw_mode(on) {
+  if (process.stdin && process.stdin.isTTY) {
+    process.stdin.setRawMode(Boolean(on));
+    process.stdin.resume();
+  }
+  return undefined;
+}
+export function init_keyboard() {
+  return undefined;
+}
+export function poll_key() {
+  return { tag: "None" };
+}
+
 export function run_gleam_test(projectDir, extraEnv, timeoutMs) {
   const env = { ...process.env, KANGAROO_JSON: "1" };
   for (const [key, value] of extraEnv) {
