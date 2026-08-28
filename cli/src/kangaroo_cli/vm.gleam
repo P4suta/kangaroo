@@ -45,6 +45,21 @@ pub fn ebin_dir(project_dir: String) -> Result(String, String) {
   Ok(project_dir <> "/build/dev/erlang/" <> name <> "/ebin")
 }
 
+/// Starts the `cover` tool (idempotently).
+@external(erlang, "kangaroo_cli_ffi", "cover_start")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "not_supported")
+pub fn cover_start() -> Result(Nil, String)
+
+/// Instruments every beam in the project's ebin directory with `cover`.
+@external(erlang, "kangaroo_cli_ffi", "cover_compile_beams")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "not_supported")
+pub fn cover_compile_beams(ebin_dir: String) -> Result(Nil, String)
+
+/// Line hit counts for a module: `#(line, hits)` pairs.
+@external(erlang, "kangaroo_cli_ffi", "cover_analyse")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "not_supported")
+pub fn cover_analyse(module: String) -> Result(List(#(Int, Int)), String)
+
 /// The project's package name, read from `gleam.toml`.
 pub fn package_name(project_dir: String) -> Result(String, String) {
   use contents <- result.try(fs.read_file(project_dir <> "/gleam.toml"))
@@ -56,13 +71,17 @@ fn parse_name(toml: String) -> Result(String, String) {
   |> string.split("\n")
   |> list.find_map(fn(line) {
     case line |> string.trim |> string.split("=") {
-      ["name", value] -> {
-        let value = value |> string.trim |> trim_quotes
-        case value {
-          "" -> Error(Nil)
-          _ -> Ok(value)
+      [key, value] ->
+        case string.trim(key) {
+          "name" -> {
+            let value = value |> string.trim |> trim_quotes
+            case value {
+              "" -> Error(Nil)
+              _ -> Ok(value)
+            }
+          }
+          _ -> Error(Nil)
         }
-      }
       _ -> Error(Nil)
     }
   })
@@ -73,7 +92,7 @@ fn trim_quotes(value: String) -> String {
   let value = string.trim(value)
   let len = string.length(value)
   case len >= 2 && string.slice(value, 0, 1) == "\"" {
-    True -> string.slice(value, 1, len - 1)
+    True -> string.slice(value, 1, len - 2)
     False -> value
   }
 }

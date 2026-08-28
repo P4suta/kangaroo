@@ -1,31 +1,79 @@
 import gleam/io
+import gleam/string
 import kangaroo_cli/app
 import kangaroo_cli/fs
 
 /// The entry point of the Kangaroo CLI.
 ///
-/// With no arguments it runs the continuous test runner: it watches `src`
-/// and `test` for changes and re-runs the tests whenever anything changes.
+/// Commands:
+///
+/// - `kangaroo_cli` or `kangaroo_cli watch` — the continuous test runner:
+///   watches `src` and `test` and re-runs the affected tests on change.
+/// - `kangaroo_cli run` — runs the tests once.
+/// - `kangaroo_cli run --coverage` — runs the tests once with line coverage
+///   (Erlang only).
 pub fn main() -> Nil {
+  let args = fs.args()
+
   case fs.gleam_executable() {
     Error(message) -> {
       io.println(message)
-      fs.sleep(1)
       fs.halt(1)
     }
-    Ok(_) -> {
+    Ok(_) ->
       case fs.current_dir() {
         Error(message) -> {
           io.println("kangaroo: " <> message)
-          fs.sleep(1)
           fs.halt(1)
         }
         Ok(project_dir) -> {
-          io.println("kangaroo: watching " <> project_dir)
-          io.println("kangaroo: press Ctrl+C to stop")
-          app.watch(project_dir)
+          case run_command(project_dir, args) {
+            Ok(_) -> fs.halt(0)
+            Error(message) -> {
+              io.println(message)
+              fs.halt(1)
+            }
+          }
         }
       }
-    }
   }
 }
+
+fn run_command(project_dir: String, args: List(String)) -> Result(Nil, String) {
+  case args {
+    [] -> {
+      io.println("kangaroo: watching " <> project_dir)
+      io.println("kangaroo: press Ctrl+C to stop")
+      app.watch(project_dir)
+      Ok(Nil)
+    }
+    ["run"] -> {
+      case app.run_once(project_dir) {
+        Ok(True) -> {
+          fs.halt(1)
+          Ok(Nil)
+        }
+        Ok(False) -> Ok(Nil)
+        Error(message) -> Error(message)
+      }
+    }
+    ["run", "--coverage"] -> {
+      case app.run_coverage(project_dir) {
+        Ok(_) -> Ok(Nil)
+        Error(message) -> Error(message)
+      }
+    }
+    ["watch"] -> {
+      io.println("kangaroo: watching " <> project_dir)
+      io.println("kangaroo: press Ctrl+C to stop")
+      app.watch(project_dir)
+      Ok(Nil)
+    }
+    _ -> Error(
+      "kangaroo: unknown command: "
+      <> string.join(args, " ")
+      <> "\nkangaroo: usage: kangaroo_cli [watch|run|run --coverage]",
+    )
+  }
+}
+

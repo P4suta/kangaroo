@@ -36,6 +36,11 @@ pub fn gleam_executable() -> Result(String, String)
 @external(javascript, "../kangaroo_cli_ffi.mjs", "current_dir")
 pub fn current_dir() -> Result(String, String)
 
+/// The command line arguments after the program name.
+@external(erlang, "kangaroo_cli_ffi", "args")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "args")
+pub fn args() -> List(String)
+
 /// Terminates the process with the given exit code.
 @external(erlang, "kangaroo_cli_ffi", "halt")
 @external(javascript, "../kangaroo_cli_ffi.mjs", "halt")

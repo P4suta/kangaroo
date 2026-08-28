@@ -64,6 +64,10 @@ export function current_dir() {
   }
 }
 
+export function args() {
+  return toList(process.argv.slice(2));
+}
+
 export function halt(code) {
   process.exit(code);
   return undefined;

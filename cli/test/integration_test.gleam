@@ -35,6 +35,21 @@ pub fn suites() {
           }
         }
       }),
+      it("measures line coverage of the parent project", fn() {
+        // In-VM coverage is Erlang-only.
+        case vm.is_erlang() {
+          False -> Nil
+          True -> {
+            let result = app.run_coverage("..")
+            case result {
+              Ok(total) -> {
+                expect(total >= 0 && total <= 100) |> to_equal(True)
+              }
+              Error(message) -> panic as message
+            }
+          }
+        }
+      }),
     ]),
   ]
 }

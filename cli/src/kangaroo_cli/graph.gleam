@@ -69,7 +69,7 @@ fn trim_braces(name: String) -> String {
 
 fn drop_trailing_dot(name: String) -> String {
   let len = string.length(name)
-  case len > 0 && string.slice(name, len - 1, len) == "." {
+  case len > 0 && string.slice(name, len - 1, 1) == "." {
     True -> string.slice(name, 0, len - 1)
     False -> name
   }

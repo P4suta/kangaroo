@@ -12,6 +12,7 @@ import kangaroo/report
 import kangaroo/runner
 import kangaroo_cli/affected.{affected_tests}
 import kangaroo_cli/collect
+import kangaroo_cli/coverage
 import kangaroo_cli/fs
 import kangaroo_cli/graph.{
   imports,
@@ -186,6 +187,60 @@ pub fn run_in_vm(
   }
 }
 
+/// Runs the tests with line coverage (Erlang only): the project is compiled,
+/// every module is instrumented with `cover`, all tests run in-VM, and a
+/// per-module coverage table is printed. Returns the total percentage.
+pub fn run_coverage(project_dir: String) -> Result(Int, String) {
+  use _ <- result.try(vm.add_project_paths(project_dir))
+  use ebin <- result.try(vm.ebin_dir(project_dir))
+
+  io.println("  compiling...")
+  case fs.run_gleam_test(
+    project_dir,
+    [#("KANGAROO_COMPILE_ONLY", "1")],
+    run_timeout_ms,
+  ) {
+    Ok(process) if process.exit_code != 0 -> Error(process.output)
+    Error(message) -> Error(message)
+    Ok(_) -> {
+      use _ <- result.try(vm.cover_start())
+      use _ <- result.try(vm.cover_compile_beams(ebin))
+      use _ <- result.try(run_in_vm(project_dir, []))
+
+      let modules = cover_src_modules(project_dir)
+      modules |> list.each(fn(module) {
+        io.println("  " <> coverage.table_row(module))
+      })
+      let total = coverage.percentage(modules)
+      io.println("  total coverage: " <> int.to_string(total) <> "%")
+      Ok(total)
+    }
+  }
+}
+
+fn cover_src_modules(project_dir: String) -> List(coverage.ModuleCoverage) {
+  let files = fs.list_files_recursive(project_dir <> "/src")
+  case files {
+    Error(_) -> []
+    Ok(files) ->
+      files
+      |> list.filter(is_gleam_file)
+      |> list.filter_map(fn(path) {
+        case module_name_of_file(strip_prefix(project_dir, path), ".gleam") {
+          None -> Error(Nil)
+          Some(module) -> {
+            let module = module_name_string(module)
+            case fs.read_file(path), vm.cover_analyse(module) {
+              Ok(source), Ok(hits) ->
+                Ok(coverage.summarise(module, coverage.line_count(source), hits))
+              _, _ -> Error(Nil)
+            }
+          }
+        }
+      })
+  }
+}
+
 fn run_tests_subprocess(project_dir: String) -> Result(Bool, String) {
   io.println("  running tests...")
 
@@ -278,7 +333,11 @@ fn is_gleam_file(path: String) -> Bool {
 fn strip_prefix(project_dir: String, path: String) -> String {
   let prefix = project_dir <> "/"
   case string.starts_with(path, prefix) {
-    True -> string.slice(path, string.length(prefix), string.length(path))
+    True -> string.slice(
+      path,
+      string.length(prefix),
+      string.length(path) - string.length(prefix),
+    )
     False -> path
   }
 }

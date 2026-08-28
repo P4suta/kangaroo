@@ -3,9 +3,9 @@
 -module(kangaroo_cli_ffi).
 -export([list_files_recursive/1, read_file/1, mtime_ms/1, sleep/1,
          gleam_executable/0, run_gleam_test/3, now_ms/0, current_dir/0,
-         halt/1, is_erlang/0, add_code_path/1, add_project_paths/1,
+         args/0, halt/1, is_erlang/0, add_code_path/1, add_project_paths/1,
          load_module/1, call_suites/1, list_test_modules/1, cover_start/0,
-         cover_compile_beams/1, cover_analyse/1, cover_stop/0]).
+         cover_compile_beams/1, cover_analyse/1]).
 -include_lib("kernel/include/file.hrl").
 
 is_erlang() ->
@@ -135,17 +135,20 @@ cover_compile_beams(EbinDir) ->
         {ok, Entries} ->
             Beams = [filename:join(EbinDir, F)
                      || F <- Entries, lists:suffix(".beam", F)],
-            lists:foldl(fun(Beam, Acc) ->
-                                case Acc of
-                                    {error, _} -> Acc;
-                                    ok ->
-                                        case cover:compile_beam(Beam) of
-                                            {ok, _Mod} -> ok;
-                                            {error, Reason2} ->
-                                                {error, format_error(Reason2)}
-                                        end
-                                end
-                        end, ok, Beams)
+            case compile_beams(Beams) of
+                ok -> {ok, nil};
+                {error, _} = Error -> Error
+            end
+    end.
+
+compile_beams([]) ->
+    ok;
+compile_beams([Beam | Rest]) ->
+    case cover:compile_beam(to_list(Beam)) of
+        {ok, _Mod} -> compile_beams(Rest);
+        {ok, _Mod} -> compile_beams(Rest);
+        {error, Reason} -> {error, format_error(Reason)};
+        Other -> {error, format_error(Other)}
     end.
 
 cover_analyse(Module) ->
@@ -157,15 +160,14 @@ cover_analyse(Module) ->
             {error, format_error(Reason)}
     end.
 
-cover_stop() ->
-    cover:stop(),
-    {ok, nil}.
-
 current_dir() ->
     case file:get_cwd() of
         {ok, Dir} -> {ok, unicode:characters_to_binary(Dir)};
         {error, Reason} -> {error, format_error(Reason)}
     end.
+
+args() ->
+    [unicode:characters_to_binary(A) || A <- init:get_plain_arguments()].
 
 halt(Code) ->
     erlang:halt(Code).
