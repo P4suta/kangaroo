@@ -74,6 +74,15 @@ export function gleam_executable() {
   return new Ok("gleam");
 }
 
+export function is_erlang() {
+  return false;
+}
+
+// The in-VM execution engine only exists on Erlang.
+export function not_supported(_arg) {
+  return new GleamError("in-VM execution is not supported on JavaScript");
+}
+
 export function run_gleam_test(projectDir, extraEnv, timeoutMs) {
   const env = { ...process.env, KANGAROO_JSON: "1" };
   for (const [key, value] of extraEnv) {

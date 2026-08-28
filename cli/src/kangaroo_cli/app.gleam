@@ -8,7 +8,10 @@ import gleam/string
 import kangaroo/event.{CaseFinished, type Event}
 import kangaroo/failure.{Failed}
 import kangaroo/format
+import kangaroo/report
+import kangaroo/runner
 import kangaroo_cli/affected.{affected_tests}
+import kangaroo_cli/collect
 import kangaroo_cli/fs
 import kangaroo_cli/graph.{
   imports,
@@ -17,6 +20,7 @@ import kangaroo_cli/graph.{
   type ModuleName,
 }
 import kangaroo_cli/stream.{parse_events}
+import kangaroo_cli/vm
 import kangaroo_cli/watcher.{Added, Modified, Removed, diff, type FileChange}
 
 const poll_interval_ms = 250
@@ -31,10 +35,7 @@ const ansi_reset = "\u{1b}[0m"
 pub fn run_once(project_dir: String) -> Result(Bool, String) {
   case snapshot_sources(project_dir) {
     Error(message) -> Error(message)
-    Ok(_) -> {
-      let _affected = compute_affected(project_dir, [])
-      run_tests(project_dir)
-    }
+    Ok(_) -> run_tests(project_dir, [])
   }
 }
 
@@ -74,7 +75,7 @@ fn loop(project_dir: String, previous: Dict(String, Int)) -> Nil {
         Error(message) ->
           io.println("  kangaroo: could not compute affected tests: " <> message)
       }
-      let _ = run_tests(project_dir)
+      let _ = run_tests(project_dir, changed_paths)
       loop(project_dir, current)
     }
   }
@@ -106,7 +107,86 @@ pub fn snapshot_sources(
   })
 }
 
-fn run_tests(project_dir: String) -> Result(Bool, String) {
+/// Runs the tests. On Erlang the project is compiled with a fast
+/// compile-only subprocess and the affected test modules are then executed
+/// in-VM with hot module reloading. On JavaScript (or when in-VM execution
+/// fails) a plain `gleam test` subprocess is used.
+fn run_tests(project_dir: String, changed_paths: List(String)) -> Result(Bool, String) {
+  case vm.is_erlang() {
+    False -> run_tests_subprocess(project_dir)
+    True -> {
+      io.println("  compiling...")
+      case fs.run_gleam_test(
+        project_dir,
+        [#("KANGAROO_COMPILE_ONLY", "1")],
+        run_timeout_ms,
+      ) {
+        Ok(process) if process.exit_code == 0 -> {
+          let affected = case compute_affected(project_dir, changed_paths) {
+            Ok(affected) -> affected
+            Error(_) -> []
+          }
+          case run_in_vm(project_dir, affected) {
+            Ok(has_failures) -> Ok(has_failures)
+            Error(message) -> {
+              io.println(
+                "  kangaroo: in-VM execution failed (" <> message
+                <> "), falling back to subprocess",
+              )
+              run_tests_subprocess(project_dir)
+            }
+          }
+        }
+        Ok(process) -> {
+          io.println(process.output)
+          Error("compilation failed")
+        }
+        Error(message) -> Error(message)
+      }
+    }
+  }
+}
+
+/// Executes the given test modules in-VM. When `modules` is empty, every
+/// `*_test` module is loaded. Returns `True` if the run reported failures.
+pub fn run_in_vm(
+  project_dir: String,
+  modules: List(String),
+) -> Result(Bool, String) {
+  case vm.is_erlang() {
+    False -> Error("in-VM execution is not supported on JavaScript")
+    True -> {
+      use _ <- result.try(vm.add_project_paths(project_dir))
+      let module_list = case modules {
+        [] -> vm.list_test_modules(project_dir)
+        _ -> Ok(modules)
+      }
+      use module_list <- result.try(module_list)
+
+      let suite_lists =
+        list.filter_map(module_list, fn(module) {
+          case vm.load_module(module) {
+            Ok(_) ->
+              case vm.call_suites(module) {
+                Ok(suites) -> Ok(suites)
+                Error(_) -> Error(Nil)
+              }
+            Error(_) -> Error(Nil)
+          }
+        })
+
+      io.println(
+        "  running " <> int.to_string(list.length(module_list))
+        <> " test module(s) in-VM...",
+      )
+      let suites = collect.collect_suites(suite_lists)
+      let report = runner.run(suites, format.print_sink)
+      Ok(report.has_failures(report))
+    }
+  }
+}
+
+fn run_tests_subprocess(project_dir: String) -> Result(Bool, String) {
   io.println("  running tests...")
 
   use process <- result.try(
