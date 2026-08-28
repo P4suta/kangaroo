@@ -1,0 +1,46 @@
+name: test
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: kangaroo (erlang)
+            package: .
+            target: erlang
+          - name: kangaroo (javascript)
+            package: .
+            target: javascript
+          - name: kangaroo_cli (erlang)
+            package: ./cli
+            target: erlang
+          - name: kangaroo_cli (javascript)
+            package: ./cli
+            target: javascript
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          gleam-version: "1.18.1"
+          rebar3-version: "3"
+      - uses: oven-sh/setup-bun@v2
+      - name: Download dependencies
+        working-directory: ${{ matrix.package }}
+        run: gleam deps download
+      - name: Test
+        working-directory: ${{ matrix.package }}
+        run: gleam test -t ${{ matrix.target }} --runtime bun
+      - name: Check formatting
+        if: matrix.target == 'erlang'
+        working-directory: ${{ matrix.package }}
+        run: gleam format --check src test

@@ -1,0 +1,95 @@
+// Platform services for the Kangaroo CLI: file access, subprocess
+// execution of `gleam test`, and a monotonic clock for the watch loop.
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { Error as GleamError, Ok, toList } from "./gleam.mjs";
+import { ProcessResult } from "./kangaroo_cli/fs.mjs";
+
+export function list_files_recursive(directory) {
+  try {
+    const files = [];
+    const walk = (dir) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(path);
+        } else if (entry.isFile()) {
+          files.push(path);
+        }
+      }
+    };
+    walk(directory);
+    files.sort();
+    return new Ok(toList(files));
+  } catch (error) {
+    return new GleamError(String(error.message || error));
+  }
+}
+
+export function read_file(path) {
+  try {
+    return new Ok(readFileSync(path, "utf8"));
+  } catch (error) {
+    return new GleamError(String(error.message || error));
+  }
+}
+
+export function mtime_ms(path) {
+  try {
+    return new Ok(Math.floor(statSync(path).mtimeMs));
+  } catch (error) {
+    return new GleamError(String(error.message || error));
+  }
+}
+
+export function sleep(ms) {
+  // synchronous sleep keeps the watch loop simple and portable
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    /* spin */
+  }
+  return undefined;
+}
+
+export function now_ms() {
+  return Date.now();
+}
+
+export function current_dir() {
+  try {
+    return new Ok(process.cwd());
+  } catch (error) {
+    return new GleamError(String(error.message || error));
+  }
+}
+
+export function halt(code) {
+  process.exit(code);
+  return undefined;
+}
+
+export function gleam_executable() {
+  // spawnSync resolves executables through PATH on all platforms
+  return new Ok("gleam");
+}
+
+export function run_gleam_test(projectDir, extraEnv, timeoutMs) {
+  const env = { ...process.env, KANGAROO_JSON: "1" };
+  for (const [key, value] of extraEnv) {
+    env[key] = value;
+  }
+  const result = spawnSync("gleam", ["test"], {
+    cwd: projectDir,
+    env,
+    encoding: "utf8",
+    timeout: timeoutMs,
+  });
+  if (result.error) {
+    return new GleamError(String(result.error.message || result.error));
+  }
+  const output = (result.stdout || "") + (result.stderr || "");
+  return new Ok(
+    new ProcessResult(result.status === null ? -1 : result.status, output),
+  );
+}
