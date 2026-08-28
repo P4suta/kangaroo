@@ -87,6 +87,18 @@ export function not_supported(_arg) {
   return new GleamError("in-VM execution is not supported on JavaScript");
 }
 
+// A per-run buffer of runner events.
+let events = [];
+export function event_buffer_append(event) {
+  events.push(event);
+  return undefined;
+}
+export function event_buffer_take() {
+  const taken = toList(events);
+  events = [];
+  return taken;
+}
+
 export function run_gleam_test(projectDir, extraEnv, timeoutMs) {
   const env = { ...process.env, KANGAROO_JSON: "1" };
   for (const [key, value] of extraEnv) {

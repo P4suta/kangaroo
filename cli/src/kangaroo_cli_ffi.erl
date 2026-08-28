@@ -5,7 +5,8 @@
          gleam_executable/0, run_gleam_test/3, now_ms/0, current_dir/0,
          args/0, halt/1, is_erlang/0, add_code_path/1, add_project_paths/1,
          load_module/1, call_suites/1, list_test_modules/1, cover_start/0,
-         cover_compile_beams/1, cover_analyse/1]).
+         cover_compile_beams/1, cover_analyse/1, event_buffer_append/1,
+         event_buffer_take/0]).
 -include_lib("kernel/include/file.hrl").
 
 is_erlang() ->
@@ -146,7 +147,6 @@ compile_beams([]) ->
 compile_beams([Beam | Rest]) ->
     case cover:compile_beam(to_list(Beam)) of
         {ok, _Mod} -> compile_beams(Rest);
-        {ok, _Mod} -> compile_beams(Rest);
         {error, Reason} -> {error, format_error(Reason)};
         Other -> {error, format_error(Other)}
     end.
@@ -271,6 +271,26 @@ to_list(Value) when is_list(Value) ->
     Value;
 to_list(Value) ->
     binary_to_list(unicode:characters_to_binary(io_lib:format("~0p", [Value]))).
+
+%% A per-run buffer of runner events, stored in the process dictionary of
+%% the CLI process.
+-define(EVENT_KEY, kangaroo_events).
+
+event_buffer_append(Event) ->
+    Existing = case get(?EVENT_KEY) of
+                   undefined -> [];
+                   Events -> Events
+               end,
+    put(?EVENT_KEY, [Event | Existing]),
+    ok.
+
+event_buffer_take() ->
+    Events = case get(?EVENT_KEY) of
+                 undefined -> [];
+                 Existing -> lists:reverse(Existing)
+             end,
+    erase(?EVENT_KEY),
+    Events.
 
 format_error(Reason) ->
     unicode:characters_to_binary(io_lib:format("~0p", [Reason])).

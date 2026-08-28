@@ -1,6 +1,6 @@
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/string
-import gleam/option.{None, Some, type Option}
 import kangaroo/context
 import kangaroo/diff
 import kangaroo/failure.{AssertionFailed, EqualityMismatch}

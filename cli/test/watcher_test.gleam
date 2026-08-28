@@ -1,10 +1,6 @@
 import gleam/dict
 import gleam/list
-import kangaroo/expect.{
-  expect,
-    to_be_true,
-  to_equal,
-}
+import kangaroo/expect.{expect, to_be_true, to_equal}
 import kangaroo/suite.{it, suite}
 import kangaroo_cli/watcher.{Added, Modified, Removed, diff}
 
@@ -44,7 +40,8 @@ pub fn suites() {
             #("src/d.gleam", 40),
           ])
         let changes = diff(previous, current)
-        expect(changes |> list.contains(Modified("src/a.gleam"))) |> to_be_true()
+        expect(changes |> list.contains(Modified("src/a.gleam")))
+        |> to_be_true()
         expect(changes |> list.contains(Removed("src/c.gleam"))) |> to_be_true()
         expect(changes |> list.contains(Added("src/d.gleam"))) |> to_be_true()
         expect(list.length(changes)) |> to_equal(3)
@@ -52,4 +49,3 @@ pub fn suites() {
     ]),
   ]
 }
-

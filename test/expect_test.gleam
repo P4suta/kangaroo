@@ -1,24 +1,11 @@
 import gleam/option.{None, Some}
 import kangaroo/event.{type Event}
 import kangaroo/expect.{
-  expect,
-  to_be_empty,
-  to_be_false,
-  to_be_none,
-  to_be_some,
-  to_be_true,
-  to_contain,
-  to_contain_text,
-  to_equal,
-  to_raise,
+  expect, to_be_empty, to_be_false, to_be_none, to_be_some, to_be_true,
+  to_contain, to_contain_text, to_equal, to_raise,
 }
 import kangaroo/failure.{
-  AssertionFailed,
-  EqualityMismatch,
-  Failed,
-  Passed,
-  type Failure,
-  type Outcome,
+  type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Passed,
 }
 import kangaroo/runner
 import kangaroo/suite.{it, suite}
@@ -57,8 +44,7 @@ pub fn suites() {
         }
       }),
       it("attaches a line diff for multi-line values", fn() {
-        let outcome =
-          outcome_of(fn() { expect("a\nb") |> to_equal("a\nc") })
+        let outcome = outcome_of(fn() { expect("a\nb") |> to_equal("a\nc") })
         case failure_of(outcome) {
           EqualityMismatch(_, _, Some(diff)) ->
             expect(diff) |> to_equal("- c\n+ b")
@@ -95,19 +81,25 @@ pub fn suites() {
       }),
       it("fails when to_contain does not hold", fn() {
         let outcome = outcome_of(fn() { expect([1, 2]) |> to_contain(3) })
-        expect(outcome) |> to_equal(Failed([AssertionFailed("expected list to contain 3")]))
+        expect(outcome)
+        |> to_equal(Failed([AssertionFailed("expected list to contain 3")]))
       }),
       it("passes when to_contain_text holds", fn() {
-        let outcome = outcome_of(fn() { expect("hello world") |> to_contain_text("world") })
+        let outcome =
+          outcome_of(fn() { expect("hello world") |> to_contain_text("world") })
         expect(outcome) |> to_equal(Passed)
       }),
       it("passes when to_raise holds", fn() {
-        let outcome = outcome_of(fn() { expect(fn() { panic as "boom" }) |> to_raise() })
+        let outcome =
+          outcome_of(fn() { expect(fn() { panic as "boom" }) |> to_raise() })
         expect(outcome) |> to_equal(Passed)
       }),
       it("fails when to_raise does not hold", fn() {
         let outcome = outcome_of(fn() { expect(fn() { Nil }) |> to_raise() })
-        expect(outcome) |> to_equal(Failed([AssertionFailed("expected the function to raise an error")]))
+        expect(outcome)
+        |> to_equal(
+          Failed([AssertionFailed("expected the function to raise an error")]),
+        )
       }),
     ]),
   ]

@@ -1,26 +1,16 @@
-import gleam/dynamic/decode as decode
+import gleam/dynamic/decode
 import gleam/json
 import gleam/list
 import gleam/result
 import gleam/string
 import kangaroo/event.{
-  CaseFinished,
-  CaseStarted,
-  RunFinished,
-  RunStarted,
-  type Event,
+  type Event, CaseFinished, CaseStarted, RunFinished, RunStarted,
 }
 import kangaroo/failure.{
-  AssertionFailed,
-  EqualityMismatch,
-  Failed,
-  Passed,
-  Skipped,
-  UnexpectedError,
-  type Failure,
-  type Outcome,
+  type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Passed,
+  Skipped, UnexpectedError,
 }
-import kangaroo/report.{Summary, type Summary}
+import kangaroo/report.{type Summary, Summary}
 
 /// Parses the newline-delimited JSON events emitted by the test runner into
 /// typed events. Blank and malformed lines are skipped.
@@ -114,7 +104,8 @@ fn failure_decoder() -> decode.Decoder(Failure) {
             decode.success(UnexpectedError(name, message))
           })
         })
-      _ -> decode.failure(AssertionFailed("unknown failure"), "known failure kind")
+      _ ->
+        decode.failure(AssertionFailed("unknown failure"), "known failure kind")
     }
   })
 }

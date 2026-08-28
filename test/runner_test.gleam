@@ -2,22 +2,15 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import kangaroo/event.{type Event}
-import kangaroo/expect.{
-  expect,
-  to_be_false,
-  to_be_true,
-  to_equal,
-}
+import kangaroo/expect.{expect, to_be_false, to_be_true, to_equal}
 import kangaroo/failure.{
-  EqualityMismatch,
-  Failed,
-  Passed,
-  Skipped,
-  UnexpectedError,
+  EqualityMismatch, Failed, Passed, Skipped, UnexpectedError,
 }
 import kangaroo/report
 import kangaroo/runner
-import kangaroo/suite.{it, it_focused, it_skipped, hooks, suite, suite_with_hooks}
+import kangaroo/suite.{
+  hooks, it, it_focused, it_skipped, suite, suite_with_hooks,
+}
 
 pub fn suites() {
   [
@@ -91,8 +84,7 @@ pub fn suites() {
         case r.cases {
           [result] ->
             case result.outcome {
-              Failed(failures) ->
-                expect(list.length(failures)) |> to_equal(2)
+              Failed(failures) -> expect(list.length(failures)) |> to_equal(2)
               _ -> panic as "expected failure"
             }
           _ -> panic as "expected one result"

@@ -1,6 +1,5 @@
 /// Filesystem access for the CLI. Everything is relative to the project
 /// root, and errors are reported as human-readable messages.
-
 /// Recursively lists all regular files under a directory.
 @external(erlang, "kangaroo_cli_ffi", "list_files_recursive")
 @external(javascript, "../kangaroo_cli_ffi.mjs", "list_files_recursive")

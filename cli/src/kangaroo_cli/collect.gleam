@@ -1,5 +1,5 @@
 import gleam/list
-import kangaroo/suite.{Suite, type Case, type Suite}
+import kangaroo/suite.{type Case, type Suite, Suite}
 
 /// Collects suites from multiple test modules, de-duplicating cases by
 /// suite name and case name. This lets the in-VM executor load suites from
@@ -14,15 +14,14 @@ pub fn collect_suites(modules: List(List(Suite))) -> List(Suite) {
 fn merge_suite(suites: List(Suite), suite: Suite) -> List(Suite) {
   case suites {
     [] -> [suite]
-    [existing, ..rest] if existing.name == suite.name ->
-      [
-        Suite(
-          existing.name,
-          merge_cases(existing.cases, suite.cases),
-          existing.hooks,
-        ),
-        ..rest
-      ]
+    [existing, ..rest] if existing.name == suite.name -> [
+      Suite(
+        existing.name,
+        merge_cases(existing.cases, suite.cases),
+        existing.hooks,
+      ),
+      ..rest
+    ]
     [first, ..rest] -> [first, ..merge_suite(rest, suite)]
   }
 }

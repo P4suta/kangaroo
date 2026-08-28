@@ -1,18 +1,8 @@
 import gleam/option.{None, Some}
+import kangaroo/event.{CaseFinished, CaseStarted, RunFinished, RunStarted}
 import kangaroo/expect.{expect, to_equal}
-import kangaroo/event.{
-  CaseFinished,
-  CaseStarted,
-  RunFinished,
-  RunStarted,
-}
 import kangaroo/failure.{
-  AssertionFailed,
-  EqualityMismatch,
-  Failed,
-  Passed,
-  Skipped,
-  UnexpectedError,
+  AssertionFailed, EqualityMismatch, Failed, Passed, Skipped, UnexpectedError,
 }
 import kangaroo/report.{Summary}
 import kangaroo/suite.{it, suite}
@@ -76,7 +66,10 @@ pub fn suites() {
           CaseFinished(
             "s",
             "a",
-            Failed([AssertionFailed("expected True"), UnexpectedError("panic", "boom")]),
+            Failed([
+              AssertionFailed("expected True"),
+              UnexpectedError("panic", "boom"),
+            ]),
             0,
           ),
         ])

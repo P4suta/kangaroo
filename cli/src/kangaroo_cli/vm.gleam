@@ -6,7 +6,6 @@ import kangaroo_cli/fs
 
 /// Erlang-only execution engine. On JavaScript every function returns an
 /// error and the CLI falls back to running `gleam test` as a subprocess.
-
 /// Whether this build of the CLI runs on Erlang.
 @external(erlang, "kangaroo_cli_ffi", "is_erlang")
 @external(javascript, "../kangaroo_cli_ffi.mjs", "is_erlang")

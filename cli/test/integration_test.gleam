@@ -22,9 +22,10 @@ pub fn suites() {
           False -> Nil
           True -> {
             let result =
-              result.try(app.run_in_vm("..", ["diff_test"]), fn(has_failures) {
-                Ok(#("diff_test", has_failures))
-              })
+              result.try(
+                app.run_in_vm("..", ["diff_test"], fn(_) { Nil }),
+                fn(has_failures) { Ok(#("diff_test", has_failures)) },
+              )
             case result {
               Ok(pair) -> {
                 expect(pair.0) |> to_equal("diff_test")

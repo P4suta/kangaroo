@@ -3,12 +3,7 @@ import gleam/option.{Some}
 import kangaroo/expect.{expect, to_equal}
 import kangaroo/suite.{it, suite}
 import kangaroo_cli/graph.{
-  ModuleName,
-  imports,
-  
-  module_name,
-  module_name_of_file,
-  module_name_string,
+  ModuleName, imports, module_name, module_name_of_file, module_name_string,
   source_path,
 }
 
@@ -22,7 +17,8 @@ pub fn suites() {
         |> to_equal(["a/b"])
       }),
       it("ignores stdlib imports", fn() {
-        let source = "import gleam/list\nimport gleam/string.{pop}\nimport a/b\n"
+        let source =
+          "import gleam/list\nimport gleam/string.{pop}\nimport a/b\n"
         let modules = imports(source)
         expect(list.map(modules, module_name_string)) |> to_equal(["a/b"])
       }),
@@ -50,7 +46,8 @@ pub fn suites() {
         |> to_equal(Some(ModuleName(["foo_test"])))
       }),
       it("computes source paths", fn() {
-        expect(source_path(module_name(["foo"]), "src")) |> to_equal("src/foo.gleam")
+        expect(source_path(module_name(["foo"]), "src"))
+        |> to_equal("src/foo.gleam")
         expect(source_path(module_name(["a", "b"]), "src"))
         |> to_equal("src/a/b.gleam")
       }),

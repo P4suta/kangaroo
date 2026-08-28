@@ -41,12 +41,7 @@ pub fn main() -> Nil {
 
 fn run_command(project_dir: String, args: List(String)) -> Result(Nil, String) {
   case args {
-    [] -> {
-      io.println("kangaroo: watching " <> project_dir)
-      io.println("kangaroo: press Ctrl+C to stop")
-      app.watch(project_dir)
-      Ok(Nil)
-    }
+    [] -> watch(project_dir, app.Tui)
     ["run"] -> {
       case app.run_once(project_dir) {
         Ok(True) -> {
@@ -63,17 +58,21 @@ fn run_command(project_dir: String, args: List(String)) -> Result(Nil, String) {
         Error(message) -> Error(message)
       }
     }
-    ["watch"] -> {
-      io.println("kangaroo: watching " <> project_dir)
-      io.println("kangaroo: press Ctrl+C to stop")
-      app.watch(project_dir)
-      Ok(Nil)
-    }
-    _ -> Error(
-      "kangaroo: unknown command: "
-      <> string.join(args, " ")
-      <> "\nkangaroo: usage: kangaroo_cli [watch|run|run --coverage]",
-    )
+    ["watch"] -> watch(project_dir, app.Tui)
+    ["watch", "--no-tui"] -> watch(project_dir, app.Stream)
+    ["watch", "--json"] -> watch(project_dir, app.Json)
+    _ ->
+      Error(
+        "kangaroo: unknown command: "
+        <> string.join(args, " ")
+        <> "\nkangaroo: usage: kangaroo_cli [watch [--no-tui|--json] | run | run --coverage]",
+      )
   }
 }
 
+fn watch(project_dir: String, mode: app.OutputMode) -> Result(Nil, String) {
+  io.println("kangaroo: watching " <> project_dir)
+  io.println("kangaroo: press Ctrl+C to stop")
+  app.watch(project_dir, mode)
+  Ok(Nil)
+}

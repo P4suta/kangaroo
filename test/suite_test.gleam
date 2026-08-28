@@ -1,12 +1,6 @@
 import gleam/list
 import kangaroo/expect.{expect, to_be_false, to_be_true, to_equal}
-import kangaroo/suite.{
-  it,
-  it_focused,
-  it_skipped,
-  no_hooks,
-  suite,
-}
+import kangaroo/suite.{it, it_focused, it_skipped, no_hooks, suite}
 
 fn empty_body() {
   Nil
@@ -38,27 +32,28 @@ pub fn suites() {
         expect(suite.has_focused(suites)) |> to_be_false()
       }),
       it("detects focused cases", fn() {
-        let suites =
-          [suite("a", [it("x", empty_body), it_focused("y", empty_body)])]
+        let suites = [
+          suite("a", [it("x", empty_body), it_focused("y", empty_body)]),
+        ]
         expect(suite.has_focused(suites)) |> to_be_true()
       }),
       it("keeps only focused cases", fn() {
-        let suites =
-          [suite("a", [it("x", empty_body), it_focused("y", empty_body)])]
+        let suites = [
+          suite("a", [it("x", empty_body), it_focused("y", empty_body)]),
+        ]
         let focused = suite.keep_focused(suites)
         case focused {
-          [s] ->
-            expect(list.map(s.cases, fn(c) { c.name })) |> to_equal(["y"])
+          [s] -> expect(list.map(s.cases, fn(c) { c.name })) |> to_equal(["y"])
           _ -> panic as "expected one suite"
         }
       }),
       it("drops skipped cases", fn() {
-        let suites =
-          [suite("a", [it("x", empty_body), it_skipped("y", empty_body)])]
+        let suites = [
+          suite("a", [it("x", empty_body), it_skipped("y", empty_body)]),
+        ]
         let dropped = suite.drop_skipped(suites)
         case dropped {
-          [s] ->
-            expect(list.map(s.cases, fn(c) { c.name })) |> to_equal(["x"])
+          [s] -> expect(list.map(s.cases, fn(c) { c.name })) |> to_equal(["x"])
           _ -> panic as "expected one suite"
         }
       }),

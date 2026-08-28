@@ -1,9 +1,9 @@
-import gleam/list
-import kangaroo
-import kangaroo/suite.{type Suite}
 import diff_test.{suites as diff_suites}
 import encode_test.{suites as encode_suites}
 import expect_test.{suites as expect_suites}
+import gleam/list
+import kangaroo
+import kangaroo/suite.{type Suite}
 import report_test.{suites as report_suites}
 import runner_test.{suites as runner_suites}
 import suite_test.{suites as suite_suites}

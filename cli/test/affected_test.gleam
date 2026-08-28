@@ -15,7 +15,11 @@ pub fn suites() {
           #(module_name(["foo_test"]), [module_name(["foo"])]),
         ]
         let affected =
-          affected_tests(graph, [module_name(["math_test"]), module_name(["foo_test"])], [module_name(["math"])])
+          affected_tests(
+            graph,
+            [module_name(["math_test"]), module_name(["foo_test"])],
+            [module_name(["math"])],
+          )
           |> list.map(module_name_string)
         expect(affected) |> to_equal(["math_test"])
       }),
@@ -42,11 +46,9 @@ pub fn suites() {
           #(module_name(["foo_test"]), [module_name(["foo"])]),
         ]
         let affected =
-          affected_tests(
-            graph,
-            [module_name(["foo_test"])],
-            [module_name(["foo_test"])],
-          )
+          affected_tests(graph, [module_name(["foo_test"])], [
+            module_name(["foo_test"]),
+          ])
           |> list.map(module_name_string)
         expect(affected) |> to_equal(["foo_test"])
       }),
@@ -56,11 +58,9 @@ pub fn suites() {
           #(module_name(["math_test"]), [module_name(["math"])]),
         ]
         let affected =
-          affected_tests(
-            graph,
-            [module_name(["math_test"])],
-            [module_name(["other"])],
-          )
+          affected_tests(graph, [module_name(["math_test"])], [
+            module_name(["other"]),
+          ])
           |> list.map(module_name_string)
         expect(affected) |> to_equal([])
       }),
@@ -70,11 +70,9 @@ pub fn suites() {
           #(module_name(["anything"]), []),
         ]
         let affected =
-          affected_tests(
-            graph,
-            [module_name(["empty_test"])],
-            [module_name(["anything"])],
-          )
+          affected_tests(graph, [module_name(["empty_test"])], [
+            module_name(["anything"]),
+          ])
           |> list.map(module_name_string)
         expect(affected) |> to_equal([])
       }),
@@ -85,11 +83,7 @@ pub fn suites() {
           #(module_name(["a_test"]), [module_name(["a"])]),
         ]
         let affected =
-          affected_tests(
-            graph,
-            [module_name(["a_test"])],
-            [module_name(["b"])],
-          )
+          affected_tests(graph, [module_name(["a_test"])], [module_name(["b"])])
           |> list.map(module_name_string)
         expect(affected) |> to_equal(["a_test"])
       }),

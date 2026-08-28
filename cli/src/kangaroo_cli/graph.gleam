@@ -1,5 +1,5 @@
 import gleam/list
-import gleam/option.{None, Some, type Option}
+import gleam/option.{type Option, None, Some}
 import gleam/string
 
 /// A Gleam module path such as `"gleam/list"` or `"myapp/foo"`.
@@ -15,12 +15,15 @@ pub fn module_name_string(module: ModuleName) -> String {
   string.join(module.parts, "/")
 }
 
-pub fn module_name_of_file(path: String, extension: String) -> Option(ModuleName)
-{
+pub fn module_name_of_file(
+  path: String,
+  extension: String,
+) -> Option(ModuleName) {
   case ends_with(path, extension) {
     False -> None
     True -> {
-      let stem = string.slice(path, 0, string.length(path) - string.length(extension))
+      let stem =
+        string.slice(path, 0, string.length(path) - string.length(extension))
       let parts = string.split(stem, "/") |> list.filter(fn(p) { p != "" })
       case parts {
         ["src", ..rest] -> Some(ModuleName(rest))
@@ -36,8 +39,7 @@ fn ends_with(text: String, suffix: String) -> Bool {
   let suffix_len = string.length(suffix)
   case text_len >= suffix_len {
     False -> False
-    True ->
-      string.slice(text, text_len - suffix_len, text_len) == suffix
+    True -> string.slice(text, text_len - suffix_len, text_len) == suffix
   }
 }
 
@@ -79,9 +81,10 @@ fn import_line(line: String) -> Result(ModuleName, Nil) {
   let trimmed = string.trim(line)
   case string.split(trimmed, " ") {
     ["import", module, ..] -> {
-      let name = module
-      |> string.trim
-      |> trim_braces
+      let name =
+        module
+        |> string.trim
+        |> trim_braces
       case string.starts_with(name, "gleam") {
         True -> Error(Nil)
         False -> {

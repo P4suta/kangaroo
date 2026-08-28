@@ -14,7 +14,8 @@ pub fn diff(
   previous: Dict(String, Int),
   current: Dict(String, Int),
 ) -> List(FileChange) {
-  let keys = dict.keys(previous) |> list.append(dict.keys(current)) |> list.unique
+  let keys =
+    dict.keys(previous) |> list.append(dict.keys(current)) |> list.unique
 
   list.filter_map(keys, fn(path) {
     case dict.get(previous, path), dict.get(current, path) {

@@ -15,7 +15,9 @@ pub fn affected_tests(
   let changed = dict.from_list(list.map(changed, fn(m) { #(m, Nil) }))
 
   list.filter_map(tests, fn(t) {
-    case dict.has_key(changed, t) || imports_any_changed(t, graph, changed, []) {
+    case
+      dict.has_key(changed, t) || imports_any_changed(t, graph, changed, [])
+    {
       True -> Ok(t)
       False -> Error(Nil)
     }
