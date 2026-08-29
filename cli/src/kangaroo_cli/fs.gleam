@@ -5,6 +5,13 @@
 @external(javascript, "../kangaroo_cli_ffi.mjs", "list_files_recursive")
 pub fn list_files_recursive(directory: String) -> Result(List(String), String)
 
+/// Lists the entries of a directory as `(name, is_directory)` pairs.
+@external(erlang, "kangaroo_cli_ffi", "list_directory")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "list_directory")
+pub fn list_directory(
+  directory: String,
+) -> Result(List(#(String, Bool)), String)
+
 /// Reads a text file as UTF-8.
 @external(erlang, "kangaroo_cli_ffi", "read_file")
 @external(javascript, "../kangaroo_cli_ffi.mjs", "read_file")

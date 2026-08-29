@@ -32,9 +32,11 @@ import kangaroo_cli/watcher.{
   diff_contents, insert, snapshot,
 }
 
-const poll_interval_ms = 250
+const poll_interval_ms = 50
 
-const debounce_ms = 150
+/// The most polls the settle loop runs while waiting for the filesystem to
+/// quiet down after a change.
+const max_settle_polls = 5
 
 /// How often (in polls) the watcher compares full file contents to catch
 /// edits that metadata cannot distinguish.
@@ -157,11 +159,22 @@ pub fn watch(project_dir: String, mode: OutputMode) -> Nil {
   }
   // An empty previous snapshot makes the first poll treat every file as
   // added, triggering the initial run.
-  loop(project_dir, snapshot(), dict.new(), 0, tui.initial(), mode, tui.All)
+  let walk = watcher.walk(["src", "test"])
+  loop(
+    project_dir,
+    walk,
+    snapshot(),
+    dict.new(),
+    0,
+    tui.initial(),
+    mode,
+    tui.All,
+  )
 }
 
 fn loop(
   project_dir: String,
+  walk: watcher.Walk,
   previous: Snapshot,
   contents: Dict(String, String),
   poll_count: Int,
@@ -183,6 +196,7 @@ fn loop(
           io.println(tui.render(ui_state, view))
           loop(
             project_dir,
+            walk,
             previous,
             contents,
             poll_count,
@@ -195,11 +209,12 @@ fn loop(
           // An empty change list runs every test module.
           let next_ui =
             do_run(project_dir, [], tui.RunInfo(0, None), ui_state, mode, view)
-          loop(project_dir, previous, contents, 0, next_ui, mode, view)
+          loop(project_dir, walk, previous, contents, 0, next_ui, mode, view)
         }
         keys.Nothing ->
           poll_and_run(
             project_dir,
+            walk,
             previous,
             contents,
             poll_count,
@@ -211,6 +226,7 @@ fn loop(
     _ ->
       poll_and_run(
         project_dir,
+        walk,
         previous,
         contents,
         poll_count,
@@ -223,6 +239,7 @@ fn loop(
 
 fn poll_and_run(
   project_dir: String,
+  walk: watcher.Walk,
   previous: Snapshot,
   contents: Dict(String, String),
   poll_count: Int,
@@ -230,8 +247,12 @@ fn poll_and_run(
   mode: OutputMode,
   view: tui.View,
 ) -> Nil {
-  let current = result.unwrap(snapshot_sources(project_dir), previous)
-  let changes = diff(previous, current)
+  let #(walk, structural) = advance_walk(project_dir, walk)
+  let current = stat_snapshot(project_dir, walk)
+  let changes =
+    diff(previous, current)
+    |> list.append(structural)
+    |> unique_changes
   let deep = poll_count % deep_check_every == 0
 
   // Every few polls the full file contents are compared too, so edits that
@@ -239,26 +260,29 @@ fn poll_and_run(
   // change is detected by metadata, only the changed files are re-read:
   // their metadata change already triggers the run, and the deep check
   // below catches the metadata-invisible edits.
-  let #(settled, settled_changes, contents, content_changes) = case changes {
+  let #(settled, settled_changes, contents, content_changes, walk) = case
+    changes
+  {
     [] ->
       case deep {
         True -> {
-          let fresh = result.unwrap(read_sources(project_dir), contents)
-          #(current, [], fresh, diff_contents(contents, fresh))
+          let files = list.append(watcher.walk_files(walk), config_files)
+          let fresh = result.unwrap(read_sources(project_dir, files), contents)
+          #(current, [], fresh, diff_contents(contents, fresh), walk)
         }
-        False -> #(current, [], contents, [])
+        False -> #(current, [], contents, [], walk)
       }
     _ -> {
-      // Debounce: wait for the editor to finish writing, then re-snapshot
-      // so rapid successive saves are coalesced into a single run.
-      let settled = settle(project_dir, current)
+      // Settle: keep sampling until the filesystem is quiet (or a bound
+      // is reached), so rapid successive saves coalesce into one run.
+      let #(walk, settled) = settle(project_dir, walk, current)
       let settled_changes =
         changes
         |> list.append(diff(current, settled))
         |> unique_changes
       let contents =
         refresh_contents(project_dir, contents, changed_paths(settled_changes))
-      #(settled, settled_changes, contents, [])
+      #(settled, settled_changes, contents, [], walk)
     }
   }
 
@@ -269,7 +293,16 @@ fn poll_and_run(
 
   case all_changes {
     [] ->
-      loop(project_dir, settled, contents, poll_count + 1, ui_state, mode, view)
+      loop(
+        project_dir,
+        walk,
+        settled,
+        contents,
+        poll_count + 1,
+        ui_state,
+        mode,
+        view,
+      )
     _ -> {
       let changed = changed_paths(all_changes)
       let affected = case compute_affected(project_dir, changed) {
@@ -295,7 +328,7 @@ fn poll_and_run(
       }
 
       let next_ui = do_run(project_dir, changed, run_info, ui_state, mode, view)
-      loop(project_dir, settled, contents, 0, next_ui, mode, view)
+      loop(project_dir, walk, settled, contents, 0, next_ui, mode, view)
     }
   }
 }
@@ -320,12 +353,75 @@ fn changed_paths(changes: List(FileChange)) -> List(String) {
   list.map(changes, change_path)
 }
 
-/// Waits for the filesystem to settle after a change and returns the latest
-/// snapshot. Runs the tests against the settled snapshot so a run is not
-/// wasted on a half-written file.
-fn settle(project_dir: String, previous: Snapshot) -> Snapshot {
-  fs.sleep(debounce_ms)
-  result.unwrap(snapshot_sources(project_dir), previous)
+/// The files watched in addition to the walk: the project configuration.
+const config_files = ["gleam.toml", "manifest.toml"]
+
+/// Advances the incremental walk over the project's source trees.
+fn advance_walk(
+  project_dir: String,
+  walk: watcher.Walk,
+) -> #(watcher.Walk, List(FileChange)) {
+  watcher.walk_advance(
+    walk,
+    fn(dir) {
+      case fs.mtime_ms(project_dir <> "/" <> dir) {
+        Ok(mtime) -> Ok(mtime)
+        Error(_) -> Error(Nil)
+      }
+    },
+    fn(dir) {
+      case fs.list_directory(project_dir <> "/" <> dir) {
+        Ok(entries) ->
+          Ok(
+            list.map(entries, fn(entry) { watcher.DirEntry(entry.0, entry.1) }),
+          )
+        Error(_) -> Error(Nil)
+      }
+    },
+  )
+}
+
+/// Stats every file known to the walk plus the project configuration,
+/// producing the snapshot the change detection diffs against. Files that
+/// disappear between the listing and the stat are simply dropped: their
+/// absence shows up as a `Removed` in the diff.
+fn stat_snapshot(project_dir: String, walk: watcher.Walk) -> Snapshot {
+  let files = list.append(watcher.walk_files(walk), config_files)
+  list.fold(files, snapshot(), fn(state, file) {
+    let path = project_dir <> "/" <> file
+    case fs.mtime_ms(path), fs.file_size(path) {
+      Ok(mtime), Ok(size) -> insert(state, file, watcher.FileMeta(mtime, size))
+      _, _ -> state
+    }
+  })
+}
+
+/// Waits for the filesystem to settle after a change: keeps sampling until
+/// a step observes no change (or a bound is reached). Runs the tests
+/// against the settled snapshot so a run is not wasted on a half-written
+/// file, while rapid successive saves coalesce into a single run.
+fn settle(
+  project_dir: String,
+  walk: watcher.Walk,
+  previous: Snapshot,
+) -> #(watcher.Walk, Snapshot) {
+  settle_loop(project_dir, walk, previous, 0)
+}
+
+fn settle_loop(
+  project_dir: String,
+  walk: watcher.Walk,
+  previous: Snapshot,
+  polls: Int,
+) -> #(watcher.Walk, Snapshot) {
+  fs.sleep(poll_interval_ms)
+  let #(walk, structural) = advance_walk(project_dir, walk)
+  let current = stat_snapshot(project_dir, walk)
+  let stable = structural == [] && diff(previous, current) == []
+  case stable || polls >= max_settle_polls {
+    True -> #(walk, current)
+    False -> settle_loop(project_dir, walk, current, polls + 1)
+  }
 }
 
 /// Runs the tests and presents the results in the given mode. Returns the
@@ -425,15 +521,17 @@ pub fn snapshot_sources(project_dir: String) -> Result(Snapshot, String) {
   })
 }
 
-/// The contents of every watched file, used by the content-level change
-/// check.
+/// The contents of every file known to the walk, keyed by their
+/// project-relative path, used by the content-level change check. The
+/// file set matches the metadata snapshots, so a deep comparison can
+/// never report a file that the walk does not track.
 pub fn read_sources(
   project_dir: String,
+  files: List(String),
 ) -> Result(Dict(String, String), String) {
-  use paths <- result.try(watched_files(project_dir))
-  list.try_fold(paths, dict.new(), fn(contents, path) {
-    use text <- result.try(fs.read_file(path))
-    Ok(dict.insert(contents, path, text))
+  list.try_fold(files, dict.new(), fn(contents, file) {
+    use text <- result.try(fs.read_file(project_dir <> "/" <> file))
+    Ok(dict.insert(contents, file, text))
   })
 }
 
@@ -447,7 +545,7 @@ fn refresh_contents(
   paths: List(String),
 ) -> Dict(String, String) {
   list.fold(paths, contents, fn(contents, path) {
-    case fs.read_file(path) {
+    case fs.read_file(project_dir <> "/" <> path) {
       Ok(text) -> dict.insert(contents, path, text)
       Error(_) -> contents
     }
@@ -560,14 +658,23 @@ fn run_in_vm_common(
   }
   use module_list <- result.try(module_list)
 
-  let suite_lists =
+  // Load every module before calling any `suites()`. A module's `suites()`
+  // can reference other test modules; without this, the first such call
+  // auto-loads them from whatever build tree happens to be first in the
+  // code path (e.g. a stub beam of the same name in another package),
+  // silently replacing the module this run just loaded.
+  let loaded =
     list.filter_map(module_list, fn(module) {
       case vm.load_module(project_dir, module) {
-        Ok(_) ->
-          case vm.call_suites(module) {
-            Ok(suites) -> Ok(suites)
-            Error(_) -> Error(Nil)
-          }
+        Ok(_) -> Ok(module)
+        Error(_) -> Error(Nil)
+      }
+    })
+
+  let suite_lists =
+    list.filter_map(loaded, fn(module) {
+      case vm.call_suites(module) {
+        Ok(suites) -> Ok(suites)
         Error(_) -> Error(Nil)
       }
     })
