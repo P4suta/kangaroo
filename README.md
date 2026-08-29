@@ -114,6 +114,7 @@ gleam run -m kangaroo_cli            # watch mode: TUI on a terminal, streaming 
 gleam run -m kangaroo_cli -- watch --tui       # force the TUI
 gleam run -m kangaroo_cli -- watch --no-tui    # streaming output
 gleam run -m kangaroo_cli -- watch --json      # editor protocol
+gleam run -m kangaroo_cli -- watch --coverage  # report line coverage after every run (Erlang)
 gleam run -m kangaroo_cli -- run               # run once
 gleam run -m kangaroo_cli -- run --name <substring>   # run matching tests only
 gleam run -m kangaroo_cli -- run --json              # run once, editor protocol (CI)
@@ -142,9 +143,14 @@ module.
 
 ## Editor protocol
 
-`kangaroo_cli watch --json` emits one JSON object per line:
+`kangaroo_cli watch --json` emits one JSON object per line. The compile
+phase is reported too, so editors can show progress while the project
+compiles:
 
 ```json
+{"type":"changed","files":["src/myapp.gleam"],"affected":2}
+{"type":"compile_started"}
+{"type":"compile_finished"}
 {"type":"run_started","run_id":...}
 {"type":"case_started","suite":"math","case":"adds"}
 {"type":"case_finished","suite":"math","case":"adds","outcome":{"kind":"passed"},"duration_ms":1}

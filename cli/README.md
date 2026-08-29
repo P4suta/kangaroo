@@ -10,6 +10,7 @@ a machine-readable event stream.
 ```sh
 gleam run -m kangaroo_cli              # watch mode with TUI
 gleam run -m kangaroo_cli -- watch --no-tui   # streaming output
+gleam run -m kangaroo_cli -- watch --coverage # line coverage after every run (Erlang)
 gleam run -m kangaroo_cli -- watch --json     # editor protocol (NDJSON)
 gleam run -m kangaroo_cli -- run              # run the tests once
 gleam run -m kangaroo_cli -- run --coverage   # run once with line coverage
