@@ -15,6 +15,11 @@ import {
 } from "./kangaroo/internal/process.mjs";
 
 const processWorkerUrl = new URL("./kangaroo_process_worker.mjs", import.meta.url);
+const activityBufferKey = Symbol.for("kangaroo.activityBuffer");
+const activityBuffer =
+  globalThis[activityBufferKey] ||
+  new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+globalThis[activityBufferKey] = activityBuffer;
 const processes = new Map();
 let nextProcessId = 1;
 
@@ -88,6 +93,7 @@ export function start(directory, executable, argumentList, environment, timeoutM
       workerData: {
         port: port2,
         startupBuffer,
+        activityBuffer,
         directory,
         executable,
         arguments: listToArray(argumentList),

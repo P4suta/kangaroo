@@ -372,10 +372,11 @@ fn refresh_tui_tests(
   let state = TuiWatchState(..state, ui:)
   draw_tui(ui)
   case
-    continuous.compile_until_change_controlled(
+    compile_changed_until_change_controlled(
       project_dir,
       roots,
       baseline,
+      changes,
       state,
       tui_active_control,
     )
@@ -735,12 +736,12 @@ fn watch_plain_project(
     state,
     observe_plain_changes,
     fn(state, changes, snapshot, roots) {
-      trace_plain("compile start")
       case
-        continuous.compile_until_change_observed(
+        compile_changed_until_change_observed(
           project_dir,
           roots,
           snapshot,
+          changes,
           report_plain_changes,
         )
       {
@@ -772,6 +773,49 @@ fn watch_plain_project(
     },
   )
   |> result.map(fn(_) { 0 })
+}
+
+fn compile_changed_until_change_observed(
+  project_dir: String,
+  roots: List(String),
+  baseline: Dict(String, String),
+  changes: List(watcher.Change),
+  on_detect: fn(List(watcher.Change)) -> Nil,
+) -> Result(continuous.ObservedCompileOutcome, String) {
+  use _ <- result.try(watcher.invalidate_stale_build_files(
+    project_dir,
+    vm.target(),
+    changes,
+  ))
+  trace_plain("compile start")
+  continuous.compile_until_change_observed(
+    project_dir,
+    roots,
+    baseline,
+    on_detect,
+  )
+}
+
+fn compile_changed_until_change_controlled(
+  project_dir: String,
+  roots: List(String),
+  baseline: Dict(String, String),
+  changes: List(watcher.Change),
+  state: TuiWatchState,
+  on_control: fn(TuiWatchState) -> continuous.ActiveControl(TuiWatchState),
+) -> Result(continuous.ControlledCompileOutcome(TuiWatchState), String) {
+  use _ <- result.try(watcher.invalidate_stale_build_files(
+    project_dir,
+    vm.target(),
+    changes,
+  ))
+  continuous.compile_until_change_controlled(
+    project_dir,
+    roots,
+    baseline,
+    state,
+    on_control,
+  )
 }
 
 fn refresh_watch(

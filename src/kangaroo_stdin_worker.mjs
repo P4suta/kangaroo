@@ -3,6 +3,7 @@ import { parentPort, workerData } from "node:worker_threads";
 
 const port = workerData.port;
 const control = new Int32Array(workerData.controlBuffer);
+const activity = new Int32Array(workerData.activityBuffer);
 
 globalThis.process.once?.("exit", () => {
   Atomics.store(control, 1, 2);
@@ -13,6 +14,8 @@ function send(message) {
   port.postMessage(message);
   Atomics.add(control, 0, 1);
   Atomics.notify(control, 0);
+  Atomics.add(activity, 0, 1);
+  Atomics.notify(activity, 0);
 }
 
 let buffer = "";

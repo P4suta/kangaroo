@@ -50,6 +50,24 @@ pub fn suites() {
         expect(watcher.compile_arguments("javascript"))
         |> to_equal(["build", "--target", "javascript"])
       }),
+      it("invalidates only stale compiler products for content changes", fn() {
+        expect(
+          watcher.stale_build_files("/project", "sample_app", "javascript", [
+            Modified("test/unit/math_test.gleam"),
+            Modified("test/math_test_ffi.mjs"),
+            Modified("test/math_test_ffi.erl"),
+            Added("src/new_module.gleam"),
+            Removed("src/old/module.gleam"),
+          ]),
+        )
+        |> to_equal([
+          "/project/build/dev/javascript/sample_app/_gleam_artefacts/unit@math_test.cache_meta",
+          "/project/build/dev/javascript/sample_app/math_test_ffi.mjs",
+          "/project/build/dev/javascript/sample_app/_gleam_artefacts/old@module.cache_meta",
+          "/project/build/dev/javascript/sample_app/_gleam_artefacts/old@module.cache",
+          "/project/build/dev/javascript/sample_app/old/module.mjs",
+        ])
+      }),
       it("builds a target-specific cancellable child run command", fn() {
         expect(
           watcher.run_arguments("javascript", [

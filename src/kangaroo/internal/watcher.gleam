@@ -1,7 +1,9 @@
 import gleam/dict.{type Dict}
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import kangaroo/internal/config
 import kangaroo/internal/fs
 
 pub type Change {
@@ -62,6 +64,125 @@ pub fn roots(
 
 pub fn compile_arguments(target: String) -> List(String) {
   ["build", "--target", target]
+}
+
+/// Returns compiler products whose timestamp-only cache keys can be stale
+/// after an atomic save. Gleam source modules need only lose their metadata;
+/// the compiler then recompiles the module and its affected dependants. Native
+/// files are copied separately, so their target copy is removed as well.
+pub fn stale_build_files(
+  project_dir: String,
+  package_name: String,
+  target: String,
+  changes: List(Change),
+) -> List(String) {
+  let package = join(project_dir, "build/dev/" <> target <> "/" <> package_name)
+  changes
+  |> list.flat_map(fn(change) {
+    stale_files_for_change(package, target, change)
+  })
+  |> list.unique
+}
+
+/// Invalidates the narrow compiler cache boundary before a settled watch
+/// generation is compiled. This leaves dependency builds intact and never
+/// changes user source metadata.
+pub fn invalidate_stale_build_files(
+  project_dir: String,
+  target: String,
+  changes: List(Change),
+) -> Result(Nil, String) {
+  use source <- result.try(fs.read_file(join(project_dir, "gleam.toml")))
+  use package_name <- result.try(config.package_name(source))
+  stale_build_files(project_dir, package_name, target, changes)
+  |> list.try_each(fs.remove_file)
+}
+
+fn stale_files_for_change(
+  package: String,
+  target: String,
+  change: Change,
+) -> List(String) {
+  let path = change |> path |> normalise_path
+  case source_relative(path), native_relative(path, target), change {
+    Some(relative), _, Modified(_) -> [module_metadata(package, relative)]
+    Some(relative), _, Removed(_) ->
+      removed_module_files(package, target, relative)
+    _, Some(relative), Modified(_) | _, Some(relative), Removed(_) -> [
+      join(package, relative),
+    ]
+    _, _, _ -> []
+  }
+}
+
+fn source_relative(path: String) -> Option(String) {
+  case path {
+    "src/" <> relative | "test/" <> relative ->
+      case string.ends_with(relative, ".gleam") {
+        True -> Some(relative)
+        False -> None
+      }
+    _ -> None
+  }
+}
+
+fn native_relative(path: String, target: String) -> Option(String) {
+  let relative = case path {
+    "src/" <> relative | "test/" <> relative -> Some(relative)
+    _ -> None
+  }
+  case relative, target {
+    Some(relative), "javascript" ->
+      case
+        string.ends_with(relative, ".mjs")
+        || string.ends_with(relative, ".js")
+        || string.ends_with(relative, ".ts")
+      {
+        True -> Some(relative)
+        False -> None
+      }
+    Some(relative), "erlang" ->
+      case string.ends_with(relative, ".erl") {
+        True -> Some(relative)
+        False -> None
+      }
+    _, _ -> None
+  }
+}
+
+fn module_metadata(package: String, relative: String) -> String {
+  join(
+    package,
+    "_gleam_artefacts/" <> module_artifact(relative) <> ".cache_meta",
+  )
+}
+
+fn removed_module_files(
+  package: String,
+  target: String,
+  relative: String,
+) -> List(String) {
+  let artifact = module_artifact(relative)
+  let metadata = join(package, "_gleam_artefacts/" <> artifact)
+  case target {
+    "javascript" -> [
+      metadata <> ".cache_meta",
+      metadata <> ".cache",
+      join(package, string.remove_suffix(relative, ".gleam") <> ".mjs"),
+    ]
+    _ -> [
+      metadata <> ".cache_meta",
+      metadata <> ".cache",
+      metadata <> ".erl",
+      join(package, "ebin/" <> artifact <> ".beam"),
+    ]
+  }
+}
+
+fn module_artifact(relative: String) -> String {
+  relative
+  |> string.remove_suffix(".gleam")
+  |> string.replace(each: "/", with: "@")
 }
 
 pub fn run_arguments(target: String, arguments: List(String)) -> List(String) {

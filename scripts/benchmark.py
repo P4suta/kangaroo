@@ -304,7 +304,7 @@ def _wait_for_line(
 
 def wait_for_ready_generation(
     marker: Path,
-    previous: str,
+    expected: str,
     process: subprocess.Popen[str],
     *,
     timeout: float,
@@ -316,7 +316,7 @@ def wait_for_ready_generation(
             token = marker.read_text(encoding="utf-8")
         except FileNotFoundError:
             token = ""
-        if token and token != previous:
+        if token == expected:
             return token
         exit_code = process.poll()
         if exit_code is not None:
@@ -324,7 +324,10 @@ def wait_for_ready_generation(
                 f"watch daemon exited {exit_code} before the next test generation"
             )
         if time.monotonic() >= deadline:
-            raise TimeoutError("timed out waiting for an executing test generation")
+            raise TimeoutError(
+                "timed out waiting for an executing test generation: "
+                f"expected {expected!r}, observed {token!r}"
+            )
         time.sleep(0.005)
 
 
@@ -470,23 +473,54 @@ def copy_fixture_project(source: Path, destination: Path) -> None:
         )
 
 
-def instrument_watch_fixture(fixture: Path, marker: Path) -> None:
-    """Make the copied Node fixture identify each executing generation."""
-    source = fixture.read_text(encoding="utf-8")
-    original = (
+def instrument_watch_fixture(
+    gleam_fixture: Path,
+    javascript_fixture: Path,
+    marker: Path,
+) -> None:
+    """Embed a compiled generation token in the copied Node watch fixture."""
+    gleam_source = gleam_fixture.read_text(encoding="utf-8")
+    original_declaration = (
+        '@external(erlang, "kangaroo_watch_fixture_ffi", "delay")\n'
+        '@external(javascript, "./kangaroo_watch_fixture_ffi.mjs", "delay")\n'
+        "fn delay() -> Nil\n"
+    )
+    benchmark_declaration = (
+        '@external(javascript, "./kangaroo_watch_fixture_ffi.mjs", '
+        '"benchmark_delay")\n'
+        "fn benchmark_delay(token: String) -> Nil\n"
+    )
+    gleam_source = required_replace(
+        gleam_source,
+        original_declaration,
+        benchmark_declaration,
+    )
+    gleam_source = required_replace(
+        gleam_source,
+        "  delay()\n",
+        '  benchmark_delay("// kangaroo-benchmark: 0")\n',
+    )
+    gleam_fixture.write_text(gleam_source, encoding="utf-8")
+
+    javascript_source = javascript_fixture.read_text(encoding="utf-8")
+    original_javascript = (
         "export function delay() {\n"
         "  return new Promise((resolve) => setTimeout(resolve, 5000));\n"
         "}\n"
     )
-    replacement = (
+    benchmark_javascript = (
         'import { writeFileSync } from "node:fs";\n\n'
-        "export function delay() {\n"
-        f"  writeFileSync({json.dumps(str(marker))}, `${{process.pid}}-${{Date.now()}}`);\n"
+        "export function benchmark_delay(token) {\n"
+        f"  writeFileSync({json.dumps(str(marker))}, String(token));\n"
         "  return new Promise((resolve) => setTimeout(resolve, 5000));\n"
         "}\n"
     )
-    fixture.write_text(
-        required_replace(source, original, replacement),
+    javascript_fixture.write_text(
+        required_replace(
+            javascript_source,
+            original_javascript,
+            benchmark_javascript,
+        ),
         encoding="utf-8",
     )
 
@@ -557,12 +591,9 @@ def measure_save_detection(root: Path, *, samples: int = 20) -> list[float]:
         project = Path(directory)
         copy_fixture_project(source_fixture, project)
         probe = project / "test" / "kangaroo_watch_fixture_test.gleam"
-        probe.write_text(
-            probe.read_text(encoding="utf-8") + "\n// kangaroo-benchmark: 0\n",
-            encoding="utf-8",
-        )
         ready_marker = project / ".kangaroo-benchmark-ready"
         instrument_watch_fixture(
+            probe,
             project / "test" / "kangaroo_watch_fixture_ffi.mjs",
             ready_marker,
         )
@@ -597,9 +628,9 @@ def measure_save_detection(root: Path, *, samples: int = 20) -> list[float]:
                 timeout=20,
                 process=client.process,
             )
-            ready_generation = wait_for_ready_generation(
+            wait_for_ready_generation(
                 ready_marker,
-                "",
+                "// kangaroo-benchmark: 0",
                 client.process,
                 timeout=20,
             )
@@ -621,9 +652,9 @@ def measure_save_detection(root: Path, *, samples: int = 20) -> list[float]:
                     # Synchronise on code executing inside the replacement
                     # test process, rather than a pre-spawn trace, so neither
                     # compilation nor runtime startup enters the next sample.
-                    ready_generation = wait_for_ready_generation(
+                    wait_for_ready_generation(
                         ready_marker,
-                        ready_generation,
+                        f"// kangaroo-benchmark: {generation % 10}",
                         client.process,
                         timeout=10,
                     )

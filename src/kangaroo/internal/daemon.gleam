@@ -16,14 +16,23 @@ import kangaroo/internal/vm
 import kangaroo/internal/watcher
 import kangaroo/sys
 
-const input_poll_ms = 35
+const erlang_input_poll_ms = 35
+
+const javascript_input_poll_ms = 100
 
 const operation_timeout_ms = 604_800_000
 
 const cancellation_timeout_ms = 250
 
 pub fn poll_interval_ms() -> Int {
-  input_poll_ms
+  poll_interval_for(vm.target())
+}
+
+pub fn poll_interval_for(target: String) -> Int {
+  case target {
+    "javascript" -> javascript_input_poll_ms
+    _ -> erlang_input_poll_ms
+  }
 }
 
 type State {
@@ -99,7 +108,7 @@ pub fn run(project_dir: String) -> Nil {
 
 fn loop(project_dir: String, state: State) -> Nil {
   let state = State(..state, operations: drain_operations(state.operations))
-  case fs.read_line_timeout(input_poll_ms) {
+  case fs.read_line_timeout(poll_interval_ms()) {
     fs.InputPending -> loop(project_dir, state)
     fs.InputEnd -> stop_operations(state.operations)
     fs.InputLine(line) -> {

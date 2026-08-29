@@ -120,7 +120,7 @@ class BenchmarkPolicyTest(unittest.TestCase):
             marker.write_text("generation-2", encoding="utf-8")
             token = benchmark.wait_for_ready_generation(
                 marker,
-                "generation-1",
+                "generation-2",
                 RunningProcess(),
                 timeout=1,
             )
@@ -131,21 +131,38 @@ class BenchmarkFixtureTest(unittest.TestCase):
     def test_instruments_the_watch_fixture_with_a_generation_marker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            fixture = root / "fixture.mjs"
+            gleam_fixture = root / "fixture.gleam"
+            javascript_fixture = root / "fixture.mjs"
             marker = root / "ready marker"
-            fixture.write_text(
+            gleam_fixture.write_text(
+                '@external(erlang, "kangaroo_watch_fixture_ffi", "delay")\n'
+                '@external(javascript, "./kangaroo_watch_fixture_ffi.mjs", "delay")\n'
+                "fn delay() -> Nil\n\n"
+                "pub fn cancellable_test() {\n"
+                "  delay()\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            javascript_fixture.write_text(
                 "export function delay() {\n"
                 "  return new Promise((resolve) => setTimeout(resolve, 5000));\n"
                 "}\n",
                 encoding="utf-8",
             )
 
-            benchmark.instrument_watch_fixture(fixture, marker)
+            benchmark.instrument_watch_fixture(
+                gleam_fixture,
+                javascript_fixture,
+                marker,
+            )
 
-            source = fixture.read_text(encoding="utf-8")
-            self.assertIn("writeFileSync", source)
-            self.assertIn(json.dumps(str(marker)), source)
-            self.assertIn("setTimeout(resolve, 5000)", source)
+            gleam_source = gleam_fixture.read_text(encoding="utf-8")
+            javascript_source = javascript_fixture.read_text(encoding="utf-8")
+            self.assertIn('benchmark_delay("// kangaroo-benchmark: 0")', gleam_source)
+            self.assertIn("writeFileSync", javascript_source)
+            self.assertIn(json.dumps(str(marker)), javascript_source)
+            self.assertIn("String(token)", javascript_source)
+            self.assertIn("setTimeout(resolve, 5000)", javascript_source)
 
     def test_required_replace_rejects_a_stale_fixture_literal(self) -> None:
         self.assertEqual(

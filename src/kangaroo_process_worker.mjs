@@ -3,6 +3,7 @@ import { workerData } from "node:worker_threads";
 
 const port = workerData.port;
 const startup = new Int32Array(workerData.startupBuffer);
+const activity = new Int32Array(workerData.activityBuffer);
 let terminal = false;
 let cancelled = false;
 let timeout;
@@ -12,6 +13,12 @@ let inputRequested = false;
 let terminationPids = [];
 let output = "";
 const terminationPause = new Int32Array(new SharedArrayBuffer(4));
+
+function publish(message) {
+  port.postMessage(message);
+  Atomics.add(activity, 0, 1);
+  Atomics.notify(activity, 0);
+}
 
 function signalStarted(status = 1) {
   if (Atomics.compareExchange(startup, 0, 0, status) === 0) {
@@ -23,7 +30,7 @@ function finish(message) {
   if (terminal) return;
   terminal = true;
   clearTimeout(timeout);
-  port.postMessage(message);
+  publish(message);
   port.close();
 }
 
@@ -153,12 +160,12 @@ try {
   child.stdout.on("data", (data) => {
     const chunk = data.toString("utf8");
     output += chunk;
-    port.postMessage({ type: "output", data: chunk });
+    publish({ type: "output", data: chunk });
   });
   child.stderr.on("data", (data) => {
     const chunk = data.toString("utf8");
     output += chunk;
-    port.postMessage({ type: "output", data: chunk });
+    publish({ type: "output", data: chunk });
   });
   child.stdin.on("error", (error) => {
     if (!terminating) {

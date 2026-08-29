@@ -32,6 +32,13 @@ import {
 let inputEnded = false;
 let inputReader;
 const inputWorkerUrl = new URL("./kangaroo_stdin_worker.mjs", import.meta.url);
+const activityBufferKey = Symbol.for("kangaroo.activityBuffer");
+const activityBuffer =
+  globalThis[activityBufferKey] ||
+  new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+globalThis[activityBufferKey] = activityBuffer;
+const activity = new Int32Array(activityBuffer);
+let observedActivity = Atomics.load(activity, 0);
 
 export function list_files_recursive(directory) {
   try {
@@ -262,7 +269,7 @@ export function read_line_timeout(milliseconds) {
     const control = new Int32Array(controlBuffer);
     const { port1, port2 } = new MessageChannel();
     const worker = new Worker(inputWorkerUrl, {
-      workerData: { port: port2, controlBuffer },
+      workerData: { port: port2, controlBuffer, activityBuffer },
       transferList: [port2],
     });
     // A reader blocked in readSync(0) cannot always be interrupted promptly by
@@ -285,15 +292,14 @@ export function read_line_timeout(milliseconds) {
   }
   let received = receiveMessageOnPort(inputReader.port);
   if (!received && milliseconds > 0) {
-    const sequence = Atomics.load(inputReader.control, 0);
-    Atomics.wait(
-      inputReader.control,
-      0,
-      sequence,
-      Math.max(0, milliseconds),
-    );
+    const sequence = Atomics.load(activity, 0);
+    if (sequence === observedActivity) {
+      Atomics.wait(activity, 0, sequence, Math.max(0, milliseconds));
+    }
+    observedActivity = Atomics.load(activity, 0);
     received = receiveMessageOnPort(inputReader.port);
   }
+  observedActivity = Atomics.load(activity, 0);
   if (!received) return new InputPending();
   if (received.message.type === "end") {
     inputReader.ended = true;

@@ -1,9 +1,10 @@
 import gleam/list
+import gleam/option.{Some}
 import kangaroo/internal/legacy/expect.{
   expect, to_be_false, to_be_true, to_equal,
 }
 import kangaroo/internal/legacy/suite.{
-  it, it_focused, it_skipped, no_hooks, suite,
+  it, it_focused, it_skipped, it_with_timeout, no_hooks, suite,
 }
 
 fn empty_body() {
@@ -25,6 +26,10 @@ pub fn suites() {
       it("marks focused cases", fn() {
         let c = it_focused("a focused case", empty_body)
         expect(c.mode) |> to_equal(suite.Focused)
+      }),
+      it("sets an explicit timeout for slow black-box cases", fn() {
+        let c = it_with_timeout("a slow case", 60_000, empty_body)
+        expect(c.timeout_ms) |> to_equal(Some(60_000))
       }),
       it("has no hooks by default", fn() {
         let s = suite("math", [])

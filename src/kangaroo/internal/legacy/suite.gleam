@@ -1,6 +1,6 @@
 // Pre-v1 suite model retained only for the repository's migration tests.
 import gleam/list
-import gleam/option.{type Option, None}
+import gleam/option.{type Option, None, Some}
 import gleam/string
 
 /// A single test case within a suite.
@@ -48,6 +48,16 @@ pub fn it_skipped(name: String, body: fn() -> Nil) -> Case {
 
 pub fn it_focused(name: String, body: fn() -> Nil) -> Case {
   Case(name, body, Focused, None, None)
+}
+
+/// Gives a repository migration test an explicit isolation timeout. This is
+/// intentionally internal and is not part of Kangaroo's v1 test API.
+pub fn it_with_timeout(
+  name: String,
+  timeout_ms: Int,
+  body: fn() -> Nil,
+) -> Case {
+  Case(name, body, Normal, Some(timeout_ms), None)
 }
 
 pub fn no_hooks() -> Hooks {
