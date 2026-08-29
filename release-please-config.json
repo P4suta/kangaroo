@@ -1,0 +1,19 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "gleam.toml",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "toml",
+          "path": "cli/gleam.toml",
+          "jsonpath": "$.version"
+        }
+      ]
+    }
+  }
+}

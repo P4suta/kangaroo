@@ -2,7 +2,7 @@ name = "kangaroo"
 version = "0.1.0"
 description = "A next-generation continuous test runner for Gleam, inspired by Wallaby.js"
 licences = ["Apache-2.0"]
-repository = { type = "github", user = "yasunobu", repo = "kangaroo" }
+repository = { type = "github", user = "P4suta", repo = "kangaroo" }
 
 [dependencies]
 gleam_erlang = ">= 1.0.0 and < 2.0.0"
