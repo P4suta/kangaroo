@@ -1,0 +1,30 @@
+{
+  "name": "kangaroo",
+  "displayName": "Kangaroo",
+  "description": "Continuous Gleam test results: failures as diagnostics while you edit.",
+  "version": "0.1.0",
+  "publisher": "yasunobu",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Testing", "Other"],
+  "activationEvents": ["onLanguage:gleam", "onCommand:kangaroo.start", "onCommand:kangaroo.stop"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "kangaroo.start", "title": "Kangaroo: Start watching tests" },
+      { "command": "kangaroo.stop", "title": "Kangaroo: Stop watching" }
+    ],
+    "configuration": {
+      "title": "Kangaroo",
+      "properties": {
+        "kangaroo.gleamPath": {
+          "type": "string",
+          "default": "gleam",
+          "description": "Path to the gleam executable."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "npx @vscode/vsce package"
+  }
+}
