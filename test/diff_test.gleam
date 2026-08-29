@@ -1,7 +1,5 @@
 import gleam/option.{None, Some}
-import kangaroo/diff.{
-  Added, Kept, Removed, diff_lines, diff_lines_numbered,
-}
+import kangaroo/diff.{Added, Kept, Removed, diff_lines, diff_lines_numbered}
 import kangaroo/expect.{expect, to_equal}
 import kangaroo/suite.{it, suite}
 
@@ -39,12 +37,14 @@ pub fn suites() {
       }),
       it("numbers replaced lines", fn() {
         expect(diff_lines_numbered("a\nb\nc", "a\nx\nc"))
-        |> to_equal(Some([
-          Kept(1, "a"),
-          Removed(2, "b"),
-          Added(2, "x"),
-          Kept(3, "c"),
-        ]))
+        |> to_equal(
+          Some([
+            Kept(1, "a"),
+            Removed(2, "b"),
+            Added(2, "x"),
+            Kept(3, "c"),
+          ]),
+        )
       }),
       it("numbers added lines from the actual text", fn() {
         expect(diff_lines_numbered("a\nb", "a\nb\nc"))

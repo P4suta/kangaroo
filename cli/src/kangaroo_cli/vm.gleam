@@ -46,15 +46,13 @@ fn load_module_js(path: String) -> Result(Nil, String)
 
 /// The absolute path of a compiled JavaScript module, e.g.
 /// `<project>/build/dev/javascript/<package>/<name>.mjs`.
-pub fn js_module_path(project_dir: String, name: String) -> Result(String, String) {
+pub fn js_module_path(
+  project_dir: String,
+  name: String,
+) -> Result(String, String) {
   use package <- result.try(package_name(project_dir))
   let relative_path =
-    project_dir
-    <> "/build/dev/javascript/"
-    <> package
-    <> "/"
-    <> name
-    <> ".mjs"
+    project_dir <> "/build/dev/javascript/" <> package <> "/" <> name <> ".mjs"
   case string.starts_with(relative_path, "/") {
     True -> Ok(relative_path)
     False -> {
@@ -75,9 +73,7 @@ pub fn list_test_modules(project_dir: String) -> Result(List(String), String) {
     True -> list_test_modules_erlang(project_dir)
     False -> {
       use package <- result.try(package_name(project_dir))
-      list_test_modules_js(
-        project_dir <> "/build/dev/javascript/" <> package,
-      )
+      list_test_modules_js(project_dir <> "/build/dev/javascript/" <> package)
     }
   }
 }

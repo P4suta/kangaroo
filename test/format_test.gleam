@@ -23,7 +23,8 @@ pub fn suites() {
         expect(format.render_diff("x", "y")) |> to_equal("")
       }),
       it("renders a location line", fn() {
-        let rendered = format.location_line(Some(Location("test/foo_test.gleam", 7)))
+        let rendered =
+          format.location_line(Some(Location("test/foo_test.gleam", 7)))
         string.contains(rendered, "at test/foo_test.gleam:7")
         |> expect
         |> to_be_true()

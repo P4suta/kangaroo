@@ -7,7 +7,9 @@ import kangaroo/event.{
   SuiteStarted,
 }
 import kangaroo/expect.{expect, to_equal}
-import kangaroo/failure.{AssertionFailed, EqualityMismatch, Failed, Passed, Skipped}
+import kangaroo/failure.{
+  AssertionFailed, EqualityMismatch, Failed, Passed, Skipped,
+}
 import kangaroo/report.{Summary}
 import kangaroo/suite.{it, suite}
 import kangaroo_cli/tui
@@ -41,7 +43,9 @@ pub fn suites() {
                 expect(adds.name) |> to_equal("adds")
                 expect(adds.status) |> to_equal(tui.Passed)
                 expect(subs.status)
-                |> to_equal(tui.Failed([EqualityMismatch("2", "1", None, None)]))
+                |> to_equal(
+                  tui.Failed([EqualityMismatch("2", "1", None, None)]),
+                )
               }
               _ -> panic as "expected two cases"
             }
@@ -112,7 +116,9 @@ pub fn suites() {
           |> tui.apply(RunFinished(1, Summary(1, 0, 0, 5)))
           |> tui.with_run_info(tui.RunInfo(2, Some(3)))
         let rendered = tui.render(state, tui.All)
-        string.contains(rendered, "2 file(s) changed") |> expect |> to_equal(True)
+        string.contains(rendered, "2 file(s) changed")
+        |> expect
+        |> to_equal(True)
         string.contains(rendered, "3 affected test module(s)")
         |> expect
         |> to_equal(True)

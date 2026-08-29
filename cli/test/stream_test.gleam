@@ -70,11 +70,13 @@ pub fn suites() {
           CaseFinished(
             "s",
             "c",
-            Failed([UnexpectedError(
-              "panic",
-              "boom",
-              Some(Location("test/foo_test.gleam", 7)),
-            )]),
+            Failed([
+              UnexpectedError(
+                "panic",
+                "boom",
+                Some(Location("test/foo_test.gleam", 7)),
+              ),
+            ]),
             0,
           ),
         ])

@@ -80,7 +80,8 @@ pub fn to_be_false(expectation: Expectation(Bool)) -> Nil {
 pub fn to_be_none(expectation: Expectation(Option(a))) -> Nil {
   case expectation.actual {
     None -> Nil
-    Some(_) -> fail(AssertionFailed("expected None", None), expectation.location)
+    Some(_) ->
+      fail(AssertionFailed("expected None", None), expectation.location)
   }
 }
 
@@ -130,9 +131,9 @@ pub fn to_contain_text(
       fail(
         AssertionFailed(
           "expected "
-          <> string.inspect(expectation.actual)
-          <> " to contain "
-          <> string.inspect(substring),
+            <> string.inspect(expectation.actual)
+            <> " to contain "
+            <> string.inspect(substring),
           None,
         ),
         expectation.location,
@@ -164,9 +165,9 @@ pub fn to_be_close_to(
       fail(
         AssertionFailed(
           "expected "
-          <> float.to_string(expectation.actual)
-          <> " to be close to "
-          <> float.to_string(expected),
+            <> float.to_string(expectation.actual)
+            <> " to be close to "
+            <> float.to_string(expected),
           None,
         ),
         expectation.location,
@@ -175,6 +176,7 @@ pub fn to_be_close_to(
     _ -> Nil
   }
 }
+
 /// Asserts that an integer is strictly less than the expected value.
 pub fn to_be_less_than(expectation: Expectation(Int), expected: Int) -> Nil {
   case expectation.actual < expected {
@@ -183,9 +185,9 @@ pub fn to_be_less_than(expectation: Expectation(Int), expected: Int) -> Nil {
       fail(
         AssertionFailed(
           "expected "
-          <> int.to_string(expectation.actual)
-          <> " to be less than "
-          <> int.to_string(expected),
+            <> int.to_string(expectation.actual)
+            <> " to be less than "
+            <> int.to_string(expected),
           None,
         ),
         expectation.location,
@@ -201,9 +203,9 @@ pub fn to_be_greater_than(expectation: Expectation(Int), expected: Int) -> Nil {
       fail(
         AssertionFailed(
           "expected "
-          <> int.to_string(expectation.actual)
-          <> " to be greater than "
-          <> int.to_string(expected),
+            <> int.to_string(expectation.actual)
+            <> " to be greater than "
+            <> int.to_string(expected),
           None,
         ),
         expectation.location,
@@ -220,9 +222,9 @@ pub fn to_have_length(expectation: Expectation(List(a)), length: Int) -> Nil {
       fail(
         AssertionFailed(
           "expected a list of length "
-          <> int.to_string(length)
-          <> ", got "
-          <> int.to_string(actual),
+            <> int.to_string(length)
+            <> ", got "
+            <> int.to_string(actual),
           None,
         ),
         expectation.location,
@@ -231,17 +233,13 @@ pub fn to_have_length(expectation: Expectation(List(a)), length: Int) -> Nil {
 }
 
 /// Asserts that the dictionary contains the given key.
-pub fn to_contain_key(
-  expectation: Expectation(Dict(k, v)),
-  key: k,
-) -> Nil {
+pub fn to_contain_key(expectation: Expectation(Dict(k, v)), key: k) -> Nil {
   case dict.has_key(expectation.actual, key) {
     True -> Nil
     False ->
       fail(
         AssertionFailed(
-          "expected the dictionary to contain key "
-          <> string.inspect(key),
+          "expected the dictionary to contain key " <> string.inspect(key),
           None,
         ),
         expectation.location,
@@ -257,9 +255,9 @@ pub fn to_start_with(expectation: Expectation(String), prefix: String) -> Nil {
       fail(
         AssertionFailed(
           "expected "
-          <> string.inspect(expectation.actual)
-          <> " to start with "
-          <> string.inspect(prefix),
+            <> string.inspect(expectation.actual)
+            <> " to start with "
+            <> string.inspect(prefix),
           None,
         ),
         expectation.location,
@@ -275,9 +273,9 @@ pub fn to_end_with(expectation: Expectation(String), suffix: String) -> Nil {
       fail(
         AssertionFailed(
           "expected "
-          <> string.inspect(expectation.actual)
-          <> " to end with "
-          <> string.inspect(suffix),
+            <> string.inspect(expectation.actual)
+            <> " to end with "
+            <> string.inspect(suffix),
           None,
         ),
         expectation.location,
@@ -299,7 +297,7 @@ pub fn to_raise_containing(
           fail(
             AssertionFailed(
               "expected the error message to contain "
-              <> string.inspect(substring),
+                <> string.inspect(substring),
               None,
             ),
             expectation.location,
@@ -309,7 +307,7 @@ pub fn to_raise_containing(
       fail(
         AssertionFailed(
           "expected the function to raise an error containing "
-          <> string.inspect(substring),
+            <> string.inspect(substring),
           None,
         ),
         expectation.location,

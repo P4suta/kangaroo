@@ -107,46 +107,62 @@ fn failure_decoder() -> decode.Decoder(Failure) {
               None,
               decode.optional(decode.string),
               fn(diff) {
-                decode.optional_field("location", None, location_decoder(), fn(
-                  location,
-                ) {
-                  decode.success(EqualityMismatch(expected, actual, diff,
-                    location))
-                })
+                decode.optional_field(
+                  "location",
+                  None,
+                  location_decoder(),
+                  fn(location) {
+                    decode.success(EqualityMismatch(
+                      expected,
+                      actual,
+                      diff,
+                      location,
+                    ))
+                  },
+                )
               },
             )
           })
         })
       "assertion_failed" ->
         decode.field("message", decode.string, fn(message) {
-          decode.optional_field("location", None, location_decoder(), fn(
-            location,
-          ) {
-            decode.success(AssertionFailed(message, location))
-          })
+          decode.optional_field(
+            "location",
+            None,
+            location_decoder(),
+            fn(location) { decode.success(AssertionFailed(message, location)) },
+          )
         })
       "unexpected_error" ->
         decode.field("name", decode.string, fn(name) {
           decode.field("message", decode.string, fn(message) {
-            decode.optional_field("location", None, location_decoder(), fn(
-              location,
-            ) {
-              decode.success(UnexpectedError(name, message, location))
-            })
+            decode.optional_field(
+              "location",
+              None,
+              location_decoder(),
+              fn(location) {
+                decode.success(UnexpectedError(name, message, location))
+              },
+            )
           })
         })
       _ ->
-        decode.failure(AssertionFailed("unknown failure", None), "known failure kind")
+        decode.failure(
+          AssertionFailed("unknown failure", None),
+          "known failure kind",
+        )
     }
   })
 }
 
 fn location_decoder() -> decode.Decoder(Option(Location)) {
-  decode.optional(decode.field("file", decode.string, fn(file) {
-    decode.field("line", decode.int, fn(line) {
-      decode.success(Location(file, line))
-    })
-  }))
+  decode.optional(
+    decode.field("file", decode.string, fn(file) {
+      decode.field("line", decode.int, fn(line) {
+        decode.success(Location(file, line))
+      })
+    }),
+  )
 }
 
 fn summary_decoder() -> decode.Decoder(Summary) {

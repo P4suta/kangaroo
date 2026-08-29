@@ -71,10 +71,12 @@ pub fn suites() {
         )
       }),
       it("encodes a suite failure", fn() {
-        expect(encode.encode(SuiteFinished(
-          "math",
-          Failed([EqualityMismatch("a", "b", None, None)]),
-        )))
+        expect(
+          encode.encode(SuiteFinished(
+            "math",
+            Failed([EqualityMismatch("a", "b", None, None)]),
+          )),
+        )
         |> to_equal(
           "{\"type\":\"suite_finished\",\"suite\":\"math\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"equality_mismatch\",\"expected\":\"a\",\"actual\":\"b\",\"diff\":null,\"location\":null}]}}",
         )

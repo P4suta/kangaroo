@@ -69,7 +69,8 @@ pub fn apply(state: UiState, event: Event) -> UiState {
     SuiteStarted(suite_name) -> ensure_suite(state, suite_name)
     SuiteFinished(suite_name, outcome) ->
       set_suite_failures(state, suite_name, hook_failures_of(outcome))
-    RunFinished(_, summary) -> UiState(state.suites, Some(summary), state.run_info)
+    RunFinished(_, summary) ->
+      UiState(state.suites, Some(summary), state.run_info)
   }
 }
 
@@ -84,11 +85,12 @@ fn hook_failures_of(outcome: Outcome) -> List(Failure) {
 fn ensure_suite(state: UiState, suite_name: String) -> UiState {
   case list.any(state.suites, fn(suite) { suite.name == suite_name }) {
     True -> state
-    False -> UiState(
-      list.append(state.suites, [UiSuite(suite_name, [], [])]),
-      state.summary,
-      state.run_info,
-    )
+    False ->
+      UiState(
+        list.append(state.suites, [UiSuite(suite_name, [], [])]),
+        state.summary,
+        state.run_info,
+      )
   }
 }
 
@@ -281,9 +283,9 @@ fn render_hook_failures(suite: UiSuite) -> List(String) {
     [] -> []
     failures ->
       [red <> "  ⚠ suite hooks" <> reset]
-      |> list.append(list.map(failures, fn(failure) {
-        "  " <> render_failure(failure)
-      }))
+      |> list.append(
+        list.map(failures, fn(failure) { "  " <> render_failure(failure) }),
+      )
   }
 }
 
@@ -382,11 +384,10 @@ fn summary_section(state: UiState) -> String {
         0 -> line
         _ -> line <> ", " <> int.to_string(summary.skipped) <> " skipped"
       }
-      let counts =
-        case summary.failed {
-          0 -> green <> with_skipped <> reset
-          _ -> red <> with_skipped <> reset
-        }
+      let counts = case summary.failed {
+        0 -> green <> with_skipped <> reset
+        _ -> red <> with_skipped <> reset
+      }
       "\n"
       <> counts
       <> run_info_suffix(state.run_info)
@@ -405,8 +406,7 @@ fn run_info_suffix(info: Option(RunInfo)) -> String {
       <> " file(s) changed, "
       <> case info.affected {
         None -> "full run"
-        Some(affected) ->
-          int.to_string(affected) <> " affected test module(s)"
+        Some(affected) -> int.to_string(affected) <> " affected test module(s)"
       }
       <> reset
   }

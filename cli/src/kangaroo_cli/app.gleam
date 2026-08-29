@@ -28,8 +28,8 @@ import kangaroo_cli/terminal
 import kangaroo_cli/tui
 import kangaroo_cli/vm
 import kangaroo_cli/watcher.{
-  type FileChange, type Snapshot, Added, FileMeta, Modified,
-  Removed, diff, diff_contents, insert, snapshot,
+  type FileChange, type Snapshot, Added, FileMeta, Modified, Removed, diff,
+  diff_contents, insert, snapshot,
 }
 
 const poll_interval_ms = 250
@@ -68,7 +68,10 @@ pub fn default_run_options() -> RunOptions {
 
 /// One full cycle: snapshot the sources, run the tests, and print the
 /// results. Returns `True` if the run reported failures.
-pub fn run_once(project_dir: String, options: RunOptions) -> Result(Bool, String) {
+pub fn run_once(
+  project_dir: String,
+  options: RunOptions,
+) -> Result(Bool, String) {
   case snapshot_sources(project_dir) {
     Error(message) -> Error(message)
     Ok(_) -> {
@@ -76,10 +79,11 @@ pub fn run_once(project_dir: String, options: RunOptions) -> Result(Bool, String
         True -> event_buffer.append
         False -> format.print_sink
       }
-      let config = runner.Config(
-        runner.default_config().case_timeout_ms,
-        options.stop_on_first_failure,
-      )
+      let config =
+        runner.Config(
+          runner.default_config().case_timeout_ms,
+          options.stop_on_first_failure,
+        )
       case run_tests(project_dir, [], sink, config, options.name) {
         Ok(has_failures) ->
           case options.json {
@@ -133,28 +137,43 @@ fn loop(
         keys.ToggleView -> {
           let view = keys.toggle_view(view)
           io.println(tui.render(ui_state, view))
-          loop(project_dir, previous, contents, poll_count, ui_state, mode,
-            view)
+          loop(
+            project_dir,
+            previous,
+            contents,
+            poll_count,
+            ui_state,
+            mode,
+            view,
+          )
         }
         keys.Rerun -> {
           // An empty change list runs every test module.
           let next_ui =
-            do_run(
-              project_dir,
-              [],
-              tui.RunInfo(0, None),
-              ui_state,
-              mode,
-              view,
-            )
+            do_run(project_dir, [], tui.RunInfo(0, None), ui_state, mode, view)
           loop(project_dir, previous, contents, 0, next_ui, mode, view)
         }
         keys.Nothing ->
-          poll_and_run(project_dir, previous, contents, poll_count, ui_state,
-            mode, view)
+          poll_and_run(
+            project_dir,
+            previous,
+            contents,
+            poll_count,
+            ui_state,
+            mode,
+            view,
+          )
       }
-    _ -> poll_and_run(project_dir, previous, contents, poll_count, ui_state,
-      mode, view)
+    _ ->
+      poll_and_run(
+        project_dir,
+        previous,
+        contents,
+        poll_count,
+        ui_state,
+        mode,
+        view,
+      )
   }
 }
 
@@ -174,28 +193,27 @@ fn poll_and_run(
   // Every few polls the full file contents are compared too, so edits that
   // leave both the mtime and the size unchanged are still seen. Contents are
   // also refreshed whenever anything changed, keeping the comparison honest.
-  let #(settled, settled_changes, contents, content_changes) =
-    case changes {
-      [] ->
-        case deep {
-          True -> {
-            let fresh = result.unwrap(read_sources(project_dir), contents)
-            #(current, [], fresh, diff_contents(contents, fresh))
-          }
-          False -> #(current, [], contents, [])
+  let #(settled, settled_changes, contents, content_changes) = case changes {
+    [] ->
+      case deep {
+        True -> {
+          let fresh = result.unwrap(read_sources(project_dir), contents)
+          #(current, [], fresh, diff_contents(contents, fresh))
         }
-      _ -> {
-        // Debounce: wait for the editor to finish writing, then re-snapshot
-        // so rapid successive saves are coalesced into a single run.
-        let settled = settle(project_dir, current)
-        let settled_changes =
-          changes
-          |> list.append(diff(current, settled))
-          |> unique_changes
-        let fresh = result.unwrap(read_sources(project_dir), contents)
-        #(settled, settled_changes, fresh, diff_contents(contents, fresh))
+        False -> #(current, [], contents, [])
       }
+    _ -> {
+      // Debounce: wait for the editor to finish writing, then re-snapshot
+      // so rapid successive saves are coalesced into a single run.
+      let settled = settle(project_dir, current)
+      let settled_changes =
+        changes
+        |> list.append(diff(current, settled))
+        |> unique_changes
+      let fresh = result.unwrap(read_sources(project_dir), contents)
+      #(settled, settled_changes, fresh, diff_contents(contents, fresh))
     }
+  }
 
   let all_changes =
     settled_changes
@@ -203,8 +221,8 @@ fn poll_and_run(
     |> unique_changes
 
   case all_changes {
-    [] -> loop(project_dir, settled, contents, poll_count + 1, ui_state, mode,
-      view)
+    [] ->
+      loop(project_dir, settled, contents, poll_count + 1, ui_state, mode, view)
     _ -> {
       let changed = changed_paths(all_changes)
       let affected = case compute_affected(project_dir, changed) {
@@ -220,9 +238,7 @@ fn poll_and_run(
           case affected {
             Some(count) ->
               io.println(
-                "  affected: "
-                <> int.to_string(count)
-                <> " test module(s)",
+                "  affected: " <> int.to_string(count) <> " test module(s)",
               )
             None -> Nil
           }
@@ -231,8 +247,7 @@ fn poll_and_run(
         _ -> Nil
       }
 
-      let next_ui =
-        do_run(project_dir, changed, run_info, ui_state, mode, view)
+      let next_ui = do_run(project_dir, changed, run_info, ui_state, mode, view)
       loop(project_dir, settled, contents, 0, next_ui, mode, view)
     }
   }
@@ -282,7 +297,9 @@ fn do_run(
     Stream -> format.print_sink
   }
 
-  case run_tests(project_dir, changed_paths, sink, runner.default_config(), None) {
+  case
+    run_tests(project_dir, changed_paths, sink, runner.default_config(), None)
+  {
     Ok(_) ->
       case mode {
         Tui -> {
@@ -315,17 +332,19 @@ fn print_change(change: FileChange) -> Nil {
 /// The `changed` event of the editor protocol: which files changed and how
 /// many test modules are affected, emitted before a watch run starts.
 fn changed_event(changes: List(FileChange), affected: Option(Int)) -> String {
-  json.to_string(json.object([
-    #("type", json.string("changed")),
-    #(
-      "files",
-      json.array(
-        list.map(changes, fn(change) { json.string(change_path(change)) }),
-        fn(value) { value },
+  json.to_string(
+    json.object([
+      #("type", json.string("changed")),
+      #(
+        "files",
+        json.array(
+          list.map(changes, fn(change) { json.string(change_path(change)) }),
+          fn(value) { value },
+        ),
       ),
-    ),
-    #("affected", json.nullable(affected, json.int)),
-  ]))
+      #("affected", json.nullable(affected, json.int)),
+    ]),
+  )
 }
 
 /// Snapshot of the current metadata of every watched file: the Gleam
@@ -341,7 +360,9 @@ pub fn snapshot_sources(project_dir: String) -> Result(Snapshot, String) {
 
 /// The contents of every watched file, used by the content-level change
 /// check.
-pub fn read_sources(project_dir: String) -> Result(Dict(String, String), String) {
+pub fn read_sources(
+  project_dir: String,
+) -> Result(Dict(String, String), String) {
   use paths <- result.try(watched_files(project_dir))
   list.try_fold(paths, dict.new(), fn(contents, path) {
     use text <- result.try(fs.read_file(path))
@@ -350,12 +371,10 @@ pub fn read_sources(project_dir: String) -> Result(Dict(String, String), String)
 }
 
 fn watched_files(project_dir: String) -> Result(List(String), String) {
-  use paths <- result.try(
-    list_append_result(
-      fs.list_files_recursive(project_dir <> "/src"),
-      fs.list_files_recursive(project_dir <> "/test"),
-    ),
-  )
+  use paths <- result.try(list_append_result(
+    fs.list_files_recursive(project_dir <> "/src"),
+    fs.list_files_recursive(project_dir <> "/test"),
+  ))
   let sources = list.filter(paths, is_gleam_file)
   let config =
     ["gleam.toml", "manifest.toml"]
@@ -396,7 +415,7 @@ fn run_tests(
       case run_in_vm(project_dir, affected, sink, config, name) {
         Ok(has_failures) -> Ok(has_failures)
         Error(message) -> {
-          io.println(
+          io.println_error(
             "  kangaroo: in-VM execution failed ("
             <> message
             <> "), falling back to subprocess",
@@ -406,7 +425,7 @@ fn run_tests(
       }
     }
     Ok(process) -> {
-      io.println(process.output)
+      io.println_error(process.output)
       Error("compilation failed")
     }
     Error(message) -> Error(message)
@@ -458,7 +477,7 @@ fn run_in_vm_common(
       }
     })
 
-  io.println(
+  io.println_error(
     "  running "
     <> int.to_string(list.length(module_list))
     <> " test module(s) in-VM...",
@@ -502,7 +521,7 @@ fn run_coverage_erlang(project_dir: String) -> Result(Int, String) {
   use _ <- result.try(vm.add_project_paths(project_dir))
   use ebin <- result.try(vm.ebin_dir(project_dir))
 
-  io.println("  compiling...")
+  io.println_error("  compiling...")
   case
     fs.run_gleam_test_with(
       project_dir,
@@ -516,7 +535,13 @@ fn run_coverage_erlang(project_dir: String) -> Result(Int, String) {
     Ok(_) -> {
       use _ <- result.try(vm.cover_start())
       use _ <- result.try(vm.cover_compile_beams(ebin))
-      use _ <- result.try(run_in_vm(project_dir, [], format.print_sink, runner.default_config(), None))
+      use _ <- result.try(run_in_vm(
+        project_dir,
+        [],
+        format.print_sink,
+        runner.default_config(),
+        None,
+      ))
 
       let modules = cover_src_modules(project_dir)
       modules
@@ -538,7 +563,7 @@ fn run_coverage_js(project_dir: String) -> Result(Int, String) {
   }
   let coverage_dir = absolute_dir <> "/build/dev/kangaroo-coverage"
 
-  io.println("  running tests with coverage...")
+  io.println_error("  running tests with coverage...")
   use _ <- result.try(fs.remove_dir(coverage_dir))
   case
     fs.run_gleam_test_with(
@@ -552,7 +577,7 @@ fn run_coverage_js(project_dir: String) -> Result(Int, String) {
     // written.
     Ok(process) if process.exit_code <= 1 -> {
       let _ = process
-      io.println("  collecting coverage...")
+      io.println_error("  collecting coverage...")
       use files <- result.try(fs.list_files_recursive(coverage_dir))
 
       let scripts =
@@ -627,15 +652,17 @@ fn run_tests_subprocess(
   project_dir: String,
   sink: fn(Event) -> Nil,
 ) -> Result(Bool, String) {
-  io.println("  running tests...")
+  io.println_error("  running tests...")
 
   use process <- result.try(fs.run_gleam_test(project_dir, [], run_timeout_ms))
 
   let events = parse_events(process.output)
   case events {
     [] -> {
-      io.println(process.output)
-      io.println(ansi_red <> "kangaroo: no test events received" <> ansi_reset)
+      io.println_error(process.output)
+      io.println_error(
+        ansi_red <> "kangaroo: no test events received" <> ansi_reset,
+      )
       Ok(True)
     }
     _ -> {

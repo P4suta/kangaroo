@@ -72,7 +72,8 @@ pub fn suites() {
       it("fails when to_be_true does not hold", fn() {
         let outcome = outcome_of(fn() { expect(False) |> to_be_true() })
         case failure_of(outcome) {
-          AssertionFailed(message, _) -> expect(message) |> to_equal("expected True")
+          AssertionFailed(message, _) ->
+            expect(message) |> to_equal("expected True")
           _ -> panic as "expected an assertion failure"
         }
       }),
@@ -162,7 +163,8 @@ pub fn suites() {
         }
       }),
       it("passes when to_have_length holds", fn() {
-        let outcome = outcome_of(fn() { expect([1, 2, 3]) |> to_have_length(3) })
+        let outcome =
+          outcome_of(fn() { expect([1, 2, 3]) |> to_have_length(3) })
         expect(outcome) |> to_equal(Passed)
       }),
       it("fails when to_have_length does not hold", fn() {
@@ -187,19 +189,23 @@ pub fn suites() {
           })
         case failure_of(outcome) {
           AssertionFailed(message, _) ->
-            expect(message) |> to_equal("expected the dictionary to contain key \"b\"")
+            expect(message)
+            |> to_equal("expected the dictionary to contain key \"b\"")
           _ -> panic as "expected an assertion failure"
         }
       }),
       it("passes when to_start_with holds", fn() {
-        let outcome = outcome_of(fn() { expect("hello") |> to_start_with("he") })
+        let outcome =
+          outcome_of(fn() { expect("hello") |> to_start_with("he") })
         expect(outcome) |> to_equal(Passed)
       }),
       it("fails when to_start_with does not hold", fn() {
-        let outcome = outcome_of(fn() { expect("hello") |> to_start_with("lo") })
+        let outcome =
+          outcome_of(fn() { expect("hello") |> to_start_with("lo") })
         case failure_of(outcome) {
           AssertionFailed(message, _) ->
-            expect(message) |> to_equal("expected \"hello\" to start with \"lo\"")
+            expect(message)
+            |> to_equal("expected \"hello\" to start with \"lo\"")
           _ -> panic as "expected an assertion failure"
         }
       }),

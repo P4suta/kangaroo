@@ -2,7 +2,6 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import kangaroo/event.{type Event}
-import kangaroo/sys
 import kangaroo/expect.{expect, to_be_false, to_be_true, to_equal}
 import kangaroo/failure.{
   EqualityMismatch, Failed, Passed, Skipped, UnexpectedError,
@@ -12,6 +11,7 @@ import kangaroo/runner
 import kangaroo/suite.{
   all_hooks, hooks, it, it_focused, it_skipped, suite, suite_with_hooks,
 }
+import kangaroo/sys
 
 pub fn suites() {
   [
@@ -194,8 +194,12 @@ pub fn suites() {
               suite_with_hooks(
                 "math",
                 [it("a", fn() { Nil }), it("b", fn() { Nil })],
-                all_hooks(Some(fn() { panic as "setup failed" }), None, None,
-                  None),
+                all_hooks(
+                  Some(fn() { panic as "setup failed" }),
+                  None,
+                  None,
+                  None,
+                ),
               ),
             ],
             fn(_event: Event) { Nil },
