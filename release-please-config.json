@@ -12,12 +12,6 @@
           "type": "toml",
           "path": "cli/gleam.toml",
           "jsonpath": "$.version"
-        },
-        {
-          "type": "plain",
-          "path": "cli/manifest.toml",
-          "find": "{ name = \"kangaroo\", version = \"[0-9.]+\"",
-          "replace": "{ name = \"kangaroo\", version = \"${version}\""
         }
       ]
     }
