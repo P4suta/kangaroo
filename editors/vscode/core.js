@@ -14,6 +14,24 @@ function resolveGleamExecutable(configured, environment = process.env) {
     : configured;
 }
 
+function subprocessEnvironment(
+  environment = process.env,
+  platform = process.platform,
+) {
+  const inherited = { ...environment };
+  const toolPath = environment.KANGAROO_VSCODE_TOOL_PATH;
+  if (typeof toolPath === "string" && toolPath.length > 0) {
+    const pathKey = platform === "win32"
+      ? Object.keys(inherited).find((key) => key.toLowerCase() === "path") || "Path"
+      : "PATH";
+    for (const key of Object.keys(inherited)) {
+      if (key !== pathKey && key.toLowerCase() === "path") delete inherited[key];
+    }
+    inherited[pathKey] = toolPath;
+  }
+  return inherited;
+}
+
 function coverageArguments(selectors = []) {
   return [
     "run",
@@ -159,5 +177,6 @@ module.exports = {
   parseLcov,
   protocolRequest,
   resolveGleamExecutable,
+  subprocessEnvironment,
   zeroBasedRange,
 };

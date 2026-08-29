@@ -21,8 +21,19 @@ suite("Kangaroo extension host", () => {
     assert.equal(api.sessions.size, 1);
     const session = Array.from(api.sessions.values())[0];
     const testId = "test/editor_test.gleam::editor_integration_test";
-    const item = await waitFor("Kangaroo test discovery", () =>
-      session.items.get(testId));
+    let item;
+    try {
+      item = await waitFor("Kangaroo test discovery", () =>
+        session.items.get(testId));
+    } catch (error) {
+      throw new Error([
+        error.message,
+        `daemon executable: ${session.client.executable}`,
+        `discovery requests: ${session.requestNumber}`,
+        "daemon diagnostics:",
+        session.client.diagnosticLog() || "<none>",
+      ].join("\n"));
+    }
     assert.equal(item.range.start.line, 2);
 
     const run = {

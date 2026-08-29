@@ -12,6 +12,7 @@ const {
   failuresFor,
   protocolRequest,
   resolveGleamExecutable,
+  subprocessEnvironment,
   zeroBasedRange,
 } = require("../core");
 
@@ -93,6 +94,30 @@ test("Gleam executable configuration is scoped to each package resource", () => 
     manifest.contributes.configuration.properties["kangaroo.gleamPath"].scope,
     "resource",
   );
+});
+
+test("restores the launcher tool PATH for extension subprocesses", () => {
+  const source = {
+    PATH: "/login-shell/bin",
+    KANGAROO_VSCODE_TOOL_PATH: "/setup-gleam/bin:/setup-node/bin",
+    KEEP: "value",
+  };
+  assert.deepEqual(subprocessEnvironment(source), {
+    PATH: "/setup-gleam/bin:/setup-node/bin",
+    KANGAROO_VSCODE_TOOL_PATH: "/setup-gleam/bin:/setup-node/bin",
+    KEEP: "value",
+  });
+  assert.equal(source.PATH, "/login-shell/bin");
+  assert.deepEqual(subprocessEnvironment({ PATH: "/normal/bin" }), {
+    PATH: "/normal/bin",
+  });
+  assert.deepEqual(subprocessEnvironment({
+    Path: "C:\\login-shell",
+    KANGAROO_VSCODE_TOOL_PATH: "C:\\setup-gleam;C:\\setup-node",
+  }, "win32"), {
+    Path: "C:\\setup-gleam;C:\\setup-node",
+    KANGAROO_VSCODE_TOOL_PATH: "C:\\setup-gleam;C:\\setup-node",
+  });
 });
 
 test("reassembles arbitrary NDJSON chunks", () => {

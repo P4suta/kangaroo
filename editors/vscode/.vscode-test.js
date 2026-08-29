@@ -26,5 +26,6 @@ module.exports = defineConfig({
   },
   env: {
     KANGAROO_GLEAM_PATH: process.env.KANGAROO_GLEAM_PATH || setupBeamGleam,
+    KANGAROO_VSCODE_TOOL_PATH: process.env.PATH,
   },
 });

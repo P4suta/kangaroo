@@ -13,6 +13,7 @@ const {
   failuresFor,
   protocolRequest,
   resolveGleamExecutable,
+  subprocessEnvironment,
   zeroBasedRange,
 } = require("./core");
 
@@ -41,6 +42,7 @@ class DaemonClient {
     this.cancelSchedule = cancelSchedule;
     this.discoveryTimeoutMs = discoveryTimeoutMs;
     this.terminateProcess = terminateProcess;
+    this.logHistory = [];
     this.pendingDiscoveries = new Map();
     this.process = null;
     this.finishProcess = null;
@@ -57,9 +59,10 @@ class DaemonClient {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
         detached: globalThis.process.platform !== "win32",
+        env: subprocessEnvironment(),
       });
     } catch (error) {
-      this.onLog(`daemon error: ${error.message}`);
+      this.log(`daemon error: ${error.message}`);
       this.onExit({ code: null, signal: null, expected: false });
       return false;
     }
@@ -85,18 +88,18 @@ class DaemonClient {
             this.acknowledgeDiscovery(message.request_id);
             this.onMessage(message);
           }
-          else this.onLog(`unsupported daemon message: ${line}`);
+          else this.log(`unsupported daemon message: ${line}`);
         } catch {
-          this.onLog(`invalid daemon stdout: ${line}`);
+          this.log(`invalid daemon stdout: ${line}`);
         }
       }
     });
-    child.stderr.on("data", (chunk) => this.onLog(String(chunk)));
+    child.stderr.on("data", (chunk) => this.log(String(chunk)));
     child.stdin.on?.("error", (error) => {
       this.handleStdinFailure(error, child);
     });
     child.on("error", (error) => {
-      this.onLog(`daemon error: ${error.message}`);
+      this.log(`daemon error: ${error.message}`);
       finish(null, null);
     });
     child.on("exit", finish);
@@ -118,9 +121,20 @@ class DaemonClient {
     return true;
   }
 
+  log(message) {
+    const rendered = String(message);
+    this.logHistory.push(rendered);
+    if (this.logHistory.length > 100) this.logHistory.shift();
+    this.onLog(rendered);
+  }
+
+  diagnosticLog() {
+    return this.logHistory.join("").slice(-65_536).trim();
+  }
+
   handleStdinFailure(error, child) {
     if (!child || this.process !== child) return;
-    this.onLog(`daemon stdin error: ${error.code || error.message}`);
+    this.log(`daemon stdin error: ${error.code || error.message}`);
     this.terminateProcess(child);
     this.finishProcess?.(null, null);
   }
@@ -129,7 +143,7 @@ class DaemonClient {
     this.acknowledgeDiscovery(id);
     const timer = this.schedule(() => {
       if (this.pendingDiscoveries.get(id) !== timer) return;
-      this.onLog(`kangaroo: discovery timed out after ${this.discoveryTimeoutMs}ms; restarting daemon\n`);
+      this.log(`kangaroo: discovery timed out after ${this.discoveryTimeoutMs}ms; restarting daemon\n`);
       this.terminateProcess(child);
     }, this.discoveryTimeoutMs);
     timer.unref?.();
@@ -339,6 +353,7 @@ class WorkspaceSession {
           stdio: ["ignore", "pipe", "pipe"],
           windowsHide: true,
           detached: globalThis.process.platform !== "win32",
+          env: subprocessEnvironment(),
         });
         this.coverageProcesses.add(child);
       } catch (error) {

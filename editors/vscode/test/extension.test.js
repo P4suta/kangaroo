@@ -45,9 +45,11 @@ test("daemon client keeps stdout protocol-only and uses the unified module", () 
   assert.equal(calls[0][2].detached, globalThis.process.platform !== "win32");
   assert.equal(child.stdout.encoding, "utf8");
   assert.equal(child.stderr.encoding, "utf8");
+  child.stderr.emit("data", "compiler diagnostic\n");
+  assert.match(client.diagnosticLog(), /compiler diagnostic/);
   child.stdout.emit("data", '{"protocol_version":1,"type":"shutdown"}\nnoise\n');
   assert.equal(messages.length, 1);
-  assert.match(logs[0], /invalid daemon stdout/);
+  assert.match(logs.at(-1), /invalid daemon stdout/);
 });
 
 test("daemon client turns a broken stdin pipe into one recoverable exit", () => {
