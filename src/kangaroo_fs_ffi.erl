@@ -346,22 +346,31 @@ remove_directory_link(Path, Attempt) ->
     end.
 
 write_exclusive(Path, Contents) ->
-    ok = filelib:ensure_dir(Path),
+    case filelib:ensure_dir(Path) of
+        ok -> write_exclusive_file(Path, Contents);
+        {error, Reason} -> {error, format_error(Reason)}
+    end.
+
+write_exclusive_file(Path, Contents) ->
     case file:open(Path, [write, exclusive, binary]) of
         {ok, Device} ->
             Result = file:write(Device, Contents),
-            ok = file:close(Device),
-            case Result of
-                ok -> {ok, nil};
-                {error, Reason} -> {error, format_error(Reason)}
+            Close = file:close(Device),
+            case {Result, Close} of
+                {ok, ok} -> {ok, nil};
+                {{error, Reason}, _} -> {error, format_error(Reason)};
+                {_, {error, Reason}} -> {error, format_error(Reason)}
             end;
         {error, Reason} -> {error, format_error(Reason)}
     end.
 
 write_file(Path, Contents) ->
-    ok = filelib:ensure_dir(Path),
-    case file:write_file(Path, Contents, [binary]) of
-        ok -> {ok, nil};
+    case filelib:ensure_dir(Path) of
+        ok ->
+            case file:write_file(Path, Contents, [binary]) of
+                ok -> {ok, nil};
+                {error, Reason} -> {error, format_error(Reason)}
+            end;
         {error, Reason} -> {error, format_error(Reason)}
     end.
 

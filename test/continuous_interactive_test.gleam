@@ -16,7 +16,7 @@ type ControlState {
   ControlState(output: String, cancellation_started: Int)
 }
 
-pub fn active_process_streams_output_and_cancels_within_budget_test() {
+pub fn active_process_streams_output_and_completes_cancellation_test() {
   let assert Ok(handle) =
     process.start(
       ".",
@@ -52,5 +52,5 @@ pub fn active_process_streams_output_and_cancels_within_budget_test() {
   assert state.output == "ready"
   assert state.cancellation_started != 0
   assert sys.now_ms() - state.cancellation_started
-    < vm.process_cancellation_budget_ms()
+    < vm.process_cleanup_timeout_ms()
 }

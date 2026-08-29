@@ -39,6 +39,22 @@ pub fn process_cancellation_budget_for(operating_system: String) -> Int {
   }
 }
 
+/// Maximum time correctness paths wait for a cancelled process tree to be
+/// completely cleaned up. This is deliberately separate from the p95
+/// cancellation performance target: a rare scheduler delay must not release
+/// a stale process or turn an otherwise successful watch cancellation into an
+/// infrastructure error.
+pub fn process_cleanup_timeout_ms() -> Int {
+  process_cleanup_timeout_for(operating_system())
+}
+
+pub fn process_cleanup_timeout_for(operating_system: String) -> Int {
+  case operating_system {
+    "windows" -> 5000
+    _ -> 1000
+  }
+}
+
 /// Absolute JavaScript entry point used by daemon watch children. Resolving
 /// it beside the running package keeps embedded/editor daemons independent of
 /// whether the project under test already has compiled output.

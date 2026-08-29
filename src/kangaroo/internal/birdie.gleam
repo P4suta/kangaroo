@@ -25,6 +25,28 @@ pub fn select_pending(paths: List(String)) -> List(String) {
   |> list.sort(string.compare)
 }
 
+pub fn relative_path(project_dir: String, path: String) -> String {
+  let project_dir =
+    project_dir |> watcher.normalise_path |> trim_trailing_separators
+  let path = watcher.normalise_path(path)
+  let prefix = project_dir <> "/"
+  case string.starts_with(path, prefix) {
+    True -> string.drop_start(path, string.length(prefix))
+    False -> path
+  }
+}
+
+fn trim_trailing_separators(path: String) -> String {
+  case path {
+    "" | "/" -> path
+    _ ->
+      case string.ends_with(path, "/") {
+        True -> trim_trailing_separators(string.remove_suffix(path, "/"))
+        False -> path
+      }
+  }
+}
+
 pub fn pending(project_dir: String) -> Result(List(String), String) {
   let directories = [
     project_dir <> "/test/birdie_snapshots",
@@ -40,15 +62,8 @@ pub fn pending(project_dir: String) -> Result(List(String), String) {
       }
     }),
   )
-  let prefix = watcher.normalise_path(project_dir) <> "/"
   files
-  |> list.map(fn(path) {
-    let path = watcher.normalise_path(path)
-    case string.starts_with(path, prefix) {
-      True -> string.drop_start(path, string.length(prefix))
-      False -> path
-    }
-  })
+  |> list.map(fn(path) { relative_path(project_dir, path) })
   |> select_pending
   |> Ok
 }

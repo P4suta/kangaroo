@@ -220,7 +220,40 @@ pub fn render(state: State, width: Int, height: Int, colour: Bool) -> String {
   let available = int.max(0, height - list.length(fixed) - 1)
   list.append(fixed, list.take(body, available))
   |> list.append([style(colour, "2", footer)])
+  |> list.map(fn(line) { fit_line(line, width, colour) })
   |> string.join("\n")
+}
+
+fn fit_line(line: String, width: Int, colour: Bool) -> String {
+  fit_graphemes(string.to_graphemes(line), int.max(width, 1), False, colour)
+}
+
+fn fit_graphemes(
+  graphemes: List(String),
+  remaining: Int,
+  ansi: Bool,
+  colour: Bool,
+) -> String {
+  case graphemes, remaining, ansi {
+    [], _, _ -> ""
+    _, 0, _ ->
+      case colour {
+        True -> "\u{1b}[0m"
+        False -> ""
+      }
+    ["\u{1b}", ..rest], _, False ->
+      "\u{1b}" <> fit_graphemes(rest, remaining, True, colour)
+    [grapheme, ..rest], _, True ->
+      grapheme
+      <> fit_graphemes(
+        rest,
+        remaining,
+        !list.contains(["m", "J", "H"], grapheme),
+        colour,
+      )
+    [grapheme, ..rest], _, False ->
+      grapheme <> fit_graphemes(rest, remaining - 1, False, colour)
+  }
 }
 
 fn visible_cases(state: State) -> List(UiCase) {

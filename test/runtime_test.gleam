@@ -1,5 +1,6 @@
 import gleam/option.{None}
 import gleam/string
+import kangaroo/failure.{EqualityMismatch}
 import kangaroo/internal/index.{type IndexedTest, IndexedTest}
 import kangaroo/internal/legacy/expect.{expect, to_be_true, to_equal}
 import kangaroo/internal/legacy/suite.{it, suite}
@@ -33,6 +34,20 @@ pub fn non_binary_assert_payload_test() {
   assert error.expected == None
   assert error.actual == None
   assert error.diff == None
+}
+
+pub fn plain_assert_includes_the_source_expression_test() {
+  let assert Ok(loaded) = runtime.resolve(fixture("plain_assert_fixture"))
+  let assert Crashed(error) = runtime.run(loaded, None)
+  assert string.contains(error.message, "expression: condition")
+}
+
+pub fn worker_returns_matcher_failures_test() {
+  let assert Ok(loaded) = runtime.resolve(fixture("matcher_failure_fixture"))
+  let assert Completed([EqualityMismatch(expected, actual, ..)]) =
+    runtime.run(loaded, None)
+  assert expected == "2"
+  assert actual == "1"
 }
 
 pub fn suites() {

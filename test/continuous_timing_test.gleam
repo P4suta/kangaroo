@@ -18,3 +18,9 @@ pub fn process_tree_cancellation_budget_is_platform_specific_test() {
   assert vm.process_cancellation_budget_for("macos") == 250
   assert vm.process_cancellation_budget_for("windows") == 2000
 }
+
+pub fn process_cleanup_timeout_is_separate_from_the_performance_budget_test() {
+  assert vm.process_cleanup_timeout_for("linux") == 1000
+  assert vm.process_cleanup_timeout_for("macos") == 1000
+  assert vm.process_cleanup_timeout_for("windows") == 5000
+}

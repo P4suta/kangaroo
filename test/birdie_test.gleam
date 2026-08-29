@@ -21,3 +21,11 @@ pub fn birdie_review_command_and_rerun_policy_test() {
   assert birdie.rerun_after_review(1) == False
   assert birdie.rerun_after_review(2) == False
 }
+
+pub fn birdie_project_relative_paths_ignore_trailing_separator_test() {
+  assert birdie.relative_path(
+      "/tmp/project/",
+      "/tmp/project/test/birdie_snapshots/example.new",
+    )
+    == "test/birdie_snapshots/example.new"
+}

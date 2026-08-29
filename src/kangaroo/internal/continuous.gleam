@@ -463,7 +463,7 @@ fn drain_controlled_cancellation(
 ) -> Result(Nil, String) {
   case process.poll(handle) {
     process.ProcessRunning | process.ProcessOutput(_) ->
-      case sys.now_ms() - started < vm.process_cancellation_budget_ms() {
+      case sys.now_ms() - started < vm.process_cleanup_timeout_ms() {
         True -> {
           fs.sleep(5)
           drain_controlled_cancellation(handle, started)
@@ -471,7 +471,7 @@ fn drain_controlled_cancellation(
         False ->
           Error(
             "process cancellation exceeded "
-            <> int.to_string(vm.process_cancellation_budget_ms())
+            <> int.to_string(vm.process_cleanup_timeout_ms())
             <> " ms",
           )
       }
@@ -516,7 +516,7 @@ fn poll_run(project_dir, roots, baseline, handle, on_detect) {
 fn drain_cancellation(handle: Int, started: Int) -> Nil {
   case process.poll(handle) {
     process.ProcessRunning ->
-      case sys.now_ms() - started < vm.process_cancellation_budget_ms() {
+      case sys.now_ms() - started < vm.process_cleanup_timeout_ms() {
         True -> {
           fs.sleep(5)
           drain_cancellation(handle, started)

@@ -1,4 +1,5 @@
 import gleam/option.{None, Some}
+import gleam/string
 import kangaroo/internal/index.{IndexedModule, IndexedTest}
 import kangaroo/internal/legacy/expect.{expect, to_equal}
 import kangaroo/internal/legacy/suite.{it, suite}
@@ -100,6 +101,16 @@ pub fn suites() {
             message: "serial takes no arguments",
           )),
         )
+        let skip_source =
+          "import kangaroo\npub fn bad_test() { kangaroo.skip(reason) }"
+        expect(index.index("test/bad.gleam", skip_source, ["test"]))
+        |> to_equal(
+          Error(index.InvalidMetadata(
+            id: "test/bad.gleam::bad_test",
+            line: 2,
+            message: "skip must be a string literal",
+          )),
+        )
       }),
       it("normalises windows paths and selects the longest test root", fn() {
         let source = "pub fn path_test() { Nil }"
@@ -126,6 +137,8 @@ pub fn suites() {
           ])
         expect(first.content_hash == same.content_hash) |> to_equal(True)
         expect(first.content_hash == changed.content_hash) |> to_equal(False)
+        expect(index.source_hash(string.repeat("kangaroo🦘", 1000)))
+        |> to_equal("2DB7554B")
       }),
       it("returns a located parse error instead of a partial index", fn() {
         let result =

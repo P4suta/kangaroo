@@ -60,9 +60,11 @@ pub fn suites() {
         |> to_equal([second, third])
       }),
       it("matches a file selector to all tests in that file", fn() {
-        let assert [first, second, _] = tests()
+        let assert [first, second, third] = tests()
         expect(selector.select(tests(), [Path("test/a_test.gleam")], [], []))
         |> to_equal([first, second])
+        expect(selector.select(tests(), [Path("test/")], [], []))
+        |> to_equal([first, second, third])
       }),
       it("treats include tags as OR and lets excludes win", fn() {
         let assert [first, second, third] = tests()

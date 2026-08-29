@@ -317,9 +317,16 @@ error_message(Reason = #{gleam_error := assert,
       <<(inspect(Left))/binary, " ", (atom_to_binary(Operator, utf8))/binary,
         " ", (inspect(Right))/binary, "\nAssertion failed">>,
       source_expression(Reason));
-error_message(#{gleam_error := assert,
-                value := Value}, _Stack) ->
-    <<"assert ", (inspect(Value))/binary, "\nAssertion failed">>;
+error_message(Reason = #{gleam_error := assert,
+                         value := Value}, _Stack) ->
+    append_expression(
+      <<"assert ", (inspect(Value))/binary, "\nAssertion failed">>,
+      source_expression(Reason));
+error_message(Reason = #{gleam_error := assert,
+                         expression := #{value := Value}}, _Stack) ->
+    append_expression(
+      <<"assert ", (inspect(Value))/binary, "\nAssertion failed">>,
+      source_expression(Reason));
 error_message(Reason = #{gleam_error := let_assert,
                          value := Value}, _Stack) ->
     append_expression(

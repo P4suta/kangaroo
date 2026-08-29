@@ -124,6 +124,10 @@ pub fn suites() {
         expect(options.coverage_reporters) |> to_equal(["lcov", "cobertura"])
       }),
       it("rejects missing values invalid numbers and unknown flags", fn() {
+        expect(command.parse(["init", "unexpected"]))
+        |> to_equal(Error("kangaroo: init does not accept arguments"))
+        expect(command.parse(["daemon", "unexpected"]))
+        |> to_equal(Error("kangaroo: daemon does not accept arguments"))
         expect(command.parse(["watch", "--tag"]))
         |> to_equal(Error("kangaroo: --tag requires a value"))
         expect(command.parse(["watch", "--workers", "0"]))

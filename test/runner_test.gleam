@@ -319,6 +319,22 @@ pub fn suites() {
           _ -> panic as "expected one retry result"
         }
       }),
+      it("retains failures from every exhausted retry attempt", fn() {
+        let r =
+          runner.run_with_retries(
+            [
+              suite("retry", [
+                it("always fails", fn() { expect(1) |> to_equal(2) }),
+              ]),
+            ],
+            fn(_event: Event) { Nil },
+            runner.Config(Some(30_000), False),
+            1,
+          )
+        let assert [result] = r.cases
+        let assert Failed(failures) = result.outcome
+        expect(list.length(failures)) |> to_equal(2)
+      }),
       it("times out slow cases when configured", fn() {
         // On Erlang the case is killed and reported as a timeout error; a
         // synchronous JavaScript body cannot be interrupted, so it simply

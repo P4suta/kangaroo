@@ -392,7 +392,7 @@ fn stop_operations(state: operations.State) -> Nil {
 fn await_cancellation(handle: Int, started: Int) -> Nil {
   case process.poll(handle) {
     process.ProcessRunning | process.ProcessOutput(_) ->
-      case sys.now_ms() - started < vm.process_cancellation_budget_ms() {
+      case sys.now_ms() - started < vm.process_cleanup_timeout_ms() {
         True -> {
           fs.sleep(5)
           await_cancellation(handle, started)

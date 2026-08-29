@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { format as formatValue } from "node:util";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { execFileSync } from "node:child_process";
+import { inspect as inspectValue } from "../gleam_stdlib/gleam/string.mjs";
+import { collect as collectMatcherFailures } from "./kangaroo_context_ffi.mjs";
 
 const require = createRequire(import.meta.url);
 const childProcess = require("node:child_process");
@@ -124,7 +126,7 @@ async function execute() {
     }
     signalStarted();
     await fun();
-    finish(1, { ok: true });
+    finish(1, { failures: serialiseMatcherFailures() });
   } catch (error) {
     if (error && error.kangaroo_skip === true) {
       finish(2, { reason: String(error.reason || "skipped") });
@@ -176,10 +178,17 @@ function structuredDetails(error) {
         diff: valueDiff(expectedValue, actualValue),
       };
     }
-    if ("value" in error) {
+    const expressionValue =
+      Object.prototype.hasOwnProperty.call(error, "value")
+        ? error.value
+        : error.expression &&
+            Object.prototype.hasOwnProperty.call(error.expression, "value")
+          ? error.expression.value
+          : undefined;
+    if (expressionValue !== undefined) {
       return {
         message: withExpression(
-          `assert ${inspectValue(error.value)}\nAssertion failed`,
+          `assert ${inspectValue(expressionValue)}\nAssertion failed`,
           error,
         ),
       };
@@ -198,28 +207,48 @@ function structuredDetails(error) {
   };
 }
 
-function inspectValue(value) {
-  if (typeof value === "string") return JSON.stringify(value);
-  if (value === null) return "Nil";
-  if (value === undefined) return "Nil";
-  if (typeof value !== "object") return String(value);
-  if (Array.isArray(value)) {
-    return `[${value.map(inspectValue).join(", ")}]`;
-  }
-  if (typeof value[Symbol.iterator] === "function") {
-    return `[${Array.from(value, inspectValue).join(", ")}]`;
-  }
-  const fields = Object.keys(value)
-    .filter((key) => /^\d+$/.test(key))
-    .sort((left, right) => Number(left) - Number(right))
-    .map((key) => inspectValue(value[key]));
-  const name = value.constructor && value.constructor.name;
-  if (name && name !== "Object") return `${name}(${fields.join(", ")})`;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+function serialiseMatcherFailures() {
+  return Array.from(collectMatcherFailures(), (failure) => {
+    const type = failure?.constructor?.name;
+    if (type === "EqualityMismatch") {
+      return {
+        type: "equality",
+        expected: String(failure.expected),
+        actual: String(failure.actual),
+        diff: optionValue(failure.diff),
+        location: serialiseLocation(failure.location),
+      };
+    }
+    if (type === "AssertionFailed") {
+      return {
+        type: "assertion",
+        message: String(failure.message),
+        location: serialiseLocation(failure.location),
+      };
+    }
+    return {
+      type: "unexpected",
+      name: String(failure?.name || type || "error"),
+      message: String(failure?.message || inspectValue(failure)),
+      location: serialiseLocation(failure?.location),
+    };
+  });
+}
+
+function optionValue(option) {
+  return option && Object.prototype.hasOwnProperty.call(option, "0")
+    ? option[0]
+    : null;
+}
+
+function serialiseLocation(option) {
+  const location = optionValue(option);
+  if (!location) return null;
+  return {
+    file: String(location.file),
+    line: Number(location.line),
+    column: optionValue(location.column),
+  };
 }
 
 function withExpression(message, error) {

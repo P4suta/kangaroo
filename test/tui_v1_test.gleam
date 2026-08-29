@@ -83,6 +83,10 @@ pub fn tui_renders_narrow_terminal_without_colour_test() {
   assert string.contains(rendered, "r rerun")
   assert !string.contains(rendered, "\u{1b}[32m")
   assert list_length(string.split(rendered, "\n")) <= 5
+  rendered
+  |> string.replace(each: "\u{1b}[2J\u{1b}[H", with: "")
+  |> string.split("\n")
+  |> assert_lines_fit(24)
 }
 
 pub fn tui_accepts_only_complete_event_lines_from_child_output_test() {
@@ -124,5 +128,15 @@ fn list_length(items: List(a)) -> Int {
   case items {
     [] -> 0
     [_, ..rest] -> 1 + list_length(rest)
+  }
+}
+
+fn assert_lines_fit(lines: List(String), width: Int) -> Nil {
+  case lines {
+    [] -> Nil
+    [line, ..rest] -> {
+      assert string.length(line) <= width
+      assert_lines_fit(rest, width)
+    }
   }
 }

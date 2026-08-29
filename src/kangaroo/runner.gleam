@@ -256,6 +256,12 @@ fn retry(
     Passed, _, [] -> AttemptResult(Passed, stdout, stderr)
     Passed, _, failures ->
       AttemptResult(Flaky(failures, attempt), stdout, stderr)
+    Failed(failures), _, previous_failures ->
+      AttemptResult(
+        Failed(list.append(previous_failures, failures)),
+        stdout,
+        stderr,
+      )
     outcome, _, _ -> AttemptResult(outcome, stdout, stderr)
   }
 }

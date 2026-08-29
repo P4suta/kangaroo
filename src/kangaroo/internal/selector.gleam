@@ -91,4 +91,16 @@ fn normalise(value: String) -> String {
   value
   |> string.replace(each: "\\", with: "/")
   |> string.remove_prefix("./")
+  |> trim_trailing_slashes
+}
+
+fn trim_trailing_slashes(path: String) -> String {
+  case path {
+    "" | "/" -> path
+    _ ->
+      case string.ends_with(path, "/") {
+        True -> trim_trailing_slashes(string.remove_suffix(path, "/"))
+        False -> path
+      }
+  }
 }

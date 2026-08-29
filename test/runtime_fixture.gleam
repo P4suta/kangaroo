@@ -1,5 +1,6 @@
 import gleam/io
 import kangaroo
+import kangaroo/internal/legacy/expect.{expect, to_equal}
 
 pub fn passing_test() {
   assert 1 + 1 == 2
@@ -53,6 +54,15 @@ fn non_binary_assert() -> Nil
 
 pub fn non_binary_assert_fixture() {
   non_binary_assert()
+}
+
+pub fn plain_assert_fixture() {
+  let condition = False
+  assert condition
+}
+
+pub fn matcher_failure_fixture() {
+  expect(1) |> to_equal(2)
 }
 
 pub fn output_fixture() {

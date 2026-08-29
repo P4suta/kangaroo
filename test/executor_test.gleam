@@ -87,7 +87,7 @@ pub fn suites() {
             case case_result.outcome {
               Failed([EqualityMismatch("2", "1", _, Some(location))]) -> {
                 expect(location.file) |> to_equal("test/runtime_fixture.gleam")
-                expect(location.line) |> to_equal(33)
+                expect(location.line) |> to_equal(34)
               }
               _ -> panic as "expected a structured equality mismatch"
             }

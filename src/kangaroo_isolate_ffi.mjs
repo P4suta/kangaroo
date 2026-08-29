@@ -9,11 +9,17 @@ import {
   Crashed,
   SkippedIsolation,
 } from "./kangaroo/isolate.mjs";
-import { from_js_stack } from "./kangaroo/location.mjs";
+import {
+  AssertionFailed,
+  EqualityMismatch,
+  UnexpectedError,
+} from "./kangaroo/failure.mjs";
+import { Location, from_js_stack } from "./kangaroo/location.mjs";
 import { collect, restore, save } from "./kangaroo_context_ffi.mjs";
 import { Worker } from "node:worker_threads";
 import { format as formatValue } from "node:util";
 import { execFileSync } from "node:child_process";
+import { toList } from "./gleam.mjs";
 import {
   Option$None$const,
   Some,
@@ -149,7 +155,7 @@ function isolateWorker(body, timeoutOption) {
 
   let result;
   if (status === 1) {
-    result = new Completed(collect());
+    result = new Completed(deserialiseFailures(payload.failures));
   } else if (status === 2) {
     result = new SkippedIsolation(payload.reason || "skipped");
   } else {
@@ -169,6 +175,40 @@ function isolateWorker(body, timeoutOption) {
     sharedOutput(control, 3, stdoutData),
     sharedOutput(control, 4, stderrData),
   );
+}
+
+function deserialiseFailures(failures) {
+  if (!Array.isArray(failures)) return toList([]);
+  return toList(failures.map((failure) => {
+    const location = deserialiseLocation(failure.location);
+    if (failure.type === "equality") {
+      return new EqualityMismatch(
+        String(failure.expected),
+        String(failure.actual),
+        optional(failure.diff),
+        location,
+      );
+    }
+    if (failure.type === "assertion") {
+      return new AssertionFailed(String(failure.message), location);
+    }
+    return new UnexpectedError(
+      String(failure.name || "error"),
+      String(failure.message || "test failed"),
+      location,
+    );
+  }));
+}
+
+function deserialiseLocation(location) {
+  if (!location || typeof location.file !== "string") return Option$None$const;
+  return new Some(new Location(
+    location.file,
+    Number(location.line),
+    typeof location.column === "number"
+      ? new Some(location.column)
+      : Option$None$const,
+  ));
 }
 
 function requestWorkerCancellation(worker, control, onRequested) {

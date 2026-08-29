@@ -302,7 +302,12 @@ fn directive(
         Some("skip") ->
           case arguments {
             [glance.String(_, reason)] -> Ok(Some(Skip(reason)))
-            _ -> Ok(None)
+            _ ->
+              invalid(
+                id,
+                source_line(location, fallback_line),
+                "skip must be a string literal",
+              )
           }
         _ -> Ok(None)
       }
@@ -518,12 +523,9 @@ fn content_hash(source: String) -> String {
   let hash =
     source
     |> string.to_utf_codepoints
-    |> list.fold(2_166_136_261, fn(hash, codepoint) {
+    |> list.fold(18_652_614, fn(hash, codepoint) {
       let value = string.utf_codepoint_to_int(codepoint)
-      result.unwrap(
-        int.remainder(hash * 16_777_619 + value, 2_147_483_647),
-        hash,
-      )
+      result.unwrap(int.remainder(hash * 65_599 + value, 2_147_483_647), hash)
     })
   int.to_base16(hash)
 }

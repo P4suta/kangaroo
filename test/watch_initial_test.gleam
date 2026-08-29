@@ -153,7 +153,7 @@ pub fn suites() {
                 await_terminal(
                   handle,
                   sys.now_ms(),
-                  vm.process_cancellation_budget_ms() + 500,
+                  vm.process_cleanup_timeout_ms() + 500,
                 )
               let assert Ok(Nil) = fs.remove_tree(workspace)
               case
