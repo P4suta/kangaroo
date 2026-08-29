@@ -142,6 +142,8 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   let assert Ok(process_worker) =
     fs.read_file("src/kangaroo_process_worker.mjs")
   let assert Ok(process_ffi) = fs.read_file("src/kangaroo_process_ffi.mjs")
+  let assert Ok(erlang_process_ffi) =
+    fs.read_file("src/kangaroo_process_ffi.erl")
   let assert Ok(javascript_fs) = fs.read_file("src/kangaroo_fs_ffi.mjs")
   let assert Ok(stdin_worker) = fs.read_file("src/kangaroo_stdin_worker.mjs")
   let assert Ok(test_worker) = fs.read_file("src/kangaroo_test_worker.mjs")
@@ -154,6 +156,9 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert !string.contains(erlang_fs, "case file:read_file_info(Path) of")
   assert string.contains(process_worker, "child.stdin.on(\"error\"")
   assert string.contains(process_worker, "child.stdin.on(\"close\"")
+  assert string.contains(process_worker, "spawn(\"taskkill\"")
+  assert !string.contains(process_worker, "spawnSync(\"taskkill\"")
+  assert string.contains(erlang_process_ffi, "start_windows_taskkill")
   assert string.contains(process_ffi, "activityBuffer")
   assert string.contains(process_worker, "workerData.activityBuffer")
   assert string.contains(javascript_fs, "observedActivity")

@@ -124,8 +124,17 @@ async_collect(Parent, Id, Port, Output, Deadline) ->
             end,
             async_collect(Parent, Id, Port, Output, Deadline);
         cancel ->
-            close_port(Port),
-            Parent ! {kangaroo_process, Id, cancelled}
+            case start_windows_taskkill(Port) of
+                {ok, Killer, OsPid} ->
+                    %% The OS owns an active tree-termination request before
+                    %% cancellation is acknowledged. This keeps the caller's
+                    %% response under 250 ms without abandoning cleanup.
+                    Parent ! {kangaroo_process, Id, cancelled},
+                    finish_windows_cancellation(Port, Killer, OsPid);
+                unavailable ->
+                    close_port(Port),
+                    Parent ! {kangaroo_process, Id, cancelled}
+            end
     after Remaining ->
         close_port(Port),
         Parent ! {kangaroo_process, Id, {failed, <<"process timed out">>}}
@@ -155,6 +164,49 @@ close_port(Port) ->
     end,
     wait_for_processes(Processes,
                        erlang:monotonic_time(millisecond) + 200).
+
+start_windows_taskkill(Port) ->
+    case {os:type(), erlang:port_info(Port, os_pid),
+          os:find_executable("taskkill")} of
+        {{win32, _}, {os_pid, OsPid}, Taskkill} when Taskkill =/= false ->
+            try
+                Killer = open_port(
+                           {spawn_executable, Taskkill},
+                           [binary, use_stdio, stderr_to_stdout, exit_status,
+                            hide,
+                            {args, ["/PID", integer_to_list(OsPid),
+                                    "/T", "/F"]}]),
+                {ok, Killer, OsPid}
+            catch
+                _:_ -> unavailable
+            end;
+        _ -> unavailable
+    end.
+
+finish_windows_cancellation(Port, Killer, OsPid) ->
+    case await_taskkill(Killer,
+                        erlang:monotonic_time(millisecond) + 5000) of
+        0 -> ok;
+        _ -> terminate_process_tree(OsPid)
+    end,
+    try port_close(Port)
+    catch
+        _:_ -> ok
+    end.
+
+await_taskkill(Killer, Deadline) ->
+    Remaining = erlang:max(0, Deadline -
+                              erlang:monotonic_time(millisecond)),
+    receive
+        {Killer, {data, _Data}} -> await_taskkill(Killer, Deadline);
+        {Killer, {exit_status, Code}} -> Code
+    after Remaining ->
+        try port_close(Killer)
+        catch
+            _:_ -> ok
+        end,
+        timeout
+    end.
 
 terminate_process_tree(OsPid) ->
     case os:type() of
