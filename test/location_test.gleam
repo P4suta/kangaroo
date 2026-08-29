@@ -29,6 +29,46 @@ pub fn suites() {
         expect(is_framework_file("/home/u/proj/runner_test.mjs"))
         |> to_be_false()
       }),
+      it("flags compiled artefact paths of framework modules", fn() {
+        // The CLI executes the project's tests in its own VM, where the
+        // framework's own modules are loaded from the CLI's build. Gleam
+        // emits `-file` attributes (the `.gleam` paths) only for the main
+        // package, so those frames appear as compiled `.erl` artefact
+        // paths and must still count as framework.
+        expect(is_framework_file(
+          "/home/u/proj/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo@expect.erl",
+        ))
+        |> to_be_true()
+        expect(is_framework_file(
+          "/home/u/proj/cli/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo@runner.erl",
+        ))
+        |> to_be_true()
+        expect(is_framework_file(
+          "/home/u/proj/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo_location_ffi.erl",
+        ))
+        |> to_be_true()
+        expect(is_framework_file(
+          "/home/u/proj/cli/build/dev/erlang/kangaroo_cli/_gleam_artefacts/kangaroo_cli@app.erl",
+        ))
+        |> to_be_true()
+        // A user dependency compiled without `-file` attributes is still
+        // user code, not framework code.
+        expect(is_framework_file(
+          "/home/u/proj/build/dev/erlang/myapp/_gleam_artefacts/myapp@thing.erl",
+        ))
+        |> to_be_false()
+      }),
+      it(
+        "skips compiled artefact frames when picking the first user frame",
+        fn() {
+          let stack =
+            "/home/u/proj/cli/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo_location_ffi.erl:8\n"
+            <> "/home/u/proj/cli/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo@expect.erl:11\n"
+            <> "test/foo_test.gleam:42"
+          expect(from_erlang_stack(stack))
+          |> to_equal(Some(Location("test/foo_test.gleam", 42)))
+        },
+      ),
       it("picks the first user frame from an erlang stack", fn() {
         let stack =
           "src/kangaroo/expect.gleam:32\n"

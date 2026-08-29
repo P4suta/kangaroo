@@ -20,6 +20,13 @@ pub fn capture() -> Option(Location)
 /// Whether a stack frame belongs to the kangaroo framework (or the Gleam
 /// runtime) rather than to the user's code. Framework frames are skipped
 /// when locating the most relevant failure site.
+///
+/// The framework's modules can appear in stacks in two forms. When the
+/// project runs its own tests, the `.gleam` sources are in the trace.
+/// When the CLI executes the project's tests in its own VM, the framework
+/// modules are loaded from the CLI's build — Gleam emits the `-file`
+/// source attributes only for the main package, so those frames carry the
+/// compiled `_gleam_artefacts/*.erl` paths instead.
 pub fn is_framework_file(file: String) -> Bool {
   string.starts_with(file, "src/kangaroo")
   || string.starts_with(file, "src/gleam/")
@@ -38,6 +45,11 @@ pub fn is_framework_file(file: String) -> Bool {
   || string.contains(file, "kangaroo_location_ffi")
   || string.contains(file, "kangaroo_print_ffi")
   || string.contains(file, "kangaroo_sys_ffi")
+  || string.contains(file, "kangaroo_cli_ffi")
+  // The compiled artefact form of the framework's own modules: the
+  // module name itself (`kangaroo@...`, `kangaroo_cli@...`).
+  || string.contains(file, "kangaroo@")
+  || string.contains(file, "kangaroo_cli@")
   || string.contains(file, "/node_modules/")
 }
 

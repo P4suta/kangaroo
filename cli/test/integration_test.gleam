@@ -59,6 +59,13 @@ pub fn suites() {
           Error(message) -> panic as message
         }
       }),
+      it("ignores test modules whose source has been deleted", fn() {
+        // Deleting a test file leaves its compiled beam behind (the
+        // compiler does not clean it up), so the in-VM runner must not
+        // pick up such modules.
+        let kept = app.existing_test_modules(".", ["graph_test", "ghost_test"])
+        expect(kept) |> to_equal(["graph_test"])
+      }),
       it("measures line coverage of the parent project", fn() {
         // In-VM coverage is Erlang-only.
         case vm.is_erlang() {

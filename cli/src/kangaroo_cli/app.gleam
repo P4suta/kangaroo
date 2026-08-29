@@ -62,6 +62,14 @@ pub type RunOptions {
   RunOptions(name: Option(String), json: Bool, stop_on_first_failure: Bool)
 }
 
+/// Why a run could not complete.
+pub type RunError {
+  /// The project failed to compile; `output` holds the compiler's report.
+  CompileFailed(output: String)
+  /// The run could not be started for another reason.
+  StartupFailed(message: String)
+}
+
 pub fn default_run_options() -> RunOptions {
   RunOptions(None, False, False)
 }
@@ -94,7 +102,14 @@ pub fn run_once(
             }
             False -> Ok(has_failures)
           }
-        Error(message) -> Error(message)
+        Error(error) ->
+          case error {
+            CompileFailed(output) -> {
+              io.println_error(output)
+              Error("compilation failed")
+            }
+            StartupFailed(message) -> Error(message)
+          }
       }
     }
   }
@@ -317,7 +332,27 @@ fn do_run(
         }
         Stream -> ui_state
       }
-    Error(_) -> ui_state
+    Error(error) ->
+      case error {
+        CompileFailed(output) ->
+          case mode {
+            Tui -> {
+              // Replace the stale run content with the compiler's report.
+              let next = tui.with_compile_error(ui_state, Some(output))
+              io.println(tui.render(next, view))
+              next
+            }
+            Stream -> {
+              io.println_error(output)
+              ui_state
+            }
+            Json -> {
+              io.println_error(output)
+              ui_state
+            }
+          }
+        StartupFailed(_) -> ui_state
+      }
   }
 }
 
@@ -383,6 +418,18 @@ fn watched_files(project_dir: String) -> Result(List(String), String) {
   Ok(list.append(sources, config))
 }
 
+/// Keeps only the test modules whose source file still exists. The
+/// compiler leaves compiled beams behind when a test file is deleted, so
+/// the in-VM runner must not execute tests that no longer have sources.
+pub fn existing_test_modules(
+  project_dir: String,
+  modules: List(String),
+) -> List(String) {
+  list.filter(modules, fn(module) {
+    fs.exists(project_dir <> "/test/" <> module <> ".gleam")
+  })
+}
+
 /// Runs the tests. The project is first compiled with a fast compile-only
 /// subprocess for the current target; the affected test modules are then
 /// executed in-VM (on Erlang with hot module reloading, on JavaScript by
@@ -394,7 +441,7 @@ fn run_tests(
   sink: fn(Event) -> Nil,
   config: runner.Config,
   name: Option(String),
-) -> Result(Bool, String) {
+) -> Result(Bool, RunError) {
   let target = case vm.is_erlang() {
     True -> "erlang"
     False -> "javascript"
@@ -424,11 +471,8 @@ fn run_tests(
         }
       }
     }
-    Ok(process) -> {
-      io.println_error(process.output)
-      Error("compilation failed")
-    }
-    Error(message) -> Error(message)
+    Ok(process) -> Error(CompileFailed(process.output))
+    Error(message) -> Error(StartupFailed(message))
   }
 }
 
@@ -460,7 +504,9 @@ fn run_in_vm_common(
   name: Option(String),
 ) -> Result(Bool, String) {
   let module_list = case modules {
-    [] -> vm.list_test_modules(project_dir)
+    [] ->
+      vm.list_test_modules(project_dir)
+      |> result.map(existing_test_modules(project_dir, _))
     _ -> Ok(modules)
   }
   use module_list <- result.try(module_list)
@@ -651,10 +697,13 @@ fn cover_src_modules(project_dir: String) -> List(coverage.ModuleCoverage) {
 fn run_tests_subprocess(
   project_dir: String,
   sink: fn(Event) -> Nil,
-) -> Result(Bool, String) {
+) -> Result(Bool, RunError) {
   io.println_error("  running tests...")
 
-  use process <- result.try(fs.run_gleam_test(project_dir, [], run_timeout_ms))
+  use process <- result.try(
+    fs.run_gleam_test(project_dir, [], run_timeout_ms)
+    |> result.map_error(StartupFailed),
+  )
 
   let events = parse_events(process.output)
   case events {
