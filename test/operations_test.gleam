@@ -35,6 +35,24 @@ pub fn javascript_daemon_watch_uses_streaming_runtime_entrypoint_test() {
     ]
 }
 
+pub fn erlang_daemon_watch_uses_direct_runtime_entrypoint_test() {
+  assert daemon.operation_executable(WatchOperation, "erlang", "erlang")
+    == "erl"
+  assert daemon.operation_arguments(WatchOperation, "erlang", "erlang", [
+      "--reporter",
+      "ndjson",
+    ])
+    == [
+      "-noshell",
+      "-eval",
+      "code:add_paths(filelib:wildcard(\"build/dev/erlang/*/ebin\")), kangaroo:main().",
+      "-extra",
+      "watch",
+      "--reporter",
+      "ndjson",
+    ]
+}
+
 pub fn suites() {
   [
     suite("daemon operation registry", [
@@ -87,7 +105,7 @@ pub fn suites() {
           _ -> panic as "finishing output must not remove the operation"
         }
       }),
-      it("uses a public coordinator process only for daemon watch", fn() {
+      it("routes one-shot and watch operations to their runtime commands", fn() {
         expect(
           daemon.operation_arguments(RunOperation, "javascript", "bun", [
             "--reporter",
@@ -111,12 +129,10 @@ pub fn suites() {
           ]),
         )
         |> to_equal([
-          "run",
-          "--target",
-          "erlang",
-          "-m",
-          "kangaroo",
-          "--",
+          "-noshell",
+          "-eval",
+          "code:add_paths(filelib:wildcard(\"build/dev/erlang/*/ebin\")), kangaroo:main().",
+          "-extra",
           "watch",
           "--reporter",
           "ndjson",

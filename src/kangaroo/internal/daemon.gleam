@@ -24,6 +24,8 @@ const operation_timeout_ms = 604_800_000
 
 const cancellation_timeout_ms = 250
 
+const erlang_watch_eval = "code:add_paths(filelib:wildcard(\"build/dev/erlang/*/ebin\")), kangaroo:main()."
+
 pub fn poll_interval_ms() -> Int {
   poll_interval_for(vm.target())
 }
@@ -47,6 +49,14 @@ pub fn operation_arguments(
 ) -> List(String) {
   case kind, target {
     RunOperation, _ -> watcher.run_arguments_for(target, runtime, run_arguments)
+    WatchOperation, "erlang" -> [
+      "-noshell",
+      "-eval",
+      erlang_watch_eval,
+      "-extra",
+      "watch",
+      ..run_arguments
+    ]
     WatchOperation, "javascript" ->
       javascript_watch_arguments(
         runtime,
@@ -91,6 +101,7 @@ pub fn operation_executable(
   runtime: String,
 ) -> String {
   case kind, target, runtime {
+    WatchOperation, "erlang", _ -> "erl"
     WatchOperation, "javascript", "node" -> "node"
     WatchOperation, "javascript", "bun" -> "bun"
     WatchOperation, "javascript", "deno" -> "deno"
