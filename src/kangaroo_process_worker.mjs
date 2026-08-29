@@ -7,6 +7,8 @@ let terminal = false;
 let cancelled = false;
 let timeout;
 let terminating = false;
+let stdinClosed = false;
+let inputRequested = false;
 let terminationPids = [];
 let output = "";
 const terminationPause = new Int32Array(new SharedArrayBuffer(4));
@@ -163,6 +165,25 @@ try {
       terminateTree({ type: "failed", message: String(error.message || error) });
     }
   });
+  child.stdin.on("close", () => {
+    stdinClosed = true;
+    // On Windows a write can be accepted into libuv's pipe buffer after the
+    // remote end has closed, so its callback may report success. Pair the
+    // close notification with the write request and fail while the child is
+    // still alive; a normal child exit sets exitCode before stdio closes.
+    if (
+      inputRequested &&
+      !terminating &&
+      !terminal &&
+      child.exitCode === null &&
+      child.signalCode === null
+    ) {
+      terminateTree({
+        type: "failed",
+        message: "process stdin closed while child was running",
+      });
+    }
+  });
   child.on("error", (error) => {
     if (!terminating) {
       finish({ type: "failed", message: String(error.message || error) });
@@ -182,7 +203,8 @@ try {
 
 port.on("message", (message) => {
   if (message && message.type === "input" && !terminal) {
-    if (!child?.stdin?.writable) {
+    inputRequested = true;
+    if (stdinClosed || !child?.stdin?.writable) {
       terminateTree({ type: "failed", message: "process stdin is not writable" });
       return;
     }

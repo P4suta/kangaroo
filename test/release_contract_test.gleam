@@ -150,6 +150,7 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(erlang_fs, "file:read_link_info(Path)")
   assert !string.contains(erlang_fs, "case file:read_file_info(Path) of")
   assert string.contains(process_worker, "child.stdin.on(\"error\"")
+  assert string.contains(process_worker, "child.stdin.on(\"close\"")
   assert string.contains(test_worker, "Atomics.compareExchange(childPids")
   assert !string.contains(terminal_ffi, "readSync")
   assert string.contains(terminal_ffi, "receiveMessageOnPort")
