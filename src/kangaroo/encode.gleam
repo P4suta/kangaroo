@@ -103,6 +103,7 @@ fn location_json(location: Location) -> json.Json {
   json.object([
     #("file", json.string(location.file)),
     #("line", json.int(location.line)),
+    #("column", json.nullable(location.column, json.int)),
   ])
 }
 

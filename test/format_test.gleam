@@ -24,7 +24,7 @@ pub fn suites() {
       }),
       it("renders a location line", fn() {
         let rendered =
-          format.location_line(Some(Location("test/foo_test.gleam", 7)))
+          format.location_line(Some(Location("test/foo_test.gleam", 7, None)))
         string.contains(rendered, "at test/foo_test.gleam:7")
         |> expect
         |> to_be_true()

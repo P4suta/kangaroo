@@ -49,7 +49,7 @@ pub fn suites() {
         )
       }),
       it("encodes a failure location", fn() {
-        let location = Some(Location("test/foo_test.gleam", 42))
+        let location = Some(Location("test/foo_test.gleam", 42, None))
         expect(
           encode.encode(CaseFinished(
             "math",
@@ -59,7 +59,21 @@ pub fn suites() {
           )),
         )
         |> to_equal(
-          "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"adds\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"equality_mismatch\",\"expected\":\"2\",\"actual\":\"3\",\"diff\":null,\"location\":{\"file\":\"test/foo_test.gleam\",\"line\":42}}]},\"duration_ms\":5}",
+          "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"adds\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"equality_mismatch\",\"expected\":\"2\",\"actual\":\"3\",\"diff\":null,\"location\":{\"file\":\"test/foo_test.gleam\",\"line\":42,\"column\":null}}]},\"duration_ms\":5}",
+        )
+      }),
+      it("encodes a location column", fn() {
+        let location = Some(Location("test/foo_test.gleam", 42, Some(9)))
+        expect(
+          encode.encode(CaseFinished(
+            "math",
+            "adds",
+            Failed([EqualityMismatch("2", "3", None, location)]),
+            5,
+          )),
+        )
+        |> to_equal(
+          "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"adds\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"equality_mismatch\",\"expected\":\"2\",\"actual\":\"3\",\"diff\":null,\"location\":{\"file\":\"test/foo_test.gleam\",\"line\":42,\"column\":9}}]},\"duration_ms\":5}",
         )
       }),
       it("encodes suite events", fn() {
