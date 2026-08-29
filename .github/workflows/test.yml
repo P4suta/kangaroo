@@ -39,7 +39,12 @@ jobs:
         run: gleam deps download
       - name: Test
         working-directory: ${{ matrix.package }}
-        run: gleam test -t ${{ matrix.target }} --runtime bun
+        run: |
+          if [ "${{ matrix.target }}" = "javascript" ]; then
+            gleam test -t javascript --runtime bun
+          else
+            gleam test -t erlang
+          fi
       - name: Check formatting
         working-directory: ${{ matrix.package }}
         run: gleam format --check src test
