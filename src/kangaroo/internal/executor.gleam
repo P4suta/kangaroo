@@ -93,16 +93,24 @@ pub fn run_scheduled_seeded(
   let run_id = sys.now_ms()
   let started = sys.now_ms()
   sink(RunStarted(run_id, list.length(tests)))
-  use final_report <- result.try(run_waves(
-    waves,
-    default_timeout_ms,
-    fail_fast,
-    retry,
-    sink,
-    Report([], []),
-  ))
-  sink(RunFinished(run_id, report.summary(final_report, sys.now_ms() - started)))
-  Ok(final_report)
+  case
+    run_waves(waves, default_timeout_ms, fail_fast, retry, sink, Report([], []))
+  {
+    Ok(final_report) -> {
+      sink(RunFinished(
+        run_id,
+        report.summary(final_report, sys.now_ms() - started),
+      ))
+      Ok(final_report)
+    }
+    Error(message) -> {
+      sink(RunFinished(
+        run_id,
+        report.summary(Report([], []), sys.now_ms() - started),
+      ))
+      Error(message)
+    }
+  }
 }
 
 fn run_waves(

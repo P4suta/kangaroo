@@ -9,6 +9,7 @@ let timeout;
 let terminating = false;
 let terminationPids = [];
 let output = "";
+const terminationPause = new Int32Array(new SharedArrayBuffer(4));
 
 function signalStarted(status = 1) {
   if (Atomics.compareExchange(startup, 0, 0, status) === 0) {
@@ -25,12 +26,20 @@ function finish(message) {
 }
 
 function descendants(rootPid) {
+  if (
+    !Number.isInteger(rootPid) ||
+    rootPid <= 0 ||
+    globalThis.process.platform === "win32"
+  ) return [];
   try {
     const listing = spawnSync("ps", ["-eo", "pid=,ppid="], {
       encoding: "utf8",
       windowsHide: true,
     });
-    if (listing.error || listing.status !== 0) return [];
+    // Node can report an EPERM diagnostic alongside a successful status and
+    // complete stdout in restricted process namespaces. The listing remains
+    // authoritative in that case; discard it only when ps itself failed.
+    if (listing.status !== 0 || !listing.stdout) return [];
     const children = new Map();
     for (const line of String(listing.stdout || "").split("\n")) {
       const match = line.trim().match(/^(\d+)\s+(\d+)$/);
@@ -101,13 +110,32 @@ function killTree(
 function terminateTree(message) {
   if (terminal || terminating) return;
   terminating = true;
-  terminationPids = descendants(child?.pid);
-  killTree(child, "SIGTERM", terminationPids, false);
-  terminationPids = [
-    ...new Set([...terminationPids, ...descendants(child?.pid)]),
-  ];
+  terminationPids = freezeTree(child);
   killTree(child, "SIGKILL", terminationPids, false);
+  // Signal delivery is asynchronous. Do not acknowledge cancellation while a
+  // just-killed compiler can still finish a filesystem syscall in the
+  // workspace that the caller is about to replace or remove.
+  Atomics.wait(terminationPause, 0, 0, 10);
   finish(message);
+}
+
+function freezeTree(child) {
+  if (
+    !child ||
+    child.pid === undefined ||
+    globalThis.process.platform === "win32"
+  ) return descendants(child?.pid);
+  const rootPid = child.pid;
+  let known = descendants(rootPid);
+  signalPidOrGroup(rootPid, "SIGSTOP");
+  for (const pid of known) signalPidOrGroup(pid, "SIGSTOP");
+  // uv_spawn may have created a child while its parent was entering the
+  // stopped state. Let that kernel-visible relationship settle before the
+  // final tree snapshot; once observed, every discovered group is frozen too.
+  Atomics.wait(terminationPause, 0, 0, 5);
+  known = [...new Set([...known, ...descendants(rootPid)])];
+  for (const pid of known) signalPidOrGroup(pid, "SIGSTOP");
+  return known;
 }
 
 let child;
@@ -130,6 +158,11 @@ try {
     output += chunk;
     port.postMessage({ type: "output", data: chunk });
   });
+  child.stdin.on("error", (error) => {
+    if (!terminating) {
+      terminateTree({ type: "failed", message: String(error.message || error) });
+    }
+  });
   child.on("error", (error) => {
     if (!terminating) {
       finish({ type: "failed", message: String(error.message || error) });
@@ -149,7 +182,15 @@ try {
 
 port.on("message", (message) => {
   if (message && message.type === "input" && !terminal) {
-    child?.stdin?.write(String(message.data || ""));
+    if (!child?.stdin?.writable) {
+      terminateTree({ type: "failed", message: "process stdin is not writable" });
+      return;
+    }
+    try {
+      child.stdin.write(String(message.data || ""));
+    } catch (error) {
+      terminateTree({ type: "failed", message: String(error.message || error) });
+    }
     return;
   }
   if (message && message.type === "cancel" && !terminal) {

@@ -38,7 +38,10 @@ export function run(directory, executable, argumentList, environment, timeoutMs)
       timeout: timeoutMs,
       maxBuffer: 16 * 1024 * 1024,
     });
-    if (child.error) throw child.error;
+    // Node may attach an EPERM diagnostic to an otherwise successful
+    // spawnSync result in a restricted process namespace. A concrete status
+    // means the child did run, so preserve that authoritative result.
+    if (child.error && child.status === null) throw child.error;
     const output = `${child.stdout || ""}${child.stderr || ""}`;
     return new Ok(new ProcessResult(child.status ?? 2, output));
   } catch (error) {
@@ -63,7 +66,7 @@ export function run_inherited(
       windowsHide: false,
       timeout: timeoutMs,
     });
-    if (child.error) throw child.error;
+    if (child.error && child.status === null) throw child.error;
     return new Ok(new ProcessResult(child.status ?? 2, ""));
   } catch (error) {
     return new GleamError(errorMessage(error));

@@ -21,6 +21,18 @@ pub fn version_at_least(actual: String, minimum: String) -> Bool {
   }
 }
 
+pub fn minimum_runtime_version(name: String) -> String {
+  case name {
+    "erlang" -> "27.0.0"
+    // Loading generated `.mjs` exports synchronously is enabled by default
+    // from Node 22.12 onward.
+    "node" -> "22.12.0"
+    "bun" -> "1.4.0"
+    "deno" -> "2.9.0"
+    _ -> "999.0.0"
+  }
+}
+
 pub fn render(checks: List(Check)) -> String {
   checks
   |> list.map(fn(check) {

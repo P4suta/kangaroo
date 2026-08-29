@@ -17,6 +17,7 @@ pub fn required_release_files_test() {
     "editors/vscode/package-lock.json",
     "scripts/hex_clean_install_test.py",
     "scripts/test_hex_clean_install.py",
+    "src/kangaroo_daemon_child.mjs",
   ]
   |> list.each(fn(path) {
     assert fs.exists(path)
@@ -115,8 +116,63 @@ pub fn release_is_one_versioned_package_test() {
   assert string.contains(workflow, "vsce publish")
   assert string.contains(workflow, "ovsx publish")
   assert string.contains(workflow, "checksums")
+  assert string.contains(workflow, "sha256sum -- ./*")
   assert string.contains(workflow, "CHANGELOG.md")
   assert string.contains(workflow, "npm ci")
   assert string.contains(workflow, "npm run package")
   assert !string.contains(workflow, "npx --yes")
+  assert string.contains(
+    workflow,
+    "RELEASE_TAG: ${{ github.event.release.tag_name }}",
+  )
+  assert !string.contains(
+    workflow,
+    "kangaroo-${{ github.event.release.tag_name }}.vsix",
+  )
+  assert !string.contains(
+    workflow,
+    "gh release upload \"${{ github.event.release.tag_name }}\"",
+  )
+}
+
+pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
+  let assert Ok(runtime_docs) = fs.read_file("docs/runtimes.md")
+  let assert Ok(readme) = fs.read_file("README.md")
+  let assert Ok(erlang_fs) = fs.read_file("src/kangaroo_fs_ffi.erl")
+  let assert Ok(process_worker) =
+    fs.read_file("src/kangaroo_process_worker.mjs")
+  let assert Ok(test_worker) = fs.read_file("src/kangaroo_test_worker.mjs")
+  let assert Ok(terminal_ffi) = fs.read_file("src/kangaroo_terminal_ffi.mjs")
+  let assert Ok(erlang_isolate) = fs.read_file("src/kangaroo_isolate_ffi.erl")
+
+  assert string.contains(runtime_docs, "Node.js 22.12+")
+  assert string.contains(readme, "Node.js 22.12+")
+  assert string.contains(erlang_fs, "file:read_link_info(Path)")
+  assert !string.contains(erlang_fs, "case file:read_file_info(Path) of")
+  assert string.contains(process_worker, "child.stdin.on(\"error\"")
+  assert string.contains(test_worker, "Atomics.compareExchange(childPids")
+  assert !string.contains(terminal_ffi, "readSync")
+  assert string.contains(terminal_ffi, "receiveMessageOnPort")
+  assert fs.exists("src/kangaroo_key_worker.mjs")
+  assert string.contains(erlang_isolate, "kangaroo_stderr_table_timeout")
+}
+
+pub fn coverage_probe_is_a_downstream_importable_tooling_module_test() {
+  let assert Ok(config) = fs.read_file("gleam.toml")
+  let assert Ok(workflow) = fs.read_file(".github/workflows/test.yml")
+  let assert Ok(architecture) = fs.read_file("ARCHITECTURE.md")
+
+  assert fs.exists("src/kangaroo/coverage_probe.gleam")
+  assert !string.contains(config, "internal_modules = [\"kangaroo/*\"]")
+  assert string.contains(workflow, "\"kangaroo/coverage_probe\"")
+  assert string.contains(architecture, "kangaroo/coverage_probe")
+  assert string.contains(architecture, "tooling ABI")
+}
+
+pub fn neovim_installation_uses_a_supported_lazy_nvim_spec_test() {
+  let assert Ok(readme) = fs.read_file("editors/neovim/README.md")
+
+  assert !string.contains(readme, "subdir =")
+  assert string.contains(readme, "vim.opt.rtp:append")
+  assert string.contains(readme, "require(\"kangaroo\").setup()")
 }

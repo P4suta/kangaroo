@@ -36,13 +36,57 @@ pub fn operation_arguments(
   runtime: String,
   run_arguments: List(String),
 ) -> List(String) {
-  case kind {
-    RunOperation -> watcher.run_arguments_for(target, runtime, run_arguments)
-    WatchOperation ->
+  case kind, target {
+    RunOperation, _ -> watcher.run_arguments_for(target, runtime, run_arguments)
+    WatchOperation, "javascript" ->
+      javascript_watch_arguments(
+        runtime,
+        vm.daemon_runner_path(),
+        run_arguments,
+      )
+    WatchOperation, _ ->
       watcher.coordinator_arguments_for(target, runtime, [
         "watch",
         ..run_arguments
       ])
+  }
+}
+
+pub fn javascript_watch_arguments(
+  runtime: String,
+  runner: String,
+  run_arguments: List(String),
+) -> List(String) {
+  case runtime {
+    "deno" -> [
+      "run",
+      "--allow-env",
+      "--allow-read",
+      "--allow-run",
+      "--allow-sys",
+      "--allow-write",
+      runner,
+      "watch",
+      ..run_arguments
+    ]
+    _ -> [runner, "watch", ..run_arguments]
+  }
+}
+
+/// JavaScript watch coordinators run their built module directly. Gleam's
+/// JavaScript launcher retains a long-lived child's output until it exits,
+/// which would prevent a daemon watch from streaming protocol events.
+pub fn operation_executable(
+  kind: operations.Kind,
+  target: String,
+  runtime: String,
+) -> String {
+  case kind, target, runtime {
+    WatchOperation, "javascript", "node" -> "node"
+    WatchOperation, "javascript", "bun" -> "bun"
+    WatchOperation, "javascript", "deno" -> "deno"
+    WatchOperation, "javascript", runtime -> runtime
+    _, _, _ -> "gleam"
   }
 }
 
@@ -213,6 +257,8 @@ fn start_operation(
               reporter: Ndjson,
             )
           let run_arguments = command.run_arguments(options, raw_selectors)
+          let executable =
+            operation_executable(kind, vm.target(), vm.runtime_name())
           let arguments =
             operation_arguments(
               kind,
@@ -223,7 +269,7 @@ fn start_operation(
           case
             process.start(
               project_dir,
-              "gleam",
+              executable,
               arguments,
               [#("KANGAROO_PROTOCOL_REQUEST_ID", id)],
               operation_timeout_ms,

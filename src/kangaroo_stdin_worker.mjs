@@ -1,10 +1,13 @@
-import { createReadStream, fstatSync } from "node:fs";
-import { Socket } from "node:net";
-import { ReadStream as TtyReadStream, isatty } from "node:tty";
-import { workerData } from "node:worker_threads";
+import { read } from "node:fs";
+import { parentPort, workerData } from "node:worker_threads";
 
 const port = workerData.port;
 const control = new Int32Array(workerData.controlBuffer);
+
+globalThis.process.once?.("exit", () => {
+  Atomics.store(control, 1, 2);
+  Atomics.notify(control, 1);
+});
 
 function send(message) {
   port.postMessage(message);
@@ -14,30 +17,17 @@ function send(message) {
 
 let buffer = "";
 let ended = false;
-let input;
+let waitingForContinue = false;
+let readPending = false;
+const readBuffer = new Uint8Array(64 * 1024);
+const nodeDecoder = new TextDecoder();
 let bunReader;
+let resumeBunRead;
 if (typeof globalThis.Bun !== "undefined") {
   bunReader = globalThis.Bun.stdin.stream().getReader();
   void readBunInput();
 } else {
-  input = stdinStream();
-  input.setEncoding("utf8");
-  input.on("data", acceptChunk);
-  input.once("end", finish);
-  input.once("error", finish);
-}
-
-function stdinStream() {
-  if (isatty(0)) return new TtyReadStream(0);
-  try {
-    const stat = fstatSync(0);
-    if (stat.isFIFO() || stat.isSocket() || stat.isCharacterDevice()) {
-      return new Socket({ fd: 0, readable: true, writable: false });
-    }
-  } catch {
-    // Let createReadStream report the inaccessible descriptor as InputEnd.
-  }
-  return createReadStream("", { fd: 0, autoClose: false });
+  readNextChunk();
 }
 
 function finish() {
@@ -46,18 +36,18 @@ function finish() {
   if (buffer.length > 0) send({ type: "line", value: trimCr(buffer) });
   send({ type: "end" });
   port.close();
+  parentPort?.close?.();
 }
 
 function stop() {
   if (!ended) {
     ended = true;
     if (bunReader) void bunReader.cancel();
-    else input.destroy();
   }
   Atomics.store(control, 1, 1);
   Atomics.notify(control, 1);
   port.close();
-  globalThis.process.exit(0);
+  parentPort?.close?.();
 }
 
 function trimCr(value) {
@@ -66,12 +56,53 @@ function trimCr(value) {
 
 function acceptChunk(chunk) {
   buffer += String(chunk);
-  while (true) {
-    const newline = buffer.indexOf("\n");
-    if (newline < 0) return;
-    send({ type: "line", value: trimCr(buffer.slice(0, newline)) });
-    buffer = buffer.slice(newline + 1);
+  deliverBufferedLine();
+}
+
+function deliverBufferedLine() {
+  if (waitingForContinue) return false;
+  const newline = buffer.indexOf("\n");
+  if (newline < 0) return false;
+  const line = trimCr(buffer.slice(0, newline));
+  buffer = buffer.slice(newline + 1);
+  waitingForContinue = true;
+  send({ type: "line", value: line });
+  return true;
+}
+
+function continueReading() {
+  if (ended) return;
+  waitingForContinue = false;
+  deliverBufferedLine();
+  if (bunReader) {
+    const resume = resumeBunRead;
+    resumeBunRead = undefined;
+    resume?.();
+  } else if (!waitingForContinue) {
+    readNextChunk();
   }
+}
+
+function readNextChunk() {
+  if (ended || waitingForContinue || readPending) return;
+  readPending = true;
+  read(0, readBuffer, 0, readBuffer.length, null, (error, count) => {
+    readPending = false;
+    if (ended) return;
+    if (error) {
+      finish();
+      return;
+    }
+    if (count === 0) {
+      acceptChunk(nodeDecoder.decode());
+      finish();
+      return;
+    }
+    acceptChunk(
+      nodeDecoder.decode(readBuffer.subarray(0, count), { stream: true }),
+    );
+    if (!waitingForContinue) readNextChunk();
+  });
 }
 
 async function readBunInput() {
@@ -81,6 +112,11 @@ async function readBunInput() {
       const { done, value } = await bunReader.read();
       if (done) break;
       acceptChunk(decoder.decode(value, { stream: true }));
+      while (!ended && waitingForContinue) {
+        await new Promise((resolve) => {
+          resumeBunRead = resolve;
+        });
+      }
     }
     if (!ended) acceptChunk(decoder.decode());
   } catch {
@@ -91,4 +127,5 @@ async function readBunInput() {
 
 port.on("message", (message) => {
   if (message?.type === "stop") stop();
+  if (message?.type === "continue") continueReading();
 });

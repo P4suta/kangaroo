@@ -4,7 +4,21 @@ gleam = ">= 1.18.0"
 description = "A next-generation continuous test runner for Gleam, inspired by Wallaby.js"
 licences = ["Apache-2.0"]
 repository = { type = "github", user = "P4suta", repo = "kangaroo" }
-internal_modules = ["kangaroo/*"]
+internal_modules = [
+  "kangaroo/context",
+  "kangaroo/diff",
+  "kangaroo/encode",
+  "kangaroo/event",
+  "kangaroo/failure",
+  "kangaroo/format",
+  "kangaroo/internal/*",
+  "kangaroo/isolate",
+  "kangaroo/location",
+  "kangaroo/print",
+  "kangaroo/report",
+  "kangaroo/runner",
+  "kangaroo/sys",
+]
 
 [dependencies]
 glance = ">= 6.1.0 and < 7.0.0"

@@ -25,6 +25,13 @@ pub fn runtime_version() -> String
 @external(javascript, "../../kangaroo_vm_ffi.mjs", "operating_system")
 pub fn operating_system() -> String
 
+/// Absolute JavaScript entry point used by daemon watch children. Resolving
+/// it beside the running package keeps embedded/editor daemons independent of
+/// whether the project under test already has compiled output.
+@external(erlang, "kangaroo_vm_ffi", "daemon_runner_path")
+@external(javascript, "../../kangaroo_vm_ffi.mjs", "daemon_runner_path")
+pub fn daemon_runner_path() -> String
+
 /// A process-local seed used only when shuffle is explicitly enabled.
 @external(erlang, "kangaroo_vm_ffi", "shuffle_seed")
 @external(javascript, "../../kangaroo_vm_ffi.mjs", "shuffle_seed")

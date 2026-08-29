@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import io
 import sys
 import tempfile
 import unittest
 import json
 import shutil
 from pathlib import Path
+from unittest import mock
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -85,8 +87,40 @@ class BenchmarkPolicyTest(unittest.TestCase):
         self.assertFalse(failing["passed"])
         self.assertTrue(failing["failures"])
 
+    def test_idle_window_has_tenth_percent_tick_resolution(self) -> None:
+        self.assertEqual(benchmark.idle_sample_duration(quick=True), 1)
+        self.assertEqual(benchmark.idle_sample_duration(quick=False), 10)
+
+    def test_save_measurement_waits_until_the_next_run_is_watched(self) -> None:
+        pump = benchmark._LinePump(io.StringIO(
+            "kangaroo benchmark: watch compile start 1ms\n"
+            "kangaroo benchmark: watch run start 2ms\n"
+        ))
+
+        class RunningProcess:
+            @staticmethod
+            def poll() -> None:
+                return None
+
+        line = benchmark.wait_for_watch_run(
+            pump,
+            RunningProcess(),
+            timeout=1,
+        )
+        self.assertIn("watch run start", line)
+
 
 class BenchmarkFixtureTest(unittest.TestCase):
+    def test_required_replace_rejects_a_stale_fixture_literal(self) -> None:
+        self.assertEqual(
+            benchmark.required_replace("before token after", "token", "new"),
+            "before new after",
+        )
+        with self.assertRaisesRegex(RuntimeError, "fixture literal"):
+            benchmark.required_replace("unchanged", "missing", "new")
+        with self.assertRaisesRegex(RuntimeError, "exactly once"):
+            benchmark.required_replace("token and token", "token", "new")
+
     def test_copies_dependency_sources_without_compiled_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -196,6 +230,15 @@ class DiscoveryBenchmarkIntegrationTest(unittest.TestCase):
         percent = benchmark.measure_idle_cpu(ROOT, duration_seconds=1)
         self.assertGreaterEqual(percent, 0)
         self.assertLess(percent, 50)
+
+    def test_idle_cpu_rejects_non_linux_before_starting_a_daemon(self) -> None:
+        with (
+            mock.patch.object(benchmark.sys, "platform", "darwin"),
+            mock.patch.object(benchmark, "_start_daemon") as start,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Linux /proc"):
+                benchmark.measure_idle_cpu(ROOT, duration_seconds=1)
+            start.assert_not_called()
 
 
 if __name__ == "__main__":

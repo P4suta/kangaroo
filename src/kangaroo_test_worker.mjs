@@ -9,15 +9,49 @@ const require = createRequire(import.meta.url);
 const childProcess = require("node:child_process");
 const childProcesses = new Set();
 const childPids = new Int32Array(workerData.childPidBuffer);
+let nextChildPidIndex = 1;
 
 function registerChild(child) {
-  if (!child || typeof child.pid !== "number" || childProcesses.has(child)) {
+  if (!child || childProcesses.has(child)) {
     return child;
   }
   childProcesses.add(child);
-  const index = Atomics.add(childPids, 0, 1) + 1;
-  if (index < childPids.length) Atomics.store(childPids, index, child.pid);
-  child.once?.("exit", () => childProcesses.delete(child));
+  let registeredPid = false;
+  let pidIndex = 0;
+  let pidValue = 0;
+  const registerPid = () => {
+    if (registeredPid || typeof child.pid !== "number") return;
+    registeredPid = true;
+    const index = nextChildPidIndex;
+    nextChildPidIndex += 1;
+    if (index < childPids.length) {
+      pidIndex = index;
+      pidValue = child.pid;
+      // Publish the PID before the high-water mark. The parent scans one slot
+      // beyond that mark, so timeout cannot observe a count whose slot is
+      // still empty.
+      Atomics.store(childPids, index, pidValue);
+      Atomics.store(childPids, 0, index);
+    }
+    // A short test timeout can expire while a runtime's spawn() call is still
+    // blocked. Observe the shared cancellation flag before returning to test
+    // code so a newly published process group is stopped immediately instead
+    // of waiting for the Worker's event loop to run its cancellation handler.
+    if (Atomics.load(control, 6) === 1) {
+      terminateProcessTree(pidValue);
+    }
+  };
+  registerPid();
+  // Deno's node:child_process compatibility layer can assign the pid only
+  // after spawn() returns. Keep the child tracked immediately and publish its
+  // pid as soon as the runtime reports that the process started.
+  child.once?.("spawn", registerPid);
+  child.once?.("exit", () => {
+    childProcesses.delete(child);
+    if (pidIndex > 0) {
+      Atomics.compareExchange(childPids, pidIndex, pidValue, 0);
+    }
+  });
   return child;
 }
 
@@ -28,6 +62,16 @@ const childProcessPrototype = childProcess.ChildProcess?.prototype;
 if (childProcessPrototype?.spawn) {
   const originalPrototypeSpawn = childProcessPrototype.spawn;
   childProcessPrototype.spawn = function trackedPrototypeSpawn(...arguments_) {
+    if (
+      globalThis.process.platform !== "win32" &&
+      arguments_[0] &&
+      typeof arguments_[0] === "object"
+    ) {
+      // Give every test-owned subprocess its own process group. Timeout and
+      // cancellation can then freeze the complete group before a slower OS
+      // process-tree snapshot lets a descendant perform late work.
+      arguments_[0] = { ...arguments_[0], detached: true };
+    }
     const result = originalPrototypeSpawn.apply(this, arguments_);
     registerChild(this);
     return result;
@@ -252,12 +296,15 @@ function finish(status, payload) {
 
 function terminateChildProcesses() {
   for (const child of childProcesses) {
+    // Freeze and enumerate the tree before terminating its registered root.
+    // Killing the root first can reparent descendants and make them invisible
+    // to the subsequent process-tree walk on Deno and other Unix runtimes.
+    terminateProcessTree(child.pid);
     try {
       child.kill("SIGKILL");
     } catch {
       // The process may already have exited.
     }
-    terminateProcessTree(child.pid);
   }
   childProcesses.clear();
 }
@@ -293,7 +340,11 @@ function terminateProcessTree(pid) {
   }
   let descendants = [];
   try {
-    globalThis.process.kill(pid, "SIGSTOP");
+    try {
+      globalThis.process.kill(-pid, "SIGSTOP");
+    } catch {
+      globalThis.process.kill(pid, "SIGSTOP");
+    }
     descendants = processDescendants(pid);
   } catch {
     // The process may already have exited.
@@ -306,7 +357,11 @@ function terminateProcessTree(pid) {
     }
   }
   try {
-    globalThis.process.kill(pid, "SIGKILL");
+    try {
+      globalThis.process.kill(-pid, "SIGKILL");
+    } catch {
+      globalThis.process.kill(pid, "SIGKILL");
+    }
   } catch {
     // The process may already have exited.
   }

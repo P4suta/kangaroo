@@ -25,6 +25,8 @@ jobs:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment: release
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -39,8 +41,6 @@ jobs:
           node-version: "24"
           package-manager-cache: false
       - name: Verify release version matches the tag
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           test "${RELEASE_TAG#v}" = "$(sed -n 's/^version = "\([^"]*\)"/\1/p' gleam.toml)"
           test "${RELEASE_TAG#v}" = "$(node -p 'require("./editors/vscode/package.json").version')"
@@ -60,15 +60,15 @@ jobs:
           cp CHANGELOG.md dist/
       - name: Build the VS Code extension artifact
         working-directory: editors/vscode
-        run: npm run package -- --out ../../dist/kangaroo-${{ github.event.release.tag_name }}.vsix
+        run: npm run package -- --out "../../dist/kangaroo-${RELEASE_TAG}.vsix"
       - name: Generate release checksums
         run: |
           cd dist
-          sha256sum * > checksums.txt
+          sha256sum -- ./* > checksums.txt
       - name: Upload artifacts to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
+        run: gh release upload "$RELEASE_TAG" dist/* --clobber
       - name: Publish the Hex package
         env:
           HEXPM_API_KEY: ${{ secrets.HEXPM_API_KEY }}
@@ -77,9 +77,9 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         working-directory: editors/vscode
-        run: npm exec -- vsce publish --packagePath ../../dist/kangaroo-${{ github.event.release.tag_name }}.vsix
+        run: npm exec -- vsce publish --packagePath "../../dist/kangaroo-${RELEASE_TAG}.vsix"
       - name: Publish to Open VSX
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         working-directory: editors/vscode
-        run: npm exec -- ovsx publish ../../dist/kangaroo-${{ github.event.release.tag_name }}.vsix --pat "$OVSX_PAT"
+        run: npm exec -- ovsx publish "../../dist/kangaroo-${RELEASE_TAG}.vsix" --pat "$OVSX_PAT"

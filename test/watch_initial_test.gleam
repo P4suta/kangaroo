@@ -1,7 +1,9 @@
 import gleam/string
+import kangaroo/internal/daemon
 import kangaroo/internal/fs
 import kangaroo/internal/legacy/expect.{expect, to_be_true}
 import kangaroo/internal/legacy/suite.{it, suite}
+import kangaroo/internal/operations.{WatchOperation}
 import kangaroo/internal/process
 import kangaroo/internal/vm
 import kangaroo/internal/watcher
@@ -39,11 +41,16 @@ pub fn suites() {
             let assert Ok(handle) =
               process.start(
                 workspace,
-                "gleam",
-                watcher.coordinator_arguments_for(
+                daemon.operation_executable(
+                  WatchOperation,
                   vm.target(),
                   vm.runtime_name(),
-                  ["watch"],
+                ),
+                daemon.operation_arguments(
+                  WatchOperation,
+                  vm.target(),
+                  vm.runtime_name(),
+                  [],
                 ),
                 [],
                 15_000,
@@ -141,44 +148,40 @@ fn await_output(
   timeout_ms: Int,
   output: String,
 ) -> #(Bool, String) {
-  case process.poll(handle) {
-    process.ProcessOutput(chunk) -> {
-      let output = output <> chunk
-      case string.contains(output, expected) {
-        True -> #(True, output)
-        False -> await_output(handle, expected, started, timeout_ms, output)
-      }
-    }
-    process.ProcessRunning ->
-      case sys.now_ms() - started < timeout_ms {
-        True -> {
+  case string.contains(output, expected), sys.now_ms() - started < timeout_ms {
+    True, _ -> #(True, output)
+    False, False -> #(False, output)
+    False, True ->
+      case process.poll(handle) {
+        process.ProcessOutput(chunk) ->
+          await_output(handle, expected, started, timeout_ms, output <> chunk)
+        process.ProcessRunning -> {
           fs.sleep(10)
           await_output(handle, expected, started, timeout_ms, output)
         }
-        False -> #(False, output)
+        process.ProcessFinished(completed) -> {
+          let output = output <> completed.output
+          #(string.contains(output, expected), output)
+        }
+        process.ProcessCancelled -> #(False, output <> "\n[process cancelled]")
+        process.ProcessFailed(message) -> #(
+          False,
+          output <> "\n[process failed] " <> message,
+        )
       }
-    process.ProcessFinished(completed) -> {
-      let output = output <> completed.output
-      #(string.contains(output, expected), output)
-    }
-    process.ProcessCancelled -> #(False, output <> "\n[process cancelled]")
-    process.ProcessFailed(message) -> #(
-      False,
-      output <> "\n[process failed] " <> message,
-    )
   }
 }
 
 fn await_terminal(handle: Int, started: Int, timeout_ms: Int) -> Nil {
-  case process.poll(handle) {
-    process.ProcessRunning | process.ProcessOutput(_) ->
-      case sys.now_ms() - started < timeout_ms {
-        True -> {
+  case sys.now_ms() - started < timeout_ms {
+    False -> Nil
+    True ->
+      case process.poll(handle) {
+        process.ProcessRunning | process.ProcessOutput(_) -> {
           fs.sleep(5)
           await_terminal(handle, started, timeout_ms)
         }
-        False -> Nil
+        _ -> Nil
       }
-    _ -> Nil
   }
 }

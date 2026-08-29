@@ -1,7 +1,9 @@
 -module(kangaroo_cli_test_ffi).
 -export([reset_flaky/0, fail_once/0, sleeper_executable/0,
          sleeper_arguments/1, tree_marker/0, tree_arguments/1,
-         echo_arguments/0, silent_exit_arguments/1, schedule_replace/4]).
+         echo_arguments/0, closed_stdin_tree_arguments/1,
+         silent_exit_arguments/1, schedule_replace/4,
+         kill_stderr_proxy/0]).
 
 reset_flaky() ->
     persistent_term:put({?MODULE, flaky_attempt}, 0),
@@ -61,6 +63,9 @@ tree_arguments(Marker) ->
         [Erl, Inner])),
     [<<"-noshell">>, <<"-eval">>, unicode:characters_to_binary(Outer)].
 
+closed_stdin_tree_arguments(_Marker) ->
+    [].
+
 schedule_replace(Path, Expected, Replacement, Delay) ->
     spawn(fun() ->
         timer:sleep(Delay),
@@ -70,3 +75,21 @@ schedule_replace(Path, Expected, Replacement, Delay) ->
         end
     end),
     nil.
+
+kill_stderr_proxy() ->
+    case persistent_term:get({kangaroo_isolate_ffi, stderr_proxy}, undefined) of
+        Proxy when is_pid(Proxy) ->
+            exit(Proxy, kill),
+            wait_until_dead(Proxy, 100);
+        _ -> ok
+    end,
+    nil.
+
+wait_until_dead(_Pid, 0) -> ok;
+wait_until_dead(Pid, Remaining) ->
+    case is_process_alive(Pid) of
+        false -> ok;
+        true ->
+            timer:sleep(1),
+            wait_until_dead(Pid, Remaining - 1)
+    end.

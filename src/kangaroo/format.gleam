@@ -1,5 +1,4 @@
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
@@ -9,6 +8,7 @@ import kangaroo/failure.{
   type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Flaky,
   UnexpectedError,
 }
+import kangaroo/internal/fs
 import kangaroo/internal/terminal
 import kangaroo/location
 import kangaroo/report.{type CaseResult, type Summary}
@@ -46,7 +46,7 @@ pub fn print_sink(event: Event) -> Nil {
       failures |> list.each(failure_line)
     }
     CaseOutput(_, case_name, stdout, stderr, outcome) ->
-      io.println(output_text(case_name, stdout, stderr, outcome))
+      fs.write_stdout_line(output_text(case_name, stdout, stderr, outcome))
     RunFinished(_, summary) -> print_line(summary_line(summary))
     _ -> Nil
   }
@@ -63,7 +63,7 @@ pub fn without_color(value: String) -> String {
 }
 
 fn print_line(value: String) -> Nil {
-  io.println(case terminal.use_color() {
+  fs.write_stdout_line(case terminal.use_color() {
     True -> value
     False -> without_color(value)
   })

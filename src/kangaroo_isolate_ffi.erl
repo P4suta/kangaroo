@@ -103,44 +103,71 @@ finish_capture(Collector, Result) ->
     Collector ! {kangaroo_take_output, self(), Reference},
     receive
         {Reference, Stdout, Stderr} ->
-            ets:delete(kangaroo_output_collectors, Collector),
+            delete_collector(Collector),
             Collector ! kangaroo_stop,
             {captured_isolation, Result, Stdout, Stderr}
     after 1000 ->
-        ets:delete(kangaroo_output_collectors, Collector),
+        delete_collector(Collector),
         exit(Collector, kill),
         {captured_isolation, Result, <<>>, <<>>}
     end.
 
+delete_collector(Collector) ->
+    try ets:delete(kangaroo_output_collectors, Collector)
+    catch error:badarg -> false
+    end,
+    ok.
+
 ensure_stderr_proxy() ->
     Key = {?MODULE, stderr_proxy},
     case persistent_term:get(Key, undefined) of
-        Proxy when is_pid(Proxy) -> ok;
+        Proxy when is_pid(Proxy) ->
+            case stderr_proxy_healthy(Proxy) of
+                true -> ok;
+                false ->
+                    persistent_term:erase(Key),
+                    install_stderr_proxy(Key)
+            end;
+        _ -> install_stderr_proxy(Key)
+    end.
+
+stderr_proxy_healthy(Proxy) ->
+    is_process_alive(Proxy)
+        andalso whereis(standard_error) =:= Proxy
+        andalso ets:whereis(kangaroo_output_collectors) =/= undefined.
+
+install_stderr_proxy(Key) ->
+    Parent = self(),
+    Installer = spawn(fun stderr_proxy_installer/0),
+    Registration =
+        try register(kangaroo_stderr_proxy_installer, Installer)
+        catch error:badarg -> false
+        end,
+    case Registration of
+        true ->
+            Installer ! {kangaroo_install, Parent, Key},
+            receive
+                {kangaroo_stderr_installed, Installer} -> ok;
+                {kangaroo_stderr_install_failed, Installer, Reason} ->
+                    erlang:error(Reason)
+            after 5000 ->
+                exit(Installer, kill),
+                unregister_stderr_installer(Installer),
+                erlang:error(kangaroo_stderr_install_timeout)
+            end;
         _ ->
-            Parent = self(),
-            Installer = spawn(fun stderr_proxy_installer/0),
-            Registration =
-                try register(kangaroo_stderr_proxy_installer, Installer)
-                catch error:badarg -> false
-                end,
-            case Registration of
-                true ->
-                    Installer ! {kangaroo_install, Parent, Key},
-                    receive
-                        {kangaroo_stderr_installed, Installer} -> ok
-                    after 5000 ->
-                        erlang:error(kangaroo_stderr_install_timeout)
-                    end;
-                _ ->
-                    exit(Installer, kill),
-                    wait_for_stderr_proxy(Key, 5000)
-            end
+            exit(Installer, kill),
+            wait_for_stderr_proxy(Key, 5000)
     end.
 
 stderr_proxy_installer() ->
     receive
         {kangaroo_install, Parent, Key} ->
-            Original = whereis(standard_error),
+            OriginalKey = {?MODULE, stderr_original},
+            Original = case persistent_term:get(OriginalKey, undefined) of
+                Stored when is_pid(Stored); is_port(Stored) -> Stored;
+                _ -> whereis(standard_error)
+            end,
             Installer = self(),
             Proxy = spawn(fun() ->
                               ets:new(kangaroo_output_collectors,
@@ -149,23 +176,46 @@ stderr_proxy_installer() ->
                               Installer ! {kangaroo_stderr_table_ready, self()},
                               stderr_proxy(Original)
                           end),
-            receive {kangaroo_stderr_table_ready, Proxy} -> ok end,
-            case Original of
-                undefined -> ok;
-                _ -> true = unregister(standard_error)
-            end,
-            true = register(standard_error, Proxy),
-            persistent_term:put(Key, Proxy),
-            Parent ! {kangaroo_stderr_installed, self()},
-            true = unregister(kangaroo_stderr_proxy_installer),
-            ok
+            receive
+                {kangaroo_stderr_table_ready, Proxy} ->
+                    case whereis(standard_error) of
+                        undefined -> ok;
+                        _ -> true = unregister(standard_error)
+                    end,
+                    true = register(standard_error, Proxy),
+                    persistent_term:put(OriginalKey, Original),
+                    persistent_term:put(Key, Proxy),
+                    Parent ! {kangaroo_stderr_installed, self()},
+                    unregister_stderr_installer(self())
+            after 4000 ->
+                exit(Proxy, kill),
+                Parent ! {kangaroo_stderr_install_failed, self(),
+                          kangaroo_stderr_table_timeout},
+                unregister_stderr_installer(self())
+            end
     end.
+
+unregister_stderr_installer(Installer) ->
+    case whereis(kangaroo_stderr_proxy_installer) of
+        Installer ->
+            try unregister(kangaroo_stderr_proxy_installer)
+            catch error:badarg -> false
+            end;
+        _ -> false
+    end,
+    ok.
 
 wait_for_stderr_proxy(_Key, Remaining) when Remaining =< 0 ->
     erlang:error(kangaroo_stderr_install_timeout);
 wait_for_stderr_proxy(Key, Remaining) ->
     case persistent_term:get(Key, undefined) of
-        Proxy when is_pid(Proxy) -> ok;
+        Proxy when is_pid(Proxy) ->
+            case stderr_proxy_healthy(Proxy) of
+                true -> ok;
+                false ->
+                    receive after 1 -> ok end,
+                    wait_for_stderr_proxy(Key, Remaining - 1)
+            end;
         _ ->
             receive after 1 -> ok end,
             wait_for_stderr_proxy(Key, Remaining - 1)
@@ -292,6 +342,7 @@ inspect(Value) ->
     gleam@string:inspect(Value).
 
 assertion_fields(#{gleam_error := assert,
+                   kind := binary_operator,
                    left := #{value := Left},
                    right := #{value := Right}}) ->
     {{some, inspect(Right)}, {some, inspect(Left)}, assertion_diff(Right, Left)};

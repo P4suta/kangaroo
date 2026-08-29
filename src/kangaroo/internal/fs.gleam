@@ -55,9 +55,19 @@ pub fn close_input() -> Nil
 @external(javascript, "../../kangaroo_fs_ffi.mjs", "write_stdout_line")
 pub fn write_stdout_line(line: String) -> Nil
 
+/// Writes bytes to stdout synchronously without adding a newline.
+@external(erlang, "kangaroo_fs_ffi", "write_stdout")
+@external(javascript, "../../kangaroo_fs_ffi.mjs", "write_stdout")
+pub fn write_stdout(contents: String) -> Nil
+
 @external(erlang, "kangaroo_fs_ffi", "write_stderr_line")
 @external(javascript, "../../kangaroo_fs_ffi.mjs", "write_stderr_line")
 pub fn write_stderr_line(line: String) -> Nil
+
+/// Writes bytes to stderr synchronously without adding a newline.
+@external(erlang, "kangaroo_fs_ffi", "write_stderr")
+@external(javascript, "../../kangaroo_fs_ffi.mjs", "write_stderr")
+pub fn write_stderr(contents: String) -> Nil
 
 @external(erlang, "kangaroo_fs_ffi", "halt")
 @external(javascript, "../../kangaroo_fs_ffi.mjs", "halt")

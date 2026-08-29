@@ -32,6 +32,23 @@ fn reset_descendant_marker() -> Nil
 @external(javascript, "./runtime_fixture_ffi.mjs", "descendant_marker_exists")
 fn descendant_marker_exists() -> Bool
 
+/// Keeps process-tree cleanup independently selectable while the remaining
+/// pre-v1 helper cases are still exercised through `legacy_regression_test`.
+pub fn descendant_timeout_cleanup_test() {
+  reset_descendant_marker()
+  let assert Ok(loaded) = runtime.resolve(fixture("descendant_timeout_fixture"))
+  case runtime.run(loaded, Some(10)) {
+    Crashed(error) -> {
+      assert error.name == "timeout"
+    }
+    _ -> panic as "expected timeout"
+  }
+  fs.sleep(200)
+  let survived = descendant_marker_exists()
+  reset_descendant_marker()
+  assert survived == False
+}
+
 pub fn suites() {
   [
     suite("helpers", [
@@ -90,19 +107,6 @@ pub fn suites() {
         reset_descendant_marker()
         let assert Ok(loaded) = runtime.resolve(fixture("descendant_fixture"))
         expect(runtime.run(loaded, Some(1000))) |> to_equal(Completed([]))
-        fs.sleep(200)
-        let survived = descendant_marker_exists()
-        reset_descendant_marker()
-        expect(survived) |> to_equal(False)
-      }),
-      it("terminates descendant work when an isolated test times out", fn() {
-        reset_descendant_marker()
-        let assert Ok(loaded) =
-          runtime.resolve(fixture("descendant_timeout_fixture"))
-        case runtime.run(loaded, Some(10)) {
-          Crashed(error) -> expect(error.name) |> to_equal("timeout")
-          _ -> panic as "expected timeout"
-        }
         fs.sleep(200)
         let survived = descendant_marker_exists()
         reset_descendant_marker()

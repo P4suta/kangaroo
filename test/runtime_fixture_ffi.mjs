@@ -41,13 +41,26 @@ export function right_string() {
   return "same\nnew";
 }
 
+export function non_binary_assert() {
+  const error = new Error("synthetic non-binary assert");
+  error.gleam_error = "assert";
+  error.kind = "guard";
+  error.left = { value: 1 };
+  error.right = { value: 2 };
+  throw error;
+}
+
 export function spawn_descendant() {
   const code = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(descendantMarker)}, "survived"), 100);`;
+  const parentCode = `const { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(code)}], { stdio: "ignore" }); setTimeout(() => {}, 1000);`;
   const denoCode = `await new Promise(resolve => setTimeout(resolve, 100)); await Deno.writeTextFile(${JSON.stringify(descendantMarker)}, "survived");`;
+  const denoParentCode = `new Deno.Command(Deno.execPath(), { args: ["eval", ${JSON.stringify(denoCode)}], stdout: "null", stderr: "null" }).spawn(); await new Promise(resolve => setTimeout(resolve, 1000));`;
   const deno = typeof globalThis.Deno !== "undefined";
-  spawn(globalThis.process.execPath, deno ? ["eval", denoCode] : ["-e", code], {
-    stdio: "ignore",
-  });
+  spawn(
+    globalThis.process.execPath,
+    deno ? ["eval", denoParentCode] : ["-e", parentCode],
+    { stdio: "ignore" },
+  );
 }
 
 export function reset_descendant_marker() {

@@ -38,7 +38,7 @@ jobs:
       - name: Verify the public package interface
         run: |
           gleam export package-interface --out package-interface.json
-          jq -e '.modules | keys == ["kangaroo"]' package-interface.json
+          jq -e '.modules | keys == ["kangaroo", "kangaroo/coverage_probe"]' package-interface.json
       - name: Validate protocol schema
         run: jq empty docs/protocol-v1.schema.json
       - name: Test interactive TUI cancellation and restoration

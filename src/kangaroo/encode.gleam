@@ -1,5 +1,4 @@
 import gleam/dynamic/decode as dynamic_decode
-import gleam/io
 import gleam/json
 import gleam/option.{None, Some}
 import gleam/result
@@ -11,6 +10,7 @@ import kangaroo/failure.{
   type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Flaky,
   Passed, Skipped, SkippedWithReason, UnexpectedError,
 }
+import kangaroo/internal/fs
 import kangaroo/location.{type Location, Location}
 import kangaroo/report.{type Summary, Summary}
 
@@ -18,7 +18,7 @@ import kangaroo/report.{type Summary, Summary}
 /// single JSON object on its own line. Enabled by setting the `KANGAROO_JSON`
 /// environment variable.
 pub fn json_sink(event: Event) -> Nil {
-  io.println(encode(event))
+  fs.write_stdout_line(encode(event))
 }
 
 pub fn encode(event: Event) -> String {

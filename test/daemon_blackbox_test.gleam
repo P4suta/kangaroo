@@ -1,9 +1,25 @@
+import gleam/list
 import gleam/string
 import kangaroo/internal/fs
 import kangaroo/internal/process
 import kangaroo/internal/vm
 import kangaroo/internal/watcher
 import kangaroo/sys
+
+pub fn completed_record_matching_allows_a_trailing_fragment_test() {
+  assert completed_output_contains(
+    "{\"type\":\"discovered\"}\n{\"type\":\"part",
+    "\"type\":\"discovered\"",
+  )
+  assert !completed_output_contains("{\"type\":\"part", "\"type\":\"part\"")
+}
+
+fn completed_output_contains(output: String, expected: String) -> Bool {
+  let lines = string.split(output, "\n")
+  lines
+  |> list.take(list.length(lines) - 1)
+  |> list.any(fn(line) { string.contains(line, expected) })
+}
 
 pub fn daemon_bidirectional_protocol_and_cancellation_test() {
   let assert Ok(handle) =
@@ -79,21 +95,22 @@ fn await_contains_until(handle, expected, started, timeout_ms, output) {
   // A pipe read may stop halfway through one NDJSON object, notably on
   // Windows. Only inspect protocol output after its terminating newline has
   // arrived so assertions never observe a partial discovery response.
-  case string.contains(output, expected) && string.ends_with(output, "\n") {
+  case completed_output_contains(output, expected) {
     True -> Ok(output)
     False ->
-      case process.poll(handle) {
-        process.ProcessOutput(chunk) ->
-          await_contains_until(
-            handle,
-            expected,
-            started,
-            timeout_ms,
-            output <> chunk,
-          )
-        process.ProcessRunning ->
-          case sys.now_ms() - started < timeout_ms {
-            True -> {
+      case sys.now_ms() - started < timeout_ms {
+        False -> Error("timed out waiting for " <> expected <> ":\n" <> output)
+        True ->
+          case process.poll(handle) {
+            process.ProcessOutput(chunk) ->
+              await_contains_until(
+                handle,
+                expected,
+                started,
+                timeout_ms,
+                output <> chunk,
+              )
+            process.ProcessRunning -> {
               fs.sleep(5)
               await_contains_until(
                 handle,
@@ -103,15 +120,13 @@ fn await_contains_until(handle, expected, started, timeout_ms, output) {
                 output,
               )
             }
-            False ->
-              Error("timed out waiting for " <> expected <> ":\n" <> output)
+            process.ProcessFinished(completed) ->
+              Error(
+                "daemon exited before " <> expected <> ":\n" <> completed.output,
+              )
+            process.ProcessCancelled -> Error("daemon was cancelled")
+            process.ProcessFailed(message) -> Error(message)
           }
-        process.ProcessFinished(completed) ->
-          Error(
-            "daemon exited before " <> expected <> ":\n" <> completed.output,
-          )
-        process.ProcessCancelled -> Error("daemon was cancelled")
-        process.ProcessFailed(message) -> Error(message)
       }
   }
 }
@@ -126,20 +141,20 @@ fn await_completion(
 }
 
 fn await_completion_until(handle, started, timeout_ms, output) {
-  case process.poll(handle) {
-    process.ProcessRunning ->
-      case sys.now_ms() - started < timeout_ms {
-        True -> {
+  case sys.now_ms() - started < timeout_ms {
+    False -> Error("daemon shutdown timed out:\n" <> output)
+    True ->
+      case process.poll(handle) {
+        process.ProcessRunning -> {
           fs.sleep(5)
           await_completion_until(handle, started, timeout_ms, output)
         }
-        False -> Error("daemon shutdown timed out:\n" <> output)
+        process.ProcessOutput(chunk) ->
+          await_completion_until(handle, started, timeout_ms, output <> chunk)
+        process.ProcessFinished(completed) -> Ok(completed)
+        process.ProcessCancelled -> Error("daemon was unexpectedly cancelled")
+        process.ProcessFailed(message) ->
+          Error("daemon process failed: " <> message <> "\n" <> output)
       }
-    process.ProcessOutput(chunk) ->
-      await_completion_until(handle, started, timeout_ms, output <> chunk)
-    process.ProcessFinished(completed) -> Ok(completed)
-    process.ProcessCancelled -> Error("daemon was unexpectedly cancelled")
-    process.ProcessFailed(message) ->
-      Error("daemon process failed: " <> message <> "\n" <> output)
   }
 }

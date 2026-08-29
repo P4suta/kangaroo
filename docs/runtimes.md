@@ -5,7 +5,7 @@ Kangaroo supports Gleam 1.18+ on Linux, macOS, and Windows with:
 | Target | Supported runtime versions | Isolation |
 | --- | --- | --- |
 | Erlang | OTP 27, 28, 29 | one BEAM process per test |
-| JavaScript | Node.js 22, 24, 26 | Worker per generation |
+| JavaScript | Node.js 22.12+, 24, 26 | Worker per generation |
 | JavaScript | Bun 1.4+ | Worker per generation |
 | JavaScript | Deno 2.9+ | Worker per generation |
 

@@ -1,5 +1,4 @@
 import gleam/dict.{type Dict}
-import gleam/io
 import gleam/result
 import kangaroo/internal/fs
 import kangaroo/internal/process
@@ -679,7 +678,7 @@ fn dynamic_loop(
   fs.sleep(scan_delay)
   case watcher.snapshot_project(project_dir, roots) {
     Error(message) -> {
-      io.println_error("kangaroo: watch scan failed: " <> message)
+      fs.write_stderr_line("kangaroo: watch scan failed: " <> message)
       dynamic_loop(
         project_dir,
         roots,
@@ -741,7 +740,7 @@ fn interactive_loop(
   fs.sleep(scan_delay)
   case watcher.snapshot_project(project_dir, roots) {
     Error(message) -> {
-      io.println_error("kangaroo: watch scan failed: " <> message)
+      fs.write_stderr_line("kangaroo: watch scan failed: " <> message)
       interactive_loop(
         project_dir,
         roots,
@@ -829,7 +828,7 @@ fn positive_delay(milliseconds: Int) -> Int {
 /// debounce window to become stable.
 pub fn scan_interval(debounce_ms: Int) -> Int {
   case debounce_ms > 0 {
-    True -> debounce_ms * 2
+    True -> debounce_ms * 5 / 2
     False -> 1
   }
 }

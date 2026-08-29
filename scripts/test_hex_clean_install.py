@@ -43,6 +43,12 @@ class PackageValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unsafe package member path"):
             clean_install.validated_members(contents_archive(files))
 
+    def test_rejects_windows_rooted_member_paths(self) -> None:
+        for name in ["C:\\outside", "C:/outside", "\\\\server\\share\\outside"]:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(RuntimeError, "unsafe package member path"):
+                    clean_install.safe_member_name(name)
+
     def test_rejects_development_only_files(self) -> None:
         files = required_files()
         files["test/private_test.gleam"] = b"pub fn leak_test() { Nil }"
@@ -57,6 +63,18 @@ class PackageValidationTest(unittest.TestCase):
             self.assertEqual(
                 (destination / "src" / "kangaroo.gleam").read_bytes(),
                 b"fixture",
+            )
+
+    def test_extracts_backslash_members_through_the_normalized_path(self) -> None:
+        files = required_files()
+        files["src\\nested\\extra.txt"] = b"normalized"
+        contents = contents_archive(files)
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary)
+            clean_install.extract_contents(contents, destination)
+            self.assertEqual(
+                (destination / "src" / "nested" / "extra.txt").read_bytes(),
+                b"normalized",
             )
 
 
@@ -80,6 +98,31 @@ class ConsumerContractTest(unittest.TestCase):
         self.assertIn(
             ["gleam", "test", "--target", "javascript", "--runtime", "nodejs"],
             commands,
+        )
+        self.assertIn(
+            ["gleam", "run", "--target", "erlang", "-m", "kangaroo", "--", "coverage"],
+            commands,
+        )
+        self.assertIn(
+            [
+                "gleam", "run", "--target", "javascript", "--runtime", "nodejs",
+                "-m", "kangaroo", "--", "coverage",
+            ],
+            commands,
+        )
+
+    def test_requires_the_public_coverage_probe_in_the_package(self) -> None:
+        self.assertIn(
+            "src/kangaroo/coverage_probe.gleam",
+            clean_install.REQUIRED_PACKAGE_FILES,
+        )
+        self.assertIn(
+            "src/kangaroo_key_worker.mjs",
+            clean_install.REQUIRED_PACKAGE_FILES,
+        )
+        self.assertIn(
+            "src/kangaroo_daemon_child.mjs",
+            clean_install.REQUIRED_PACKAGE_FILES,
         )
 
     def test_resolves_exactly_one_versioned_tarball_from_build_directory(self) -> None:

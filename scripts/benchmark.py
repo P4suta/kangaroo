@@ -24,6 +24,16 @@ Number = int | float
 ProcessTable = Mapping[int, tuple[int, int]]
 
 
+def required_replace(source: str, old: str, new: str) -> str:
+    """Replace a required fixture literal or reject a stale benchmark setup."""
+    count = source.count(old)
+    if count != 1:
+        raise RuntimeError(
+            f"required fixture literal must occur exactly once, found {count}: {old!r}"
+        )
+    return source.replace(old, new)
+
+
 def load_policy(path: Path) -> dict[str, dict[str, Number]]:
     """Load and validate the committed protocol-independent v1 policy."""
     try:
@@ -292,6 +302,18 @@ def _wait_for_line(
             return line
 
 
+def wait_for_watch_run(
+    pump: _LinePump, process: subprocess.Popen[str], *, timeout: float
+) -> str:
+    """Wait until watch has left settle/compile and is observing a test run."""
+    return _wait_for_line(
+        pump,
+        "kangaroo benchmark: watch run start",
+        timeout=timeout,
+        process=process,
+    )
+
+
 class _DaemonClient:
     def __init__(self, process: subprocess.Popen[str]) -> None:
         if process.stdin is None or process.stdout is None or process.stderr is None:
@@ -359,11 +381,17 @@ def _daemon_command(root: Path) -> list[str]:
     return ["node", str(root / "scripts" / "run-built-kangaroo.mjs"), "daemon"]
 
 
-def _start_daemon(root: Path, project: Path) -> _DaemonClient:
+def _start_daemon(
+    root: Path,
+    project: Path,
+    extra_environment: Mapping[str, str] | None = None,
+) -> _DaemonClient:
+    environment = os.environ.copy()
+    environment.update(extra_environment or {})
     process = subprocess.Popen(
         _daemon_command(root),
         cwd=project,
-        env=os.environ.copy(),
+        env=environment,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -500,12 +528,17 @@ def measure_save_detection(root: Path, *, samples: int = 20) -> list[float]:
         )
         config = project / "gleam.toml"
         config.write_text(
-            config.read_text(encoding="utf-8").replace(
+            required_replace(
+                config.read_text(encoding="utf-8"),
                 "debounce_ms = 10", "debounce_ms = 50"
             ),
             encoding="utf-8",
         )
-        client = _start_daemon(root, project)
+        client = _start_daemon(
+            root,
+            project,
+            {"KANGAROO_BENCHMARK_TRACE": "1"},
+        )
         watch_active = False
         try:
             client.request(
@@ -538,10 +571,15 @@ def measure_save_detection(root: Path, *, samples: int = 20) -> list[float]:
                     round((time.perf_counter_ns() - started) / 1_000_000, 3)
                 )
                 if generation < samples:
-                    # Detection intentionally precedes settle and old-process
-                    # cancellation. Keep each latency sample in an independent
-                    # stable generation; cancellation has its own benchmark.
-                    time.sleep(0.5)
+                    # Detection intentionally precedes settle and compilation.
+                    # Synchronise on the next observed run so those phases are
+                    # outside every latency sample; cancellation has its own
+                    # independent benchmark.
+                    wait_for_watch_run(
+                        client.stderr,
+                        client.process,
+                        timeout=10,
+                    )
             return timings
         finally:
             if os.environ.get("KANGAROO_BENCHMARK_WATCH_TRACE"):
@@ -632,6 +670,8 @@ def measure_idle_cpu(root: Path, *, duration_seconds: float = 3) -> float:
     """Measure an idle daemon+watch process tree as percent of one CPU core."""
     if duration_seconds <= 0:
         raise ValueError("idle CPU duration must be positive")
+    if not sys.platform.startswith("linux"):
+        raise RuntimeError("idle CPU measurement currently requires Linux /proc")
     source_fixture = root / "fixtures" / "watch_project"
     with tempfile.TemporaryDirectory(
         prefix=".kangaroo-benchmark-idle-", dir=root / "fixtures"
@@ -640,12 +680,15 @@ def measure_idle_cpu(root: Path, *, duration_seconds: float = 3) -> float:
         copy_fixture_project(source_fixture, project)
         javascript_ffi = project / "test" / "kangaroo_watch_fixture_ffi.mjs"
         javascript_ffi.write_text(
-            javascript_ffi.read_text(encoding="utf-8").replace("5000", "25"),
+            required_replace(
+                javascript_ffi.read_text(encoding="utf-8"), "5000", "25"
+            ),
             encoding="utf-8",
         )
         config = project / "gleam.toml"
         config.write_text(
-            config.read_text(encoding="utf-8").replace(
+            required_replace(
+                config.read_text(encoding="utf-8"),
                 "debounce_ms = 10", "debounce_ms = 50"
             ),
             encoding="utf-8",
@@ -721,7 +764,7 @@ def collect_metrics(
     )
     save_samples = measure_save_detection(root, samples=3 if quick else 20)
     cancellation_samples = measure_cancellation(root, samples=2 if quick else 10)
-    idle_duration = 1 if quick else 5
+    idle_duration = idle_sample_duration(quick)
     idle_cpu = measure_idle_cpu(root, duration_seconds=idle_duration)
     samples: dict[str, list[Number]] = {
         "warm_discovery_10000_p95_ms": discovery_samples,
@@ -736,6 +779,11 @@ def collect_metrics(
         "idle_cpu_percent": idle_cpu,
     }
     return metrics, samples
+
+
+def idle_sample_duration(quick: bool) -> int:
+    """Use enough scheduler ticks for a stable tenth-percent release gate."""
+    return 1 if quick else 10
 
 
 def _node_version() -> str:

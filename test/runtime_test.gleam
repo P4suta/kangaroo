@@ -6,6 +6,10 @@ import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/internal/runtime
 import kangaroo/isolate.{CapturedIsolation, Completed, Crashed}
 
+@external(erlang, "kangaroo_cli_test_ffi", "kill_stderr_proxy")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "kill_stderr_proxy")
+fn kill_stderr_proxy() -> Nil
+
 fn fixture(name: String) -> IndexedTest {
   IndexedTest(
     id: "test/runtime_fixture.gleam::" <> name,
@@ -21,6 +25,14 @@ fn fixture(name: String) -> IndexedTest {
     serial: False,
     skip: None,
   )
+}
+
+pub fn non_binary_assert_payload_test() {
+  let assert Ok(loaded) = runtime.resolve(fixture("non_binary_assert_fixture"))
+  let assert Crashed(error) = runtime.run(loaded, None)
+  assert error.expected == None
+  assert error.actual == None
+  assert error.diff == None
 }
 
 pub fn suites() {
@@ -87,6 +99,17 @@ pub fn suites() {
         }
       }),
       it("captures stdout and stderr without leaking them", fn() {
+        let assert Ok(loaded) = runtime.resolve(fixture("output_fixture"))
+        expect(runtime.run_captured(loaded, None))
+        |> to_equal(CapturedIsolation(
+          Completed([]),
+          "captured stdout\n",
+          "captured stderr\n",
+        ))
+      }),
+      it("reinstalls the stderr proxy after an unexpected crash", fn() {
+        // JavaScript has no global stderr proxy; its test FFI is a no-op.
+        kill_stderr_proxy()
         let assert Ok(loaded) = runtime.resolve(fixture("output_fixture"))
         expect(runtime.run_captured(loaded, None))
         |> to_equal(CapturedIsolation(

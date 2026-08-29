@@ -1,4 +1,3 @@
-import gleam/io
 import gleam/option.{None, Some}
 import kangaroo/internal/cli
 import kangaroo/internal/command
@@ -35,14 +34,14 @@ pub fn main() -> Nil {
 fn dispatch(args: List(String)) -> Nil {
   case command.parse(args), fs.current_dir() {
     Error(message), _ | _, Error(message) -> {
-      io.println_error(message)
+      fs.write_stderr_line(message)
       fs.halt(2)
     }
     Ok(command), Ok(project_dir) ->
       case cli.execute(project_dir, command) {
         Ok(code) -> fs.halt(code)
         Error(message) -> {
-          io.println_error("kangaroo: " <> message)
+          fs.write_stderr_line("kangaroo: " <> message)
           fs.halt(2)
         }
       }

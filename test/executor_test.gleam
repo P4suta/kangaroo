@@ -139,6 +139,42 @@ pub fn suites() {
           "test/runtime_fixture.gleam::missing_fixture is not an exported zero-argument function",
         ))
       }),
+      it("closes the scheduled event stream after resolution fails", fn() {
+        event_buffer.take()
+        expect(
+          executor.run_scheduled(
+            [fixture("missing_fixture")],
+            event_buffer.append,
+            30_000,
+            False,
+            0,
+            1,
+            [],
+          ),
+        )
+        |> to_equal(Error(
+          "test/runtime_fixture.gleam::missing_fixture is not an exported zero-argument function",
+        ))
+        let events = event_buffer.take()
+        expect(
+          list.count(events, fn(event) {
+            case event {
+              RunStarted(..) -> True
+              _ -> False
+            }
+          }),
+        )
+        |> to_equal(1)
+        expect(
+          list.count(events, fn(event) {
+            case event {
+              RunFinished(..) -> True
+              _ -> False
+            }
+          }),
+        )
+        |> to_equal(1)
+      }),
       it("emits one deterministic run around scheduled module batches", fn() {
         event_buffer.take()
         let assert Ok(result) =

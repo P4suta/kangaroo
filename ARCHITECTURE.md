@@ -1,9 +1,11 @@
 # Architecture
 
-Kangaroo 1.x is one Gleam package with one stable public module,
-`kangaroo`. Implementation modules match the `kangaroo/*` internal-module
-glob, so the compiler-generated package interface cannot accidentally turn a
-runner detail into a compatibility promise.
+Kangaroo 1.x is one Gleam package. `kangaroo` is its stable user-facing public
+module. `kangaroo/coverage_probe` is a second public module only because the
+disposable instrumentation clone must import it across the downstream package
+boundary; it is a tooling ABI, not an application API. Every other module is
+listed as internal, so the compiler-generated package interface cannot
+accidentally turn a runner detail into a compatibility promise.
 
 ## Data flow
 

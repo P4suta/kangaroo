@@ -81,10 +81,6 @@ function isolateWorker(body, timeoutOption) {
   const stdoutData = new Uint8Array(stdoutBuffer);
   const stderrData = new Uint8Array(stderrBuffer);
   const childPids = new Int32Array(childPidBuffer);
-  // Bun does not currently mirror mutations made by syncBuiltinESMExports()
-  // into every node:child_process binding.  Keep an OS-level baseline as a
-  // runtime-independent fallback for descendants which bypass the hook.
-  const descendantBaseline = new Set(processDescendants(globalThis.process.pid));
   const worker = new Worker(workerUrl, {
     workerData: {
       modulePath: body.kangarooModulePath,
@@ -99,8 +95,7 @@ function isolateWorker(body, timeoutOption) {
 
   const startupWait = Atomics.wait(control, 5, 0, 30_000);
   if (startupWait === "timed-out") {
-    terminateRegisteredChildren(childPids);
-    terminateNewDescendants(descendantBaseline);
+    terminateRegisteredChildren(childPids, true);
     void worker.terminate();
     return new CapturedIsolation(
       new Crashed(
@@ -123,9 +118,10 @@ function isolateWorker(body, timeoutOption) {
   if (wait === "timed-out") {
     const stdout = sharedOutput(control, 3, stdoutData);
     const stderr = sharedOutput(control, 4, stderrData);
-    requestWorkerCancellation(worker, control);
-    terminateRegisteredChildren(childPids);
-    terminateNewDescendants(descendantBaseline);
+    requestWorkerCancellation(worker, control, () => {
+      terminateRegisteredChildren(childPids);
+    });
+    terminateRegisteredChildren(childPids, true);
     void worker.terminate();
     return new CapturedIsolation(
       new Crashed(
@@ -149,7 +145,6 @@ function isolateWorker(body, timeoutOption) {
     new TextDecoder().decode(data.subarray(0, Math.max(0, length))),
   );
   terminateRegisteredChildren(childPids);
-  terminateNewDescendants(descendantBaseline);
   void worker.terminate();
 
   let result;
@@ -176,30 +171,35 @@ function isolateWorker(body, timeoutOption) {
   );
 }
 
-function requestWorkerCancellation(worker, control) {
+function requestWorkerCancellation(worker, control, onRequested) {
   try {
     Atomics.store(control, 6, 1);
     Atomics.notify(control, 6, 1);
     worker.postMessage({ type: "cancel" });
+    onRequested();
     Atomics.wait(control, 6, 1, 250);
   } catch {
     // A worker which already exited needs no cooperative cleanup.
   }
 }
 
-function terminateNewDescendants(baseline) {
-  const current = processDescendants(globalThis.process.pid);
-  // Kill deepest descendants first. A process which has already disappeared
-  // is harmless and terminateProcessTree intentionally tolerates that race.
-  for (const pid of current.reverse()) {
-    if (!baseline.has(pid)) terminateProcessTree(pid);
+function terminateRegisteredChildren(registry, awaitPublication = false) {
+  scanRegisteredChildren(registry);
+  if (awaitPublication) {
+    const highWater = Atomics.load(registry, 0);
+    Atomics.wait(registry, 0, highWater, 1);
+    scanRegisteredChildren(registry);
   }
 }
 
-function terminateRegisteredChildren(registry) {
-  const count = Math.max(0, Math.min(Atomics.load(registry, 0), registry.length - 1));
-  for (let index = 1; index <= count; index += 1) {
-    terminateProcessTree(Atomics.load(registry, index));
+function scanRegisteredChildren(registry) {
+  const highWater = Math.max(
+    1,
+    Math.min(Atomics.load(registry, 0) + 1, registry.length - 1),
+  );
+  for (let index = 1; index <= highWater; index += 1) {
+    const pid = Atomics.exchange(registry, index, 0);
+    terminateProcessTree(pid);
   }
 }
 
@@ -225,7 +225,11 @@ function terminateProcessTree(pid) {
   }
   let descendants = [];
   try {
-    globalThis.process.kill(pid, "SIGSTOP");
+    try {
+      globalThis.process.kill(-pid, "SIGSTOP");
+    } catch {
+      globalThis.process.kill(pid, "SIGSTOP");
+    }
     descendants = processDescendants(pid);
   } catch {
     // The process may already have exited.
@@ -238,7 +242,11 @@ function terminateProcessTree(pid) {
     }
   }
   try {
-    globalThis.process.kill(pid, "SIGKILL");
+    try {
+      globalThis.process.kill(-pid, "SIGKILL");
+    } catch {
+      globalThis.process.kill(pid, "SIGKILL");
+    }
   } catch {
     // The process may already have exited.
   }

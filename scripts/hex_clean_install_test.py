@@ -8,7 +8,7 @@ import io
 import subprocess
 import tarfile
 import tempfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Iterable, Sequence
 
 
@@ -17,9 +17,12 @@ REQUIRED_PACKAGE_FILES = {
     "README.md",
     "gleam.toml",
     "src/kangaroo.gleam",
+    "src/kangaroo/coverage_probe.gleam",
     "src/kangaroo/internal/cli.gleam",
     "src/kangaroo_isolate_ffi.erl",
     "src/kangaroo_isolate_ffi.mjs",
+    "src/kangaroo_daemon_child.mjs",
+    "src/kangaroo_key_worker.mjs",
 }
 FORBIDDEN_PACKAGE_PREFIXES = (
     ".git/",
@@ -54,7 +57,14 @@ def safe_member_name(name: str) -> str:
     """Return a normalized tar member name or reject an escaping path."""
     normalized = name.replace("\\", "/").removeprefix("./")
     path = PurePosixPath(normalized)
-    if not normalized or path.is_absolute() or ".." in path.parts:
+    windows_path = PureWindowsPath(normalized)
+    if (
+        not normalized
+        or path.is_absolute()
+        or windows_path.is_absolute()
+        or bool(windows_path.drive)
+        or ".." in path.parts
+    ):
         raise RuntimeError(f"unsafe package member path: {name}")
     return path.as_posix()
 
@@ -106,7 +116,8 @@ def extract_contents(contents: bytes, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(contents), mode="r:gz") as archive:
         for member in members:
-            target = destination.joinpath(*PurePosixPath(member.name).parts)
+            normalized = safe_member_name(member.name)
+            target = destination.joinpath(*PurePosixPath(normalized).parts)
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
@@ -122,8 +133,13 @@ def consumer_commands() -> list[list[str]]:
         ["gleam", "deps", "download"],
         ["gleam", "build", "--target", "erlang", "--warnings-as-errors"],
         ["gleam", "test", "--target", "erlang"],
+        ["gleam", "run", "--target", "erlang", "-m", "kangaroo", "--", "coverage"],
         ["gleam", "build", "--target", "javascript", "--warnings-as-errors"],
         ["gleam", "test", "--target", "javascript", "--runtime", "nodejs"],
+        [
+            "gleam", "run", "--target", "javascript", "--runtime", "nodejs",
+            "-m", "kangaroo", "--", "coverage",
+        ],
     ]
 
 
@@ -157,7 +173,7 @@ def clean_install(hex_tarball: Path) -> None:
         extract_contents(contents, root / "package")
         consumer = create_consumer(root)
         run_commands(consumer_commands(), consumer)
-    print("Kangaroo Hex tarball clean-install passed on Erlang and Node.js")
+    print("Kangaroo Hex tarball clean-install and coverage passed on Erlang and Node.js")
 
 
 def resolve_tarball(path: Path) -> Path:

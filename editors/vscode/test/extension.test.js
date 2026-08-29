@@ -14,11 +14,12 @@ function fakeChild() {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  child.stdin = {
-    writable: true,
-    writes: [],
-    write(value) { this.writes.push(value); },
-  };
+  child.stdout.setEncoding = (encoding) => { child.stdout.encoding = encoding; };
+  child.stderr.setEncoding = (encoding) => { child.stderr.encoding = encoding; };
+  child.stdin = new EventEmitter();
+  child.stdin.writable = true;
+  child.stdin.writes = [];
+  child.stdin.write = function write(value) { this.writes.push(value); };
   child.kill = () => { child.killed = true; };
   return child;
 }
@@ -41,9 +42,66 @@ test("daemon client keeps stdout protocol-only and uses the unified module", () 
   });
   client.start();
   assert.deepEqual(calls[0][1], ["run", "-m", "kangaroo", "--", "daemon"]);
+  assert.equal(child.stdout.encoding, "utf8");
+  assert.equal(child.stderr.encoding, "utf8");
   child.stdout.emit("data", '{"protocol_version":1,"type":"shutdown"}\nnoise\n');
   assert.equal(messages.length, 1);
   assert.match(logs[0], /invalid daemon stdout/);
+});
+
+test("daemon client turns a broken stdin pipe into one recoverable exit", () => {
+  const child = fakeChild();
+  const exits = [];
+  const logs = [];
+  const client = new DaemonClient({
+    cwd: "/project",
+    executable: "gleam",
+    spawnProcess: () => child,
+    onMessage() {},
+    onLog: (message) => logs.push(message),
+    onExit: (exit) => exits.push(exit),
+    terminateProcess: (process) => { process.killed = true; },
+  });
+  client.start();
+
+  assert.doesNotThrow(() => child.stdin.emit("error", Object.assign(
+    new Error("write EPIPE"),
+    { code: "EPIPE" },
+  )));
+  assert.equal(client.process, null);
+  assert.equal(child.killed, true);
+  assert.equal(exits.length, 1);
+  assert.match(logs[0], /stdin.*EPIPE/);
+
+  child.emit("exit", null, "SIGKILL");
+  assert.equal(exits.length, 1);
+});
+
+test("daemon client contains a synchronous stdin write failure", () => {
+  const child = fakeChild();
+  const exits = [];
+  const logs = [];
+  child.stdin.write = () => {
+    throw Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+  };
+  const client = new DaemonClient({
+    cwd: "/project",
+    executable: "gleam",
+    spawnProcess: () => child,
+    onMessage() {},
+    onLog: (message) => logs.push(message),
+    onExit: (exit) => exits.push(exit),
+    terminateProcess: (process) => { process.killed = true; },
+  });
+  client.start();
+
+  assert.doesNotThrow(() => {
+    assert.equal(client.send(protocolRequest("run-1", "run")), false);
+  });
+  assert.equal(client.process, null);
+  assert.equal(child.killed, true);
+  assert.equal(exits.length, 1);
+  assert.match(logs[0], /stdin.*EPIPE/);
 });
 
 test("daemon client treats spawn errors as one terminal exit", () => {

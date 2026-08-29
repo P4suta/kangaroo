@@ -31,6 +31,8 @@ pub fn capture() -> Option(Location)
 pub fn is_framework_file(file: String) -> Bool {
   let file = normalise_path(file)
   string.starts_with(file, "src/kangaroo")
+  || string.contains(file, "/src/kangaroo/")
+  || string.ends_with(file, "/src/kangaroo.gleam")
   || string.starts_with(file, "src/gleam/")
   || string.starts_with(file, "gleam/")
   || string.starts_with(file, "node:")

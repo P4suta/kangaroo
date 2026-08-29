@@ -77,7 +77,7 @@ pub fn suites() {
           coverage_instrument.instrument("src/collision.gleam", source)
         expect(string.starts_with(
           instrumented.source,
-          "import kangaroo/internal/coverage_probe as kangaroo_coverage_probe_\n",
+          "import kangaroo/coverage_probe as kangaroo_coverage_probe_\n",
         ))
         |> to_be_true()
         expect(string.contains(
@@ -88,6 +88,23 @@ pub fn suites() {
         expect(string.contains(
           instrumented.source,
           "kangaroo_coverage_probe.println(\"user import\")",
+        ))
+        |> to_be_true()
+      }),
+      it("keeps leading module documentation before the injected import", fn() {
+        let source =
+          "//// Calculator helpers.\n"
+          <> "//// These docs must remain first.\n\n"
+          <> "pub fn answer() {\n"
+          <> "  42\n"
+          <> "}\n"
+        let assert Ok(instrumented) =
+          coverage_instrument.instrument("src/documented.gleam", source)
+        expect(string.starts_with(
+          instrumented.source,
+          "//// Calculator helpers.\n"
+            <> "//// These docs must remain first.\n"
+            <> "import kangaroo/coverage_probe as kangaroo_coverage_probe\n\n",
         ))
         |> to_be_true()
       }),

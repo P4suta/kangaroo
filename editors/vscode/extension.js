@@ -42,6 +42,7 @@ class DaemonClient {
     this.terminateProcess = terminateProcess;
     this.pendingDiscoveries = new Map();
     this.process = null;
+    this.finishProcess = null;
     this.stopping = false;
   }
 
@@ -67,9 +68,13 @@ class DaemonClient {
       finished = true;
       this.clearPendingDiscoveries();
       if (this.process === child) this.process = null;
+      if (this.finishProcess === finish) this.finishProcess = null;
       this.onExit({ code, signal, expected: this.stopping });
     };
+    this.finishProcess = finish;
     const decoder = new LineDecoder();
+    child.stdout.setEncoding?.("utf8");
+    child.stderr.setEncoding?.("utf8");
     child.stdout.on("data", (chunk) => {
       for (const line of decoder.push(chunk)) {
         try {
@@ -85,6 +90,9 @@ class DaemonClient {
       }
     });
     child.stderr.on("data", (chunk) => this.onLog(String(chunk)));
+    child.stdin.on?.("error", (error) => {
+      this.handleStdinFailure(error, child);
+    });
     child.on("error", (error) => {
       this.onLog(`daemon error: ${error.message}`);
       finish(null, null);
@@ -95,11 +103,24 @@ class DaemonClient {
 
   send(message) {
     if (!this.process || !this.process.stdin.writable) return false;
-    this.process.stdin.write(`${JSON.stringify(message)}\n`);
+    const child = this.process;
+    try {
+      child.stdin.write(`${JSON.stringify(message)}\n`);
+    } catch (error) {
+      this.handleStdinFailure(error, child);
+      return false;
+    }
     if (message.command === "discover" && typeof message.id === "string") {
-      this.watchDiscovery(message.id, this.process);
+      this.watchDiscovery(message.id, child);
     }
     return true;
+  }
+
+  handleStdinFailure(error, child) {
+    if (!child || this.process !== child) return;
+    this.onLog(`daemon stdin error: ${error.code || error.message}`);
+    this.terminateProcess(child);
+    this.finishProcess?.(null, null);
   }
 
   watchDiscovery(id, child) {
@@ -322,6 +343,9 @@ class WorkspaceSession {
         resolve();
         return;
       }
+
+      child.stdout.setEncoding?.("utf8");
+      child.stderr.setEncoding?.("utf8");
 
       const consume = (line) => {
         try {

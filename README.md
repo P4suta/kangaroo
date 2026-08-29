@@ -34,7 +34,7 @@ CLI package.
 ## Requirements and installation
 
 - Gleam 1.18 or newer
-- Erlang/OTP 27–29, Node.js 22/24/26, Bun 1.4 or newer, or Deno 2.9 or newer
+- Erlang/OTP 27–29, Node.js 22.12+/24/26, Bun 1.4 or newer, or Deno 2.9 or newer
 - Linux, macOS, or Windows
 
 Add Kangaroo as a development dependency:

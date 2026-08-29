@@ -1,6 +1,7 @@
 -module(kangaroo_vm_ffi).
 -export([run_all/1, worker_count/0, target/0, runtime_name/0,
-         runtime_version/0, operating_system/0, shuffle_seed/0]).
+         runtime_version/0, operating_system/0, daemon_runner_path/0,
+         shuffle_seed/0]).
 
 run_all(Funs) ->
     Parent = self(),
@@ -44,6 +45,9 @@ operating_system() ->
             unicode:characters_to_binary(
               io_lib:format("~0p/~0p", [Family, Name]))
     end.
+
+daemon_runner_path() ->
+    <<"build/dev/javascript/kangaroo/kangaroo_daemon_child.mjs">>.
 
 shuffle_seed() ->
     erlang:unique_integer([positive, monotonic]).

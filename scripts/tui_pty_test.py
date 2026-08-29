@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "fixtures" / "watch_project"
-STARTED = "▶ test/kangaroo_watch_fixture_test.gleam::cancellable_test".encode()
+RUNNING = "continuous tests · running".encode()
 ENTER = b"\x1b[?1049h"
 LEAVE = b"\x1b[?1049l"
 
@@ -30,17 +30,29 @@ def read_chunk(master: int, timeout: float) -> bytes:
         return b""
 
 
+def active_run_visible(output: bytes | bytearray) -> bool:
+    offset = 0
+    while True:
+        found = output.find(RUNNING, offset)
+        if found < 0:
+            return False
+        end = found + len(RUNNING)
+        if output[end : end + 1] != b" ":
+            return True
+        offset = end
+
+
 def stop_process_group(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is None:
         os.killpg(process.pid, signal.SIGKILL)
         process.wait(timeout=2)
 
 
-def main() -> int:
+def exercise(command: list[str], runtime: str) -> int:
     master, slave = pty.openpty()
     environment = {**os.environ, "TERM": os.environ.get("TERM", "xterm-256color")}
     process = subprocess.Popen(
-        ["gleam", "run", "-m", "kangaroo", "--", "watch"],
+        command,
         cwd=FIXTURE,
         env=environment,
         stdin=slave,
@@ -52,12 +64,12 @@ def main() -> int:
     output = bytearray()
     try:
         startup_deadline = time.monotonic() + 20
-        while STARTED not in output and time.monotonic() < startup_deadline:
+        while not active_run_visible(output) and time.monotonic() < startup_deadline:
             output.extend(read_chunk(master, 0.1))
             if process.poll() is not None:
                 break
-        if STARTED not in output:
-            raise AssertionError("TUI never displayed the running fixture test")
+        if not active_run_visible(output):
+            raise AssertionError("TUI never entered the active run state")
 
         cancellation_started = time.monotonic()
         os.write(master, b"q")
@@ -77,14 +89,43 @@ def main() -> int:
         assert ENTER in output, "alternate screen was not entered"
         assert LEAVE in output, "alternate screen was not restored"
         assert b"stopping" in output, "quit was not handled during the run"
-        print(f"TUI cancellation and restoration passed in {elapsed_ms}ms")
-        return 0
+        print(
+            f"TUI cancellation and restoration passed on {runtime} in {elapsed_ms}ms"
+        )
+        return elapsed_ms
     except Exception:
         sys.stderr.write(output.decode("utf-8", errors="replace"))
         raise
     finally:
         stop_process_group(process)
         os.close(master)
+
+
+def main() -> int:
+    commands = [
+        (
+            ["gleam", "run", "--target", "erlang", "-m", "kangaroo", "--", "watch"],
+            "Erlang",
+        ),
+        (
+            [
+                "gleam",
+                "run",
+                "--target",
+                "javascript",
+                "--runtime",
+                "nodejs",
+                "-m",
+                "kangaroo",
+                "--",
+                "watch",
+            ],
+            "Node.js",
+        ),
+    ]
+    for command, runtime in commands:
+        exercise(command, runtime)
+    return 0
 
 
 if __name__ == "__main__":

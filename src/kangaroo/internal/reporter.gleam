@@ -1,6 +1,5 @@
 import gleam/float
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/string
 import kangaroo/event.{
@@ -10,15 +9,16 @@ import kangaroo/failure.{
   type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Flaky,
   Passed, Skipped, SkippedWithReason, UnexpectedError,
 }
+import kangaroo/internal/fs
 import kangaroo/internal/reporter_buffer
 import kangaroo/report.{type CaseResult, type Report, CaseResult, Report}
 
 pub fn dot_sink(event: Event) -> Nil {
   case event {
     RunStarted(..) -> Nil
-    CaseFinished(_, _, outcome, _) -> io.print(dot(outcome))
+    CaseFinished(_, _, outcome, _) -> fs.write_stdout(dot(outcome))
     RunFinished(_, summary) ->
-      io.println(
+      fs.write_stdout_line(
         "  "
         <> int.to_string(summary.passed)
         <> " passed, "
@@ -47,7 +47,7 @@ pub fn junit_sink(event: Event) -> Nil {
       let output =
         reporter_buffer.take_output()
         |> list.map(fn(capture) { CaseCapture(capture.0, capture.1, capture.2) })
-      io.print(junit_with_output(report, output, summary.duration_ms))
+      fs.write_stdout(junit_with_output(report, output, summary.duration_ms))
     }
     _ -> Nil
   }

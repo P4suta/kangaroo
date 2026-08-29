@@ -1,3 +1,4 @@
+import gleam/string
 import kangaroo/internal/fs
 import kangaroo/internal/legacy/expect.{expect, to_be_true, to_equal}
 import kangaroo/internal/legacy/suite.{it, suite}
@@ -5,6 +6,7 @@ import kangaroo/internal/process.{
   ProcessCancelled, ProcessFailed, ProcessFinished, ProcessOutput,
   ProcessRunning,
 }
+import kangaroo/internal/vm
 import kangaroo/sys
 
 @external(erlang, "kangaroo_cli_test_ffi", "sleeper_executable")
@@ -26,6 +28,44 @@ fn tree_marker() -> String
 @external(erlang, "kangaroo_cli_test_ffi", "tree_arguments")
 @external(javascript, "./kangaroo_cli_test_ffi.mjs", "tree_arguments")
 fn tree_arguments(marker: String) -> List(String)
+
+@external(erlang, "kangaroo_cli_test_ffi", "closed_stdin_tree_arguments")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "closed_stdin_tree_arguments")
+fn closed_stdin_tree_arguments(marker: String) -> List(String)
+
+pub fn closed_stdin_terminates_process_tree_test() {
+  case vm.runtime_name() {
+    "node" -> {
+      let marker = tree_marker()
+      let assert Ok(handle) =
+        process.start(
+          ".",
+          sleeper_executable(),
+          closed_stdin_tree_arguments(marker),
+          [],
+          10_000,
+        )
+      let assert ProcessOutput("ready") = await_output(handle, 2000)
+      process.write(handle, "must fail\n")
+      let assert ProcessFailed(message) = await_terminal(handle, 2000)
+      case string.contains(message, "test polling timed out") {
+        True -> panic as message
+        False -> Nil
+      }
+      fs.sleep(700)
+      let survived = fs.exists(marker)
+      case survived {
+        True -> {
+          let _ = fs.remove_file(marker)
+          Nil
+        }
+        False -> Nil
+      }
+      assert survived == False
+    }
+    _ -> Nil
+  }
+}
 
 pub fn suites() {
   [

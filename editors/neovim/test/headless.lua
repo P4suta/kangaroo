@@ -51,6 +51,11 @@ assert(test.latest_operation(operations) == "watch-1")
 test.operation_finished(operations, "watch-1")
 assert(test.latest_operation(operations) == nil)
 
+local missing_job = { job_id = nil, request_number = 0 }
+local request_ok, request_id = pcall(test.request, missing_job, "run", {})
+assert(request_ok)
+assert(request_id == nil)
+
 local coverage_session = {
   root = "/tmp/kangaroo-nvim-test",
   coverage_buffers = {},

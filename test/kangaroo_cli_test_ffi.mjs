@@ -25,10 +25,10 @@ export function sleeper_executable() {
 }
 
 export function sleeper_arguments(milliseconds) {
-  const code = `process.stdout.write("ready"); setTimeout(() => {}, ${milliseconds});`;
+  const code = `require("node:fs").writeSync(1, "ready"); setTimeout(() => {}, ${milliseconds});`;
   const args =
     typeof globalThis.Deno !== "undefined"
-      ? ["eval", `await Deno.stdout.write(new TextEncoder().encode("ready")); await new Promise(resolve => setTimeout(resolve, ${milliseconds}));`]
+      ? ["eval", `Deno.stdout.writeSync(new TextEncoder().encode("ready")); await new Promise(resolve => setTimeout(resolve, ${milliseconds}));`]
       : ["-e", code];
   return toList(args);
 }
@@ -37,12 +37,12 @@ export function echo_arguments() {
   if (typeof globalThis.Deno !== "undefined") {
     return toList([
       "eval",
-      "const bytes = new Uint8Array(1024); const count = await Deno.stdin.read(bytes); if (count === null) Deno.exit(2); await Deno.stdout.write(bytes.subarray(0, count));",
+      "const bytes = new Uint8Array(1024); const count = await Deno.stdin.read(bytes); if (count === null) Deno.exit(2); Deno.stdout.writeSync(bytes.subarray(0, count));",
     ]);
   }
   return toList([
     "-e",
-    "process.stdin.once('data', value => { process.stdout.write(value); process.exit(0); });",
+    "const fs = require('node:fs'); const bytes = Buffer.alloc(1024); const count = fs.readSync(0, bytes, 0, bytes.length, null); if (count === 0) process.exit(2); fs.writeSync(1, bytes, 0, count);",
   ]);
 }
 
@@ -72,6 +72,17 @@ export function tree_arguments(marker) {
   return toList(["-e", outer]);
 }
 
+export function closed_stdin_tree_arguments(marker) {
+  if (typeof globalThis.Deno !== "undefined") {
+    const child = `await new Promise(resolve => setTimeout(resolve, 400)); await Deno.writeTextFile(${JSON.stringify(marker)}, "survived");`;
+    const outer = `Deno.stdin.close(); new Deno.Command(Deno.execPath(), { args: ["eval", ${JSON.stringify(child)}], stdout: "null", stderr: "null" }).spawn(); Deno.stdout.writeSync(new TextEncoder().encode("ready")); await new Promise(resolve => setTimeout(resolve, 5000));`;
+    return toList(["eval", outer]);
+  }
+  const child = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "survived"), 400);`;
+  const outer = `const fs = require("node:fs"); fs.closeSync(0); const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(child)}], { detached: true, stdio: "ignore" }); child.unref(); fs.writeSync(1, "ready"); setTimeout(() => {}, 5000);`;
+  return toList(["-e", outer]);
+}
+
 export function schedule_replace(path, expected, replacement, delay) {
   const script = `;(async () => {
     const path = ${JSON.stringify(path)};
@@ -93,3 +104,5 @@ export function schedule_replace(path, expected, replacement, delay) {
       : ["-e", script];
   spawn(sleeper_executable(), args, { stdio: "ignore" });
 }
+
+export function kill_stderr_proxy() {}

@@ -270,9 +270,19 @@ export function read_line_timeout(milliseconds) {
     // observation must never keep an otherwise completed daemon alive.
     worker.unref?.();
     port1.unref?.();
-    inputReader = { control, port: port1, worker, ended: false };
+    inputReader = {
+      control,
+      port: port1,
+      worker,
+      ended: false,
+      awaitingResume: false,
+    };
   }
   if (inputReader.ended) return new InputEnd();
+  if (inputReader.awaitingResume) {
+    inputReader.awaitingResume = false;
+    inputReader.port.postMessage({ type: "continue" });
+  }
   let received = receiveMessageOnPort(inputReader.port);
   if (!received && milliseconds > 0) {
     const sequence = Atomics.load(inputReader.control, 0);
@@ -291,6 +301,7 @@ export function read_line_timeout(milliseconds) {
     inputReader.worker.unref?.();
     return new InputEnd();
   }
+  inputReader.awaitingResume = true;
   return new InputLine(String(received.message.value || ""));
 }
 
@@ -299,28 +310,39 @@ export function close_input() {
     if (!inputReader.ended) {
       inputReader.port.postMessage({ type: "stop" });
       Atomics.wait(inputReader.control, 1, 0, 250);
+      if (Atomics.load(inputReader.control, 1) === 1) {
+        Atomics.wait(inputReader.control, 1, 1, 250);
+      }
     }
     inputReader.ended = true;
+    inputReader.port.close();
     inputReader.port.unref?.();
     inputReader.worker.unref?.();
-    void inputReader.worker.terminate();
     inputReader = undefined;
   }
   inputEnded = true;
 }
 
 export function write_stdout_line(line) {
-  writeAll(1, line);
+  writeAll(1, `${String(line)}\n`);
+}
+
+export function write_stdout(contents) {
+  writeAll(1, contents);
 }
 
 export function write_stderr_line(line) {
-  writeAll(2, line);
+  writeAll(2, `${String(line)}\n`);
+}
+
+export function write_stderr(contents) {
+  writeAll(2, contents);
 }
 
 const writePause = new Int32Array(new SharedArrayBuffer(4));
 
-function writeAll(fileDescriptor, line) {
-  const contents = Buffer.from(`${String(line)}\n`, "utf8");
+function writeAll(fileDescriptor, value) {
+  const contents = Buffer.from(String(value), "utf8");
   let offset = 0;
   while (offset < contents.length) {
     try {
@@ -342,18 +364,7 @@ function writeAll(fileDescriptor, line) {
 }
 
 export function halt(code) {
-  // Returning to the event loop lets protocol output flush and acknowledged
-  // stdin Workers finish closing. process.exit() can deadlock while Node is
-  // synchronously joining a Worker that has just released fd 0. Windows does
-  // not reliably release a piped fd 0 when the Worker is merely unreferenced,
-  // so use Node's immediate exit primitive there after protocol output has
-  // already been written synchronously. Unlike process.exit(), reallyExit()
-  // does not synchronously join the blocked stdin Worker.
-  const exitCode = Number(code);
-  if (process.platform === "win32") {
-    if (typeof process.reallyExit === "function") process.reallyExit(exitCode);
-    else process.exit(exitCode);
-  } else {
-    process.exitCode = exitCode;
-  }
+  // Framework output is synchronous and the stdin reader is quiescent before
+  // this boundary, so the event loop can terminate without dropping output.
+  process.exitCode = Number(code);
 }

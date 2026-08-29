@@ -19,7 +19,7 @@
       "baseline": 0.8,
       "limit": 1.0,
       "unit": "percent_of_one_core",
-      "statistic": "five_second_window"
+      "statistic": "ten_second_window"
     },
     "warm_discovery_10000_p95_ms": {
       "baseline": 500,

@@ -48,8 +48,11 @@ pub fn instrument(
         [] -> instrumentation.edits
         _ -> {
           let probe_import =
-            "import kangaroo/internal/coverage_probe as " <> probe_alias <> "\n"
-          [Edit(0, probe_import), ..instrumentation.edits]
+            "import kangaroo/coverage_probe as " <> probe_alias <> "\n"
+          [
+            Edit(module_import_position(source), probe_import),
+            ..instrumentation.edits
+          ]
         }
       }
       let transformed =
@@ -65,6 +68,21 @@ pub fn instrument(
           |> list.sort(int.compare),
       ))
     }
+  }
+}
+
+fn module_import_position(source: String) -> Int {
+  module_doc_position(string.split(source, "\n"), 0)
+}
+
+fn module_doc_position(lines: List(String), position: Int) -> Int {
+  case lines {
+    [line, ..rest] ->
+      case string.starts_with(line, "////") {
+        True -> module_doc_position(rest, position + string.byte_size(line) + 1)
+        False -> position
+      }
+    [] -> position
   }
 }
 

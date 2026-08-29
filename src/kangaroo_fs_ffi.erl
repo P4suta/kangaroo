@@ -3,7 +3,8 @@
          read_file/1, current_dir/0, args/0, halt/1,
          read_line/0, exists/1, write_exclusive/2, replace_if_unchanged/3,
          is_directory/1, sleep/1, remove_file/1, read_line_timeout/1,
-         close_input/0, write_stdout_line/1, write_stderr_line/1,
+         close_input/0, write_stdout/1, write_stdout_line/1,
+         write_stderr/1, write_stderr_line/1,
          copy_to_temporary_workspace/1, workspace_entry_excluded/1,
          remove_tree/1, write_file/2]).
 -include_lib("kernel/include/file.hrl").
@@ -12,8 +13,16 @@ write_stdout_line(Line) ->
     io:put_chars(standard_io, [Line, <<"\n">>]),
     nil.
 
+write_stdout(Contents) ->
+    io:put_chars(standard_io, Contents),
+    nil.
+
 write_stderr_line(Line) ->
     io:put_chars(standard_error, [Line, <<"\n">>]),
+    nil.
+
+write_stderr(Contents) ->
+    io:put_chars(standard_error, Contents),
     nil.
 
 list_files_recursive(Directory) ->
@@ -66,7 +75,7 @@ collect(_Directory, [], Files) ->
     {ok, Files};
 collect(Directory, [Entry | Rest], Files) ->
     Path = filename:join(Directory, Entry),
-    case file:read_file_info(Path) of
+    case file:read_link_info(Path) of
         {ok, #file_info{type = directory}} ->
             case list_files_recursive(Path) of
                 {ok, Children} -> collect(Directory, Rest, Children ++ Files);

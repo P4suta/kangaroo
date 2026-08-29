@@ -4,6 +4,37 @@ import kangaroo/internal/legacy/expect.{expect, to_equal}
 import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/internal/operations.{RunOperation, WatchOperation}
 
+pub fn javascript_daemon_watch_uses_streaming_runtime_entrypoint_test() {
+  let runner = "build/dev/javascript/kangaroo/kangaroo_daemon_child.mjs"
+
+  assert daemon.operation_executable(WatchOperation, "javascript", "node")
+    == "node"
+  assert daemon.javascript_watch_arguments("node", runner, [
+      "--reporter",
+      "ndjson",
+    ])
+    == [runner, "watch", "--reporter", "ndjson"]
+
+  assert daemon.operation_executable(WatchOperation, "javascript", "bun")
+    == "bun"
+  assert daemon.javascript_watch_arguments("bun", runner, [])
+    == [runner, "watch"]
+
+  assert daemon.operation_executable(WatchOperation, "javascript", "deno")
+    == "deno"
+  assert daemon.javascript_watch_arguments("deno", runner, [])
+    == [
+      "run",
+      "--allow-env",
+      "--allow-read",
+      "--allow-run",
+      "--allow-sys",
+      "--allow-write",
+      runner,
+      "watch",
+    ]
+}
+
 pub fn suites() {
   [
     suite("daemon operation registry", [

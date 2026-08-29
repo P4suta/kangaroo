@@ -1,7 +1,13 @@
-import { readSync } from "node:fs";
 import { Option$None$const, Some } from "../gleam_stdlib/gleam/option.mjs";
+import {
+  MessageChannel,
+  Worker,
+  receiveMessageOnPort,
+} from "node:worker_threads";
 
 let uiActive = false;
+let keyReader;
+const keyWorkerUrl = new URL("./kangaroo_key_worker.mjs", import.meta.url);
 
 function runtimeProcess() {
   return typeof globalThis.process === "object" ? globalThis.process : undefined;
@@ -36,9 +42,45 @@ function rawMode(on) {
   if (!interactive_terminal()) return;
   const process = runtimeProcess();
   process.stdin.setRawMode?.(Boolean(on));
-  if (on) process.stdin.resume?.();
+  process.stdin.pause?.();
+  if (on) startKeyReader();
+  else stopKeyReader();
   process.stdout.write(on ? "\u001b[?1049h" : "\u001b[?1049l");
   uiActive = Boolean(on);
+}
+
+function startKeyReader() {
+  if (keyReader) return;
+  try {
+    const controlBuffer = new SharedArrayBuffer(
+      Int32Array.BYTES_PER_ELEMENT * 2,
+    );
+    const control = new Int32Array(controlBuffer);
+    const { port1, port2 } = new MessageChannel();
+    const worker = new Worker(keyWorkerUrl, {
+      workerData: { port: port2, controlBuffer },
+      transferList: [port2],
+    });
+    worker.on?.("error", () => {});
+    worker.unref?.();
+    port1.unref?.();
+    keyReader = { control, port: port1, worker, ended: false };
+  } catch {
+    keyReader = undefined;
+  }
+}
+
+function stopKeyReader() {
+  const reader = keyReader;
+  keyReader = undefined;
+  if (!reader) return;
+  if (!reader.ended) {
+    reader.port.postMessage({ type: "stop" });
+    Atomics.wait(reader.control, 1, 0, 250);
+  }
+  reader.port.close();
+  reader.worker.unref?.();
+  void reader.worker.terminate();
 }
 
 export function with_ui(body) {
@@ -66,13 +108,12 @@ export function suspend(body) {
 }
 
 export function poll_key() {
-  if (!uiActive) return Option$None$const;
-  const buffer = Buffer.alloc(4);
-  try {
-    const read = readSync(0, buffer, 0, 4, null);
-    if (read > 0) return new Some(buffer.subarray(0, read).toString("utf8"));
-  } catch {
-    // EAGAIN means no key is currently waiting.
+  if (!uiActive || !keyReader || keyReader.ended) return Option$None$const;
+  const received = receiveMessageOnPort(keyReader.port);
+  if (!received) return Option$None$const;
+  if (received.message?.type === "key") {
+    return new Some(String(received.message.value || ""));
   }
+  if (received.message?.type === "end") keyReader.ended = true;
   return Option$None$const;
 }

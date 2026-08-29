@@ -9,7 +9,13 @@ monorepos work without additional configuration.
 With lazy.nvim:
 
 ```lua
-{ "P4suta/kangaroo", subdir = "editors/neovim" }
+{
+  "P4suta/kangaroo",
+  config = function(plugin)
+    vim.opt.rtp:append(plugin.dir .. "/editors/neovim")
+    require("kangaroo").setup()
+  end,
+}
 ```
 
 The plugin uses the `gleam` executable and the project's `kangaroo` 1.x

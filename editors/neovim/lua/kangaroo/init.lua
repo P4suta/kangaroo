@@ -88,6 +88,7 @@ local function latest_operation(session)
 end
 
 local function request(session, command, fields)
+  if session == nil or session.job_id == nil then return nil end
   local message = fields or {}
   message.protocol_version = 1
   message.id = next_id(session, command)
@@ -463,6 +464,7 @@ M._test = {
   operation_finished = operation_finished,
   operation_started = operation_started,
   relative_path = relative_path,
+  request = request,
   select_test = select_test,
   start_root = start_root,
   take_lines = take_lines,

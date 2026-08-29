@@ -86,6 +86,22 @@ pub fn suites() {
         |> to_equal(Some(Location("test/runtime_fixture.gleam", 33, None)))
       }),
       it(
+        "filters absolute framework source paths on every operating system",
+        fn() {
+          expect(is_framework_file("/work/project/src/kangaroo/isolate.gleam"))
+          |> to_be_true()
+          expect(is_framework_file("C:\\work\\project\\src\\kangaroo.gleam"))
+          |> to_be_true()
+          expect(from_erlang_stack(
+            "C:\\work\\project\\src\\kangaroo\\isolate.gleam:20\n"
+            <> "C:\\work\\project\\test\\user_test.gleam:7",
+          ))
+          |> to_equal(
+            Some(Location("C:/work/project/test/user_test.gleam", 7, None)),
+          )
+        },
+      ),
+      it(
         "skips compiled artefact frames when picking the first user frame",
         fn() {
           let stack =

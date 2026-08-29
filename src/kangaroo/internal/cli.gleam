@@ -1,6 +1,5 @@
 import gleam/dict.{type Dict}
 import gleam/int
-import gleam/io
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -64,11 +63,11 @@ pub fn execute(project_dir: String, command: Command) -> Result(Int, String) {
     Run(options) -> run(project_dir, options)
     ListTests(options) -> list_tests(project_dir, options)
     Help -> {
-      io.println(command.usage())
+      fs.write_stdout_line(command.usage())
       Ok(0)
     }
     Version -> {
-      io.println(command.version())
+      fs.write_stdout_line(command.version())
       Ok(0)
     }
     Doctor(reporter) -> doctor(project_dir, reporter)
@@ -124,7 +123,7 @@ fn finish_coverage(
   requested_reporters: List(String),
   collected: coverage_run.Collected,
 ) -> Result(Int, String) {
-  io.print(collected.test_output)
+  fs.write_stdout(collected.test_output)
   case collected.test_exit_code >= 2 {
     True -> Ok(2)
     False -> {
@@ -139,7 +138,7 @@ fn finish_coverage(
         list.try_each(outputs, fn(output) {
           case output {
             coverage_run.TerminalOutput(contents) -> {
-              io.println(contents)
+              fs.write_stdout_line(contents)
               Ok(Nil)
             }
             coverage_run.FileOutput(path, contents) -> {
@@ -147,7 +146,7 @@ fn finish_coverage(
                 project_dir <> "/" <> path,
                 contents,
               ))
-              io.println_error("kangaroo: wrote " <> path)
+              fs.write_stderr_line("kangaroo: wrote " <> path)
               Ok(Nil)
             }
           }
@@ -160,7 +159,7 @@ fn finish_coverage(
           configured.minimum_per_file,
         )
       list.each(violations, fn(message) {
-        io.println_error("kangaroo: " <> message)
+        fs.write_stderr_line("kangaroo: " <> message)
       })
       Ok(coverage_run.final_exit_code(collected.test_exit_code, violations))
     }
@@ -689,7 +688,7 @@ fn tui_continuation(
 
 fn draw_tui(ui: tui.State) -> Nil {
   let #(columns, rows) = terminal.dimensions()
-  io.print(tui.render(ui, columns, rows, terminal.use_color()))
+  fs.write_stdout(tui.render(ui, columns, rows, terminal.use_color()))
 }
 
 fn watch_plain_project(
@@ -708,7 +707,7 @@ fn watch_plain_project(
     )
     |> result.map_error(format_index_errors),
   )
-  io.println_error("kangaroo: watching " <> project_dir)
+  fs.write_stderr_line("kangaroo: watching " <> project_dir)
   // The initial generation uses the same cancellable child-process boundary
   // as every later generation. The original snapshot is then retained so a
   // save that cancels this run is guaranteed to schedule its replacement.
@@ -721,7 +720,7 @@ fn watch_plain_project(
   ))
   let state = case initial {
     continuous.ObservedChildCompleted(completed) -> {
-      io.print(completed.output)
+      fs.write_stdout(completed.output)
       PlainWatchState(index_state, [])
     }
     continuous.ObservedChildSuperseded(changes, _) ->
@@ -745,11 +744,11 @@ fn watch_plain_project(
         )
       {
         Error(message) -> {
-          io.println_error("kangaroo: " <> message)
+          fs.write_stderr_line("kangaroo: " <> message)
           continuous.WatchContinuation(state, roots, snapshot)
         }
         Ok(continuous.ObservedCompileFailed(output)) -> {
-          io.println_error(output)
+          fs.write_stderr(output)
           continuous.WatchContinuation(state, roots, snapshot)
         }
         Ok(continuous.ObservedCompileSuperseded(changes, _)) ->
@@ -805,7 +804,7 @@ fn refresh_watch(
   }
   case refreshed {
     Error(message) -> {
-      io.println_error("kangaroo: " <> message)
+      fs.write_stderr_line("kangaroo: " <> message)
       continuous.WatchContinuation(state, roots, baseline)
     }
     Ok(#(configured, refresh, new_roots, new_snapshot)) -> {
@@ -865,13 +864,13 @@ fn run_watch_selection(
         }
       {
         Error(message) -> {
-          io.println_error("kangaroo: " <> message)
+          fs.write_stderr_line("kangaroo: " <> message)
           []
         }
         Ok(continuous.ObservedChildSuperseded(changes, _)) ->
           change_paths(changes)
         Ok(continuous.ObservedChildCompleted(completed)) -> {
-          io.print(completed.output)
+          fs.write_stdout(completed.output)
           []
         }
       }
@@ -938,7 +937,7 @@ fn initialise(project_dir: String) -> Result(Int, String) {
   }
   case init.plan(package, existing) {
     AlreadyConfigured -> {
-      io.println("kangaroo: test entry point is already configured")
+      fs.write_stdout_line("kangaroo: test entry point is already configured")
       Ok(0)
     }
     Create(relative, contents) -> {
@@ -946,7 +945,7 @@ fn initialise(project_dir: String) -> Result(Int, String) {
         project_dir <> "/" <> relative,
         contents,
       ))
-      io.println("kangaroo: created " <> relative)
+      fs.write_stdout_line("kangaroo: created " <> relative)
       print_config_hint(toml)
       Ok(0)
     }
@@ -958,7 +957,7 @@ fn initialise(project_dir: String) -> Result(Int, String) {
       ))
       case replaced {
         True -> {
-          io.println(
+          fs.write_stdout_line(
             "kangaroo: replaced the known gleeunit/unitest entry point",
           )
           print_config_hint(toml)
@@ -968,7 +967,7 @@ fn initialise(project_dir: String) -> Result(Int, String) {
       }
     }
     Suggest(relative, contents) -> {
-      io.println_error(
+      fs.write_stderr_line(
         "kangaroo: "
         <> relative
         <> " is custom and was not overwritten. Suggested contents:\n\n"
@@ -983,7 +982,7 @@ fn print_config_hint(toml: String) -> Nil {
   case string.contains(toml, "[tools.kangaroo]") {
     True -> Nil
     False ->
-      io.println(
+      fs.write_stdout_line(
         "\nOptional configuration:\n\n[tools.kangaroo]\ntest_paths = [\"test\"]\n",
       )
   }
@@ -1030,7 +1029,7 @@ fn list_tests(
   list.each(tests, fn(indexed) {
     case options.reporter {
       Ndjson ->
-        io.println(
+        fs.write_stdout_line(
           json.to_string(
             json.object([
               #("protocol_version", json.int(1)),
@@ -1043,7 +1042,7 @@ fn list_tests(
             ]),
           ),
         )
-      _ -> io.println(indexed.id)
+      _ -> fs.write_stdout_line(indexed.id)
     }
   })
   Ok(0)
@@ -1054,7 +1053,7 @@ fn doctor(project_dir: String, output: Reporter) -> Result(Int, String) {
   let exit_code = diagnostics.exit_code(checks)
   case output {
     Ndjson ->
-      io.println(
+      fs.write_stdout_line(
         json.to_string(
           json.object([
             #("protocol_version", json.int(1)),
@@ -1070,7 +1069,7 @@ fn doctor(project_dir: String, output: Reporter) -> Result(Int, String) {
           ]),
         ),
       )
-    _ -> io.println("kangaroo doctor\n" <> diagnostics.render(checks))
+    _ -> fs.write_stdout_line("kangaroo doctor\n" <> diagnostics.render(checks))
   }
   Ok(exit_code)
 }
@@ -1153,13 +1152,7 @@ fn gleam_check(project_dir: String) -> diagnostics.Check {
 fn runtime_check() -> diagnostics.Check {
   let name = vm.runtime_name()
   let version = vm.runtime_version()
-  let minimum = case name {
-    "erlang" -> "27.0.0"
-    "node" -> "22.0.0"
-    "bun" -> "1.4.0"
-    "deno" -> "2.9.0"
-    _ -> "999.0.0"
-  }
+  let minimum = diagnostics.minimum_runtime_version(name)
   case diagnostics.version_at_least(version, minimum) {
     True ->
       diagnostics.Check(
@@ -1223,7 +1216,7 @@ fn sink(reporter: Reporter) {
     Ndjson ->
       case sys.env("KANGAROO_PROTOCOL_REQUEST_ID") {
         Some(request_id) -> fn(event) {
-          io.println(protocol.encode_event(request_id, event))
+          fs.write_stdout_line(protocol.encode_event(request_id, event))
         }
         None -> encode.json_sink
       }

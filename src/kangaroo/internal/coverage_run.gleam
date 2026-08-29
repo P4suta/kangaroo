@@ -170,7 +170,7 @@ fn selected_files(
       string.ends_with(file.0, ".gleam")
       && glob.matches_any(include, file.0)
       && !glob.matches_any(exclude, file.0)
-      && file.0 != "src/kangaroo/internal/coverage_probe.gleam"
+      && file.0 != "src/kangaroo/coverage_probe.gleam"
     })
     |> list.sort(fn(first, second) { string.compare(first.0, second.0) })
   case selected {

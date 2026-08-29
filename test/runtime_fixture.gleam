@@ -47,6 +47,14 @@ pub fn unicode_offset_assert_fixture() {
   assert mascot == "kangaroo"
 }
 
+@external(erlang, "runtime_fixture_ffi", "non_binary_assert")
+@external(javascript, "./runtime_fixture_ffi.mjs", "non_binary_assert")
+fn non_binary_assert() -> Nil
+
+pub fn non_binary_assert_fixture() {
+  non_binary_assert()
+}
+
 pub fn output_fixture() {
   io.println("captured stdout")
   io.println_error("captured stderr")

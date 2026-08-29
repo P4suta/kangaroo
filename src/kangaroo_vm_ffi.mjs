@@ -1,4 +1,5 @@
 import { availableParallelism } from "node:os";
+import { fileURLToPath } from "node:url";
 import { Empty, toList } from "./gleam.mjs";
 
 function listToArray(list) {
@@ -39,6 +40,10 @@ export function operating_system() {
   if (platform === "darwin") return "macos";
   if (platform === "linux") return "linux";
   return String(platform);
+}
+
+export function daemon_runner_path() {
+  return fileURLToPath(new URL("./kangaroo_daemon_child.mjs", import.meta.url));
 }
 
 export function shuffle_seed() {

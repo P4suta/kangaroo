@@ -18,6 +18,9 @@ pub fn suites() {
         expect(doctor.version_at_least("unknown", "1.0.0"))
         |> to_equal(False)
       }),
+      it("requires the first Node release with synchronous ESM loading", fn() {
+        expect(doctor.minimum_runtime_version("node")) |> to_equal("22.12.0")
+      }),
       it("renders fixes for failed checks and returns exit 2", fn() {
         let checks = [
           Check("discovery", Passed, "4 tests", None),
