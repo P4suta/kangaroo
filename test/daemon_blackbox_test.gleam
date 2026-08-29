@@ -76,27 +76,43 @@ fn await_contains(
 }
 
 fn await_contains_until(handle, expected, started, timeout_ms, output) {
-  case process.poll(handle) {
-    process.ProcessOutput(chunk) -> {
-      let output = output <> chunk
-      case string.contains(output, expected) {
-        True -> Ok(output)
-        False ->
-          await_contains_until(handle, expected, started, timeout_ms, output)
+  // A pipe read may stop halfway through one NDJSON object, notably on
+  // Windows. Only inspect protocol output after its terminating newline has
+  // arrived so assertions never observe a partial discovery response.
+  case string.contains(output, expected) && string.ends_with(output, "\n") {
+    True -> Ok(output)
+    False ->
+      case process.poll(handle) {
+        process.ProcessOutput(chunk) ->
+          await_contains_until(
+            handle,
+            expected,
+            started,
+            timeout_ms,
+            output <> chunk,
+          )
+        process.ProcessRunning ->
+          case sys.now_ms() - started < timeout_ms {
+            True -> {
+              fs.sleep(5)
+              await_contains_until(
+                handle,
+                expected,
+                started,
+                timeout_ms,
+                output,
+              )
+            }
+            False ->
+              Error("timed out waiting for " <> expected <> ":\n" <> output)
+          }
+        process.ProcessFinished(completed) ->
+          Error(
+            "daemon exited before " <> expected <> ":\n" <> completed.output,
+          )
+        process.ProcessCancelled -> Error("daemon was cancelled")
+        process.ProcessFailed(message) -> Error(message)
       }
-    }
-    process.ProcessRunning ->
-      case sys.now_ms() - started < timeout_ms {
-        True -> {
-          fs.sleep(5)
-          await_contains_until(handle, expected, started, timeout_ms, output)
-        }
-        False -> Error("timed out waiting for " <> expected <> ":\n" <> output)
-      }
-    process.ProcessFinished(completed) ->
-      Error("daemon exited before " <> expected <> ":\n" <> completed.output)
-    process.ProcessCancelled -> Error("daemon was cancelled")
-    process.ProcessFailed(message) -> Error(message)
   }
 }
 

@@ -9,17 +9,36 @@ const require = createRequire(import.meta.url);
 const childProcess = require("node:child_process");
 const childProcesses = new Set();
 const childPids = new Int32Array(workerData.childPidBuffer);
+
+function registerChild(child) {
+  if (!child || typeof child.pid !== "number" || childProcesses.has(child)) {
+    return child;
+  }
+  childProcesses.add(child);
+  const index = Atomics.add(childPids, 0, 1) + 1;
+  if (index < childPids.length) Atomics.store(childPids, index, child.pid);
+  child.once?.("exit", () => childProcesses.delete(child));
+  return child;
+}
+
+// Patching ChildProcess.prototype also covers runtimes such as Bun which do
+// not mirror syncBuiltinESMExports() changes into an already-created named
+// `spawn` binding.
+const childProcessPrototype = childProcess.ChildProcess?.prototype;
+if (childProcessPrototype?.spawn) {
+  const originalPrototypeSpawn = childProcessPrototype.spawn;
+  childProcessPrototype.spawn = function trackedPrototypeSpawn(...arguments_) {
+    const result = originalPrototypeSpawn.apply(this, arguments_);
+    registerChild(this);
+    return result;
+  };
+}
+
 for (const name of ["spawn", "exec", "execFile", "fork"]) {
   const original = childProcess[name];
   childProcess[name] = function trackedChildProcess(...arguments_) {
     const child = original.apply(this, arguments_);
-    if (child && typeof child.pid === "number") {
-      childProcesses.add(child);
-      const index = Atomics.add(childPids, 0, 1) + 1;
-      if (index < childPids.length) Atomics.store(childPids, index, child.pid);
-      child.once?.("exit", () => childProcesses.delete(child));
-    }
-    return child;
+    return registerChild(child);
   };
 }
 syncBuiltinESMExports();
@@ -28,6 +47,10 @@ const control = new Int32Array(workerData.controlBuffer);
 const data = new Uint8Array(workerData.dataBuffer);
 const stdoutData = new Uint8Array(workerData.stdoutBuffer);
 const stderrData = new Uint8Array(workerData.stderrBuffer);
+const cancellationPoll = setInterval(() => {
+  if (Atomics.load(control, 6) === 1) acknowledgeCancellation();
+}, 1);
+cancellationPoll.unref?.();
 
 console.log = (...values) => writeOutput(stdoutData, 3, formatValue(...values) + "\n");
 console.error = (...values) => writeOutput(stderrData, 4, formatValue(...values) + "\n");
@@ -204,6 +227,7 @@ function valueDiff(expected, actual) {
 
 function finish(status, payload) {
   signalStarted();
+  clearInterval(cancellationPoll);
   terminateChildProcesses();
   let encoded = new TextEncoder().encode(JSON.stringify(payload));
   if (encoded.length > data.length) {
@@ -228,10 +252,27 @@ function finish(status, payload) {
 
 function terminateChildProcesses() {
   for (const child of childProcesses) {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // The process may already have exited.
+    }
     terminateProcessTree(child.pid);
   }
   childProcesses.clear();
 }
+
+function acknowledgeCancellation() {
+  if (Atomics.load(control, 6) === 2) return;
+  terminateChildProcesses();
+  Atomics.store(control, 6, 2);
+  Atomics.notify(control, 6, 1);
+}
+
+parentPort?.on?.("message", (message) => {
+  if (message?.type !== "cancel") return;
+  acknowledgeCancellation();
+});
 
 function terminateProcessTree(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return;

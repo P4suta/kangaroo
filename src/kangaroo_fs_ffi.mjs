@@ -346,8 +346,14 @@ export function halt(code) {
   // stdin Workers finish closing. process.exit() can deadlock while Node is
   // synchronously joining a Worker that has just released fd 0. Windows does
   // not reliably release a piped fd 0 when the Worker is merely unreferenced,
-  // so explicitly exit there after close_input has acknowledged its reader.
+  // so use Node's immediate exit primitive there after protocol output has
+  // already been written synchronously. Unlike process.exit(), reallyExit()
+  // does not synchronously join the blocked stdin Worker.
   const exitCode = Number(code);
-  if (process.platform === "win32") process.exit(exitCode);
-  else process.exitCode = exitCode;
+  if (process.platform === "win32") {
+    if (typeof process.reallyExit === "function") process.reallyExit(exitCode);
+    else process.exit(exitCode);
+  } else {
+    process.exitCode = exitCode;
+  }
 }

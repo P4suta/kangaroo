@@ -8,6 +8,7 @@ const {
   WorkspaceSession,
   createExtension,
 } = require("../extension");
+const { protocolRequest } = require("../core");
 
 function fakeChild() {
   const child = new EventEmitter();
@@ -82,6 +83,41 @@ test("daemon client reports a synchronous spawn failure without escaping activat
   assert.equal(client.process, null);
   assert.equal(exits.length, 1);
   assert.match(logs[0], /process limit reached/);
+});
+
+test("daemon client terminates an unresponsive discovery so it can restart", () => {
+  const child = fakeChild();
+  child.pid = 42;
+  const scheduled = [];
+  const cancelled = [];
+  const logs = [];
+  const client = new DaemonClient({
+    cwd: "/project",
+    executable: "gleam",
+    spawnProcess: () => child,
+    onMessage() {},
+    onLog: (message) => logs.push(message),
+    onExit() {},
+    schedule(callback, delay) {
+      const timer = { callback, delay, unref() {} };
+      scheduled.push(timer);
+      return timer;
+    },
+    cancelSchedule: (timer) => cancelled.push(timer),
+    discoveryTimeoutMs: 60_000,
+    terminateProcess: (process) => { process.killed = true; },
+  });
+
+  client.start();
+  assert.equal(client.send(protocolRequest("discover-1", "discover")), true);
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].delay, 60_000);
+  scheduled[0].callback();
+  assert.equal(child.killed, true);
+  assert.match(logs[0], /discovery timed out/);
+
+  child.emit("exit", null, "SIGKILL");
+  assert.equal(cancelled.length, 1);
 });
 
 function collection() {

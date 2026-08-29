@@ -254,11 +254,12 @@ remove_directory_retry(Path, Attempt) ->
     case remove_directory(Path) of
         {error, Reason}
           when (Reason =:= eperm orelse Reason =:= eacces),
-               Attempt < 100 ->
+               Attempt < 500 ->
             %% Windows can retain executable and build artefact handles for a
             %% short period after taskkill has returned. Retrying the exact
             %% guarded temporary workspace keeps cleanup deterministic without
-            %% broadening what this function is allowed to remove.
+            %% broadening what this function is allowed to remove. The ten
+            %% second ceiling covers slow hosted Windows filesystem filters.
             timer:sleep(20),
             remove_directory_retry(Path, Attempt + 1);
         Result -> Result

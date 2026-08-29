@@ -69,7 +69,7 @@ function isolateWorker(body, timeoutOption) {
     timeoutOption && typeof timeoutOption[0] === "number"
       ? timeoutOption[0]
       : 30_000;
-  const controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 6);
+  const controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 7);
   const dataBuffer = new SharedArrayBuffer(workerBufferBytes);
   const stdoutBuffer = new SharedArrayBuffer(workerBufferBytes);
   const stderrBuffer = new SharedArrayBuffer(workerBufferBytes);
@@ -123,6 +123,7 @@ function isolateWorker(body, timeoutOption) {
   if (wait === "timed-out") {
     const stdout = sharedOutput(control, 3, stdoutData);
     const stderr = sharedOutput(control, 4, stderrData);
+    requestWorkerCancellation(worker, control);
     terminateRegisteredChildren(childPids);
     terminateNewDescendants(descendantBaseline);
     void worker.terminate();
@@ -173,6 +174,17 @@ function isolateWorker(body, timeoutOption) {
     sharedOutput(control, 3, stdoutData),
     sharedOutput(control, 4, stderrData),
   );
+}
+
+function requestWorkerCancellation(worker, control) {
+  try {
+    Atomics.store(control, 6, 1);
+    Atomics.notify(control, 6, 1);
+    worker.postMessage({ type: "cancel" });
+    Atomics.wait(control, 6, 1, 250);
+  } catch {
+    // A worker which already exited needs no cooperative cleanup.
+  }
 }
 
 function terminateNewDescendants(baseline) {

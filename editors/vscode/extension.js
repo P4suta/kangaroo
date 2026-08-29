@@ -18,13 +18,29 @@ const {
 let activeExtension;
 
 class DaemonClient {
-  constructor({ cwd, executable, onMessage, onLog, onExit, spawnProcess = spawn }) {
+  constructor({
+    cwd,
+    executable,
+    onMessage,
+    onLog,
+    onExit,
+    spawnProcess = spawn,
+    schedule = setTimeout,
+    cancelSchedule = clearTimeout,
+    discoveryTimeoutMs = 60_000,
+    terminateProcess = terminateProcessTree,
+  }) {
     this.cwd = cwd;
     this.executable = executable;
     this.onMessage = onMessage;
     this.onLog = onLog;
     this.onExit = onExit;
     this.spawnProcess = spawnProcess;
+    this.schedule = schedule;
+    this.cancelSchedule = cancelSchedule;
+    this.discoveryTimeoutMs = discoveryTimeoutMs;
+    this.terminateProcess = terminateProcess;
+    this.pendingDiscoveries = new Map();
     this.process = null;
     this.stopping = false;
   }
@@ -49,6 +65,7 @@ class DaemonClient {
     const finish = (code, signal) => {
       if (finished) return;
       finished = true;
+      this.clearPendingDiscoveries();
       if (this.process === child) this.process = null;
       this.onExit({ code, signal, expected: this.stopping });
     };
@@ -57,7 +74,10 @@ class DaemonClient {
       for (const line of decoder.push(chunk)) {
         try {
           const message = JSON.parse(line);
-          if (message.protocol_version === PROTOCOL_VERSION) this.onMessage(message);
+          if (message.protocol_version === PROTOCOL_VERSION) {
+            this.acknowledgeDiscovery(message.request_id);
+            this.onMessage(message);
+          }
           else this.onLog(`unsupported daemon message: ${line}`);
         } catch {
           this.onLog(`invalid daemon stdout: ${line}`);
@@ -76,11 +96,41 @@ class DaemonClient {
   send(message) {
     if (!this.process || !this.process.stdin.writable) return false;
     this.process.stdin.write(`${JSON.stringify(message)}\n`);
+    if (message.command === "discover" && typeof message.id === "string") {
+      this.watchDiscovery(message.id, this.process);
+    }
     return true;
+  }
+
+  watchDiscovery(id, child) {
+    this.acknowledgeDiscovery(id);
+    const timer = this.schedule(() => {
+      if (this.pendingDiscoveries.get(id) !== timer) return;
+      this.onLog(`kangaroo: discovery timed out after ${this.discoveryTimeoutMs}ms; restarting daemon\n`);
+      this.terminateProcess(child);
+    }, this.discoveryTimeoutMs);
+    timer.unref?.();
+    this.pendingDiscoveries.set(id, timer);
+  }
+
+  acknowledgeDiscovery(id) {
+    if (typeof id !== "string") return;
+    const timer = this.pendingDiscoveries.get(id);
+    if (!timer) return;
+    this.cancelSchedule(timer);
+    this.pendingDiscoveries.delete(id);
+  }
+
+  clearPendingDiscoveries() {
+    for (const timer of this.pendingDiscoveries.values()) {
+      this.cancelSchedule(timer);
+    }
+    this.pendingDiscoveries.clear();
   }
 
   stop() {
     this.stopping = true;
+    this.clearPendingDiscoveries();
     const child = this.process;
     if (!child) return;
     this.send(protocolRequest("extension-shutdown", "shutdown"));
