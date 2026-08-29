@@ -306,6 +306,7 @@ remove_entries(Path, [Name | Rest]) ->
     Child = filename:join(Path, Name),
     Result = case file:read_link_info(Child) of
         {ok, #file_info{type = directory}} -> remove_directory(Child);
+        {ok, #file_info{type = symlink}} -> remove_link(Child);
         {ok, _} ->
             case file:delete(Child) of
                 ok -> ok;
@@ -317,6 +318,21 @@ remove_entries(Path, [Name | Rest]) ->
     case Result of
         ok -> remove_entries(Path, Rest);
         RemoveError -> RemoveError
+    end.
+
+remove_link(Path) ->
+    %% On Windows, directory symlinks are removed with RemoveDirectoryW,
+    %% exposed by file:del_dir/1. file:delete/1 maps to DeleteFileW and returns
+    %% eperm for the same link. Never recurse here: the target is user source.
+    Result = case {os:type(), file:read_file_info(Path)} of
+        {{win32, _}, {ok, #file_info{type = directory}}} ->
+            file:del_dir(Path);
+        _ ->
+            file:delete(Path)
+    end,
+    case Result of
+        ok -> ok;
+        {error, Reason} -> {error, {Reason, Path}}
     end.
 
 write_exclusive(Path, Contents) ->
