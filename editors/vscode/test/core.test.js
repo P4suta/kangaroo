@@ -2,6 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const manifest = require("../package.json");
 const {
   coverageArguments,
   LineDecoder,
@@ -10,6 +11,7 @@ const {
   daemonArguments,
   failuresFor,
   protocolRequest,
+  resolveGleamExecutable,
   zeroBasedRange,
 } = require("../core");
 
@@ -68,6 +70,29 @@ test("starts the unified protocol-v1 daemon", () => {
     id: "req-1",
     command: "discover",
   });
+});
+
+test("resolves the Gleam executable without overriding explicit settings", () => {
+  assert.equal(
+    resolveGleamExecutable("/tools/custom-gleam", {
+      KANGAROO_GLEAM_PATH: "/ci/gleam",
+    }),
+    "/tools/custom-gleam",
+  );
+  assert.equal(
+    resolveGleamExecutable("gleam", {
+      KANGAROO_GLEAM_PATH: "/ci/gleam",
+    }),
+    "/ci/gleam",
+  );
+  assert.equal(resolveGleamExecutable("gleam", {}), "gleam");
+});
+
+test("Gleam executable configuration is scoped to each package resource", () => {
+  assert.equal(
+    manifest.contributes.configuration.properties["kangaroo.gleamPath"].scope,
+    "resource",
+  );
 });
 
 test("reassembles arbitrary NDJSON chunks", () => {

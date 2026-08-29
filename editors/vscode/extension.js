@@ -12,6 +12,7 @@ const {
   daemonArguments,
   failuresFor,
   protocolRequest,
+  resolveGleamExecutable,
   zeroBasedRange,
 } = require("./core");
 
@@ -55,6 +56,7 @@ class DaemonClient {
         cwd: this.cwd,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
+        detached: globalThis.process.platform !== "win32",
       });
     } catch (error) {
       this.onLog(`daemon error: ${error.message}`);
@@ -156,7 +158,7 @@ class DaemonClient {
     if (!child) return;
     this.send(protocolRequest("extension-shutdown", "shutdown"));
     const timer = setTimeout(() => {
-      if (this.process === child) child.kill();
+      if (this.process === child) this.terminateProcess(child);
     }, 250);
     timer.unref?.();
   }
@@ -199,9 +201,10 @@ class WorkspaceSession {
   }
 
   createClient() {
-    const executable = this.vscode.workspace
+    const configured = this.vscode.workspace
       .getConfiguration("kangaroo", this.folder.uri)
       .get("gleamPath", "gleam");
+    const executable = resolveGleamExecutable(configured);
     return new DaemonClient({
       cwd: this.folder.uri.fsPath,
       executable,
@@ -315,9 +318,10 @@ class WorkspaceSession {
       run.end();
       return Promise.resolve();
     }
-    const executable = this.vscode.workspace
+    const configured = this.vscode.workspace
       .getConfiguration("kangaroo", this.folder.uri)
       .get("gleamPath", "gleam");
+    const executable = resolveGleamExecutable(configured);
 
     return new Promise((resolve) => {
       let child;

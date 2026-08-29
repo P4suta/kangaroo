@@ -6,6 +6,14 @@ function daemonArguments() {
   return ["run", "-m", "kangaroo", "--", "daemon"];
 }
 
+function resolveGleamExecutable(configured, environment = process.env) {
+  if (configured !== "gleam") return configured;
+  const injected = environment.KANGAROO_GLEAM_PATH;
+  return typeof injected === "string" && injected.length > 0
+    ? injected
+    : configured;
+}
+
 function coverageArguments(selectors = []) {
   return [
     "run",
@@ -150,5 +158,6 @@ module.exports = {
   failuresFor,
   parseLcov,
   protocolRequest,
+  resolveGleamExecutable,
   zeroBasedRange,
 };

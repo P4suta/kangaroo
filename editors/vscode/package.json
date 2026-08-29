@@ -26,6 +26,7 @@
         "kangaroo.gleamPath": {
           "type": "string",
           "default": "gleam",
+          "scope": "resource",
           "description": "Path to the gleam executable."
         }
       }
