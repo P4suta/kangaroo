@@ -1,5 +1,5 @@
 name = "kangaroo_cli"
-version = "0.1.0"
+version = "1.0.0"
 description = "The Kangaroo continuous test runner CLI"
 licences = ["Apache-2.0"]
 repository = { type = "github", user = "P4suta", repo = "kangaroo" }
