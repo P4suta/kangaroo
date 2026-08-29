@@ -56,7 +56,10 @@ pub fn suites() {
                     [],
                   ),
                   [],
-                  15_000,
+                  // Windows needs roughly five seconds per generation. Keep the
+                  // coordinator alive for all three while the enclosing case
+                  // retains a separate 60-second deadlock guard.
+                  30_000,
                 )
               let #(started, start_output) =
                 await_output(
