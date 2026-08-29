@@ -199,15 +199,19 @@ def create_discovery_project(project: Path, root: Path, count: int) -> None:
 
 
 def mutate_probe(path: Path, *, generation: int) -> None:
-    """Atomically change a one-byte probe while preserving size and mtime."""
+    """Atomically change a fixed-width probe while preserving size and mtime."""
     marker = "// kangaroo-benchmark: "
+    token_width = 8
+    if generation < 0 or generation >= 10**token_width:
+        raise ValueError("benchmark generation must fit in eight decimal digits")
     source = path.read_text(encoding="utf-8")
     marker_at = source.find(marker)
     value_at = marker_at + len(marker)
-    if marker_at < 0 or value_at >= len(source) or not source[value_at].isdigit():
+    token = source[value_at : value_at + token_width]
+    if marker_at < 0 or len(token) != token_width or not token.isdigit():
         raise ValueError(f"benchmark marker is missing from {path}")
-    replacement = str(generation % 10)
-    updated = source[:value_at] + replacement + source[value_at + 1 :]
+    replacement = f"{generation:0{token_width}d}"
+    updated = source[:value_at] + replacement + source[value_at + token_width :]
     metadata = path.stat()
     temporary_name: str | None = None
     try:
@@ -300,6 +304,32 @@ def _wait_for_line(
             ) from error
         if needle in line:
             return line
+
+
+def watch_detection_latency_ms(line: str, started_ms: int) -> int:
+    """Measure save-to-detection latency at the watcher, before pipe delivery."""
+    prefix = "kangaroo benchmark: watch detected "
+    trace = line.rstrip("\r\n")
+    payload = trace.removeprefix(prefix)
+    path, separator, timestamp = payload.rpartition(" ")
+    if (
+        payload == trace
+        or not path
+        or not separator
+        or not timestamp.endswith("ms")
+    ):
+        raise RuntimeError(f"invalid watch detection trace: {line!r}")
+    try:
+        detected_ms = int(timestamp.removesuffix("ms"))
+    except ValueError as error:
+        raise RuntimeError(f"invalid watch detection trace: {line!r}") from error
+    elapsed_ms = detected_ms - started_ms
+    if elapsed_ms < 0:
+        raise RuntimeError(
+            "wall clock moved backwards during watch detection: "
+            f"started {started_ms}ms, detected {detected_ms}ms"
+        )
+    return elapsed_ms
 
 
 def wait_for_ready_generation(
@@ -498,7 +528,7 @@ def instrument_watch_fixture(
     gleam_source = required_replace(
         gleam_source,
         "  delay()\n",
-        '  benchmark_delay("// kangaroo-benchmark: 0")\n',
+        '  benchmark_delay("// kangaroo-benchmark: 00000000")\n',
     )
     gleam_fixture.write_text(gleam_source, encoding="utf-8")
 
@@ -630,34 +660,34 @@ def measure_save_detection(root: Path, *, samples: int = 20) -> list[float]:
             )
             wait_for_ready_generation(
                 ready_marker,
-                "// kangaroo-benchmark: 0",
+                "// kangaroo-benchmark: 00000000",
                 client.process,
                 timeout=20,
             )
             timings: list[float] = []
             for generation in range(1, samples + 1):
-                started = time.perf_counter_ns()
+                started_ms = time.time_ns() // 1_000_000
                 mutate_probe(probe, generation=generation)
-                _wait_for_line(
+                detection = _wait_for_line(
                     client.stderr,
-                    "kangaroo: changed test/kangaroo_watch_fixture_test.gleam",
+                    "kangaroo benchmark: watch detected "
+                    "test/kangaroo_watch_fixture_test.gleam",
                     timeout=5,
                     process=client.process,
                 )
                 timings.append(
-                    round((time.perf_counter_ns() - started) / 1_000_000, 3)
+                    watch_detection_latency_ms(detection, started_ms)
                 )
-                if generation < samples:
-                    # Detection intentionally precedes settle and compilation.
-                    # Synchronise on code executing inside the replacement
-                    # test process, rather than a pre-spawn trace, so neither
-                    # compilation nor runtime startup enters the next sample.
-                    wait_for_ready_generation(
-                        ready_marker,
-                        f"// kangaroo-benchmark: {generation % 10}",
-                        client.process,
-                        timeout=10,
-                    )
+                # Detection intentionally precedes settle and compilation.
+                # Synchronise on code executing inside every replacement test
+                # process so compilation is excluded without weakening the
+                # proof that the newest saved generation actually ran.
+                wait_for_ready_generation(
+                    ready_marker,
+                    f"// kangaroo-benchmark: {generation:08d}",
+                    client.process,
+                    timeout=10,
+                )
             return timings
         finally:
             if os.environ.get("KANGAROO_BENCHMARK_WATCH_TRACE"):

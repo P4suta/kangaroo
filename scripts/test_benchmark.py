@@ -126,6 +126,29 @@ class BenchmarkPolicyTest(unittest.TestCase):
             )
             self.assertEqual(token, "generation-2")
 
+    def test_save_detection_uses_the_emitter_timestamp(self) -> None:
+        line = (
+            "kangaroo benchmark: watch detected "
+            "test/kangaroo_watch_fixture_test.gleam 1700000000042ms\n"
+        )
+
+        self.assertEqual(
+            benchmark.watch_detection_latency_ms(line, 1_700_000_000_000),
+            42,
+        )
+
+    def test_save_detection_rejects_an_invalid_or_backwards_trace(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "detection trace"):
+            benchmark.watch_detection_latency_ms(
+                "kangaroo: changed test/example.gleam\n", 1_700_000_000_000
+            )
+        with self.assertRaisesRegex(RuntimeError, "clock moved backwards"):
+            benchmark.watch_detection_latency_ms(
+                "kangaroo benchmark: watch detected test/example.gleam "
+                "1699999999999ms\n",
+                1_700_000_000_000,
+            )
+
 
 class BenchmarkFixtureTest(unittest.TestCase):
     def test_instruments_the_watch_fixture_with_a_generation_marker(self) -> None:
@@ -158,7 +181,10 @@ class BenchmarkFixtureTest(unittest.TestCase):
 
             gleam_source = gleam_fixture.read_text(encoding="utf-8")
             javascript_source = javascript_fixture.read_text(encoding="utf-8")
-            self.assertIn('benchmark_delay("// kangaroo-benchmark: 0")', gleam_source)
+            self.assertIn(
+                'benchmark_delay("// kangaroo-benchmark: 00000000")',
+                gleam_source,
+            )
             self.assertIn("writeFileSync", javascript_source)
             self.assertIn(json.dumps(str(marker)), javascript_source)
             self.assertIn("String(token)", javascript_source)
@@ -224,15 +250,23 @@ class BenchmarkFixtureTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "probe.gleam"
             path.write_text(
-                "pub fn probe_test() { Nil }\n// kangaroo-benchmark: 0\n",
+                "pub fn probe_test() { Nil }\n// kangaroo-benchmark: 00000000\n",
                 encoding="utf-8",
             )
             before = path.stat()
-            benchmark.mutate_probe(path, generation=1)
+            benchmark.mutate_probe(path, generation=42)
             after = path.stat()
             self.assertEqual(after.st_size, before.st_size)
             self.assertEqual(after.st_mtime_ns, before.st_mtime_ns)
-            self.assertIn("kangaroo-benchmark: 1", path.read_text(encoding="utf-8"))
+            self.assertIn(
+                "kangaroo-benchmark: 00000042",
+                path.read_text(encoding="utf-8"),
+            )
+            benchmark.mutate_probe(path, generation=43)
+            self.assertIn(
+                "kangaroo-benchmark: 00000043",
+                path.read_text(encoding="utf-8"),
+            )
 
 
 class ProtocolParsingTest(unittest.TestCase):
