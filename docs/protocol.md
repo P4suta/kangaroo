@@ -83,8 +83,10 @@ Failure kinds:
 | `unexpected_error` | `name`, `message`, `location` | the case panicked or timed out |
 
 `location` is either `null` or an object of the form
-`{"file": "test/foo_test.gleam", "line": 42}`, pointing at the failure site
-in the source. Editors can use it to jump to the failing assertion.
+`{"file": "test/foo_test.gleam", "line": 42, "column": null}`, pointing at
+the failure site in the source. `column` is a number when the platform
+reports it (JavaScript stacks do; Erlang stack traces carry only the
+line). Editors can use it to jump to the failing assertion.
 
 ### SuiteFinished
 

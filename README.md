@@ -96,6 +96,8 @@ so every assertion in a body is reported:
 - `to_equal(expected)` — with a line-oriented diff for multi-line values
 - `to_be_true()` / `to_be_false()`
 - `to_be_none()` / `to_be_some()`
+- `to_be_ok()` / `to_be_error()` — Result matchers that name the
+  unexpected value
 - `to_be_empty()`
 - `to_contain(element)` / `to_contain_text(substring)`
 - `to_contain_key(key)`
@@ -152,7 +154,7 @@ module.
 Failed cases carry their failures, with a source location for editors:
 
 ```json
-{"type":"case_finished","suite":"math","case":"adds","outcome":{"kind":"failed","failures":[{"kind":"equality_mismatch","expected":"2","actual":"1","diff":null,"location":{"file":"test/foo_test.gleam","line":42}}]},"duration_ms":2}
+{"type":"case_finished","suite":"math","case":"adds","outcome":{"kind":"failed","failures":[{"kind":"equality_mismatch","expected":"2","actual":"1","diff":null,"location":{"file":"test/foo_test.gleam","line":42,"column":null}}]},"duration_ms":2}
 ```
 
 Watch runs also emit `changed` events describing the files that triggered a
