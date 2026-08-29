@@ -34,6 +34,12 @@ jobs:
           gleam-version: "1.18.1"
           rebar3-version: "3"
       - uses: oven-sh/setup-bun@v2
+      - name: Sync the local dependency version
+        if: matrix.package == './cli'
+        working-directory: ${{ matrix.package }}
+        run: |
+          version="$(grep -m1 '^version' ../gleam.toml | sed 's/.*"\(.*\)".*/\1/')"
+          sed -i "s/{ name = \"kangaroo\", version = \"[0-9.]*\"/{ name = \"kangaroo\", version = \"${version}\"/" manifest.toml
       - name: Download dependencies
         working-directory: ${{ matrix.package }}
         run: gleam deps download
