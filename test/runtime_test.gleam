@@ -1,0 +1,100 @@
+import gleam/option.{None}
+import gleam/string
+import kangaroo/internal/index.{type IndexedTest, IndexedTest}
+import kangaroo/internal/legacy/expect.{expect, to_be_true, to_equal}
+import kangaroo/internal/legacy/suite.{it, suite}
+import kangaroo/internal/runtime
+import kangaroo/isolate.{CapturedIsolation, Completed, Crashed}
+
+fn fixture(name: String) -> IndexedTest {
+  IndexedTest(
+    id: "test/runtime_fixture.gleam::" <> name,
+    name:,
+    path: "test/runtime_fixture.gleam",
+    module: "runtime_fixture",
+    line: 1,
+    column: 1,
+    end_line: 1,
+    end_column: 1,
+    tags: [],
+    timeout_ms: None,
+    serial: False,
+    skip: None,
+  )
+}
+
+pub fn suites() {
+  [
+    suite("runtime", [
+      it("resolves and invokes a compiled public zero-argument function", fn() {
+        let assert Ok(loaded) = runtime.resolve(fixture("passing_test"))
+        expect(runtime.run(loaded, None)) |> to_equal(Completed([]))
+      }),
+      it(
+        "lets isolation convert a native Gleam panic into a test failure",
+        fn() {
+          let assert Ok(loaded) = runtime.resolve(fixture("panic_fixture"))
+          case runtime.run(loaded, None) {
+            Crashed(error) -> {
+              expect(string.contains(error.message, "fixture exploded"))
+              |> to_be_true()
+            }
+            _ -> panic as "expected the fixture to crash"
+          }
+        },
+      ),
+      it("rejects missing and non-zero-argument exports", fn() {
+        expect(runtime.resolve(fixture("missing_fixture")))
+        |> to_equal(Error(
+          "test/runtime_fixture.gleam::missing_fixture is not an exported zero-argument function",
+        ))
+        expect(runtime.resolve(fixture("argument_fixture")))
+        |> to_equal(Error(
+          "test/runtime_fixture.gleam::argument_fixture is not an exported zero-argument function",
+        ))
+      }),
+      it("recovers standard assert operands and operator from the panic", fn() {
+        let assert Ok(loaded) =
+          runtime.resolve(fixture("equality_assert_fixture"))
+        case runtime.run(loaded, None) {
+          Crashed(error) -> {
+            expect(string.contains(error.message, "1 == 2")) |> to_be_true()
+            expect(error.location != None) |> to_be_true()
+          }
+          _ -> panic as "expected assert to crash"
+        }
+      }),
+      it("recovers the unmatched value from a standard let assert", fn() {
+        let assert Ok(loaded) = runtime.resolve(fixture("let_assert_fixture"))
+        case runtime.run(loaded, None) {
+          Crashed(error) ->
+            expect(string.contains(error.message, "not an integer"))
+            |> to_be_true()
+          _ -> panic as "expected let assert to crash"
+        }
+      }),
+      it("slices compiler byte offsets correctly after Unicode text", fn() {
+        let assert Ok(loaded) =
+          runtime.resolve(fixture("unicode_offset_assert_fixture"))
+        case runtime.run(loaded, None) {
+          Crashed(error) ->
+            expect(string.contains(
+              error.message,
+              "expression: mascot == \"kangaroo\"",
+            ))
+            |> to_be_true()
+          _ -> panic as "expected Unicode assertion to crash"
+        }
+      }),
+      it("captures stdout and stderr without leaking them", fn() {
+        let assert Ok(loaded) = runtime.resolve(fixture("output_fixture"))
+        expect(runtime.run_captured(loaded, None))
+        |> to_equal(CapturedIsolation(
+          Completed([]),
+          "captured stdout\n",
+          "captured stderr\n",
+        ))
+      }),
+    ]),
+  ]
+}

@@ -1,25 +1,30 @@
 import gleam/option.{None, Some}
-import kangaroo/expect.{expect, to_be_false, to_be_true, to_equal}
 import kangaroo/failure.{
   AssertionFailed, EqualityMismatch, UnexpectedError, attach,
 }
+import kangaroo/internal/legacy/expect.{
+  expect, to_be_false, to_be_true, to_equal,
+}
+import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/location.{
   Location, from_erlang_stack, from_js_stack, is_framework_file,
 }
-import kangaroo/suite.{it, suite}
 
 pub fn suites() {
   [
     suite("location", [
       it("flags framework files", fn() {
-        expect(is_framework_file("src/kangaroo/expect.gleam")) |> to_be_true()
+        expect(is_framework_file("src/kangaroo/internal/legacy/expect.gleam"))
+        |> to_be_true()
         expect(is_framework_file("src/kangaroo_isolate_ffi.erl"))
         |> to_be_true()
         expect(is_framework_file("src/gleam/list.gleam")) |> to_be_true()
         expect(is_framework_file("gleam/list.gleam")) |> to_be_true()
         expect(is_framework_file("node:internal/process/task_queues:7"))
         |> to_be_true()
-        expect(is_framework_file("src/kangaroo/kangaroo/expect.mjs"))
+        expect(is_framework_file(
+          "src/kangaroo/kangaroo/internal/legacy/expect.mjs",
+        ))
         |> to_be_true()
         expect(is_framework_file("build/dev/javascript/gleam_stdlib/gleam.mjs"))
         |> to_be_true()
@@ -63,12 +68,12 @@ pub fn suites() {
         // checks out into .../work/kangaroo/kangaroo) must not make user
         // code look like framework code.
         expect(is_framework_file(
-          "/home/runner/work/kangaroo/kangaroo/build/dev/javascript/kangaroo/expect_test.mjs",
+          "/home/runner/work/kangaroo/kangaroo/build/dev/javascript/kangaroo/internal/legacy/expect_test.mjs",
         ))
         |> to_be_false()
         // The framework's own compiled javascript modules still are.
         expect(is_framework_file(
-          "/home/runner/work/kangaroo/kangaroo/build/dev/javascript/kangaroo/kangaroo/expect.mjs",
+          "/home/runner/work/kangaroo/kangaroo/build/dev/javascript/kangaroo/kangaroo/internal/legacy/expect.mjs",
         ))
         |> to_be_true()
       }),
@@ -85,7 +90,7 @@ pub fn suites() {
       ),
       it("picks the first user frame from an erlang stack", fn() {
         let stack =
-          "src/kangaroo/expect.gleam:32\n"
+          "src/kangaroo/internal/legacy/expect.gleam:32\n"
           <> "src/kangaroo_isolate_ffi.erl:11\n"
           <> "test/foo_test.gleam:42"
         expect(from_erlang_stack(stack))
@@ -95,7 +100,7 @@ pub fn suites() {
         expect(from_erlang_stack("")) |> to_equal(None)
       }),
       it("returns none when every erlang frame is framework code", fn() {
-        expect(from_erlang_stack("src/kangaroo/expect.gleam:3"))
+        expect(from_erlang_stack("src/kangaroo/internal/legacy/expect.gleam:3"))
         |> to_equal(None)
       }),
       it("ignores lines without a line number", fn() {
@@ -106,7 +111,7 @@ pub fn suites() {
       it("parses a v8 stack with file:// and columns", fn() {
         let stack =
           "Error: expected True\n"
-          <> "    at toBeTrue (file:///home/u/proj/build/dev/javascript/kangaroo/kangaroo/expect.mjs:18:5)\n"
+          <> "    at toBeTrue (file:///home/u/proj/build/dev/javascript/kangaroo/kangaroo/internal/legacy/expect.mjs:18:5)\n"
           <> "    at main (file:///home/u/proj/build/dev/javascript/kangaroo/runner_test.mjs:12:7)"
         expect(from_js_stack(stack))
         |> to_equal(
@@ -132,7 +137,8 @@ pub fn suites() {
       }),
       it("parses an erlang stack with a column", fn() {
         let stack =
-          "src/kangaroo/expect.gleam:32:5\n" <> "test/foo_test.gleam:42:9"
+          "src/kangaroo/internal/legacy/expect.gleam:32:5\n"
+          <> "test/foo_test.gleam:42:9"
         expect(from_erlang_stack(stack))
         |> to_equal(Some(Location("test/foo_test.gleam", 42, Some(9))))
       }),

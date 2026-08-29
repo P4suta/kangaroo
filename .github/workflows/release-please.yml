@@ -2,8 +2,7 @@ name: release-please
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   release:
     types: [published]
 
@@ -22,30 +21,65 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  refresh-cli-manifest:
-    # After a release, the cli's committed manifest.toml still records the
-    # kangaroo path dependency at the old version, which makes
-    # `gleam deps download` fail until the lock is regenerated. Regenerate
-    # it against the released version and push the result to main.
+  publish:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
+    environment: release
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.release.tag_name }}
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29"
           gleam-version: "1.18.1"
-      - name: Regenerate the cli manifest
-        working-directory: ./cli
-        run: gleam deps update
-      - name: Commit the refreshed manifest
+          rebar3-version: "3"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Verify release version matches the tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          git config user.name "kangaroo bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add cli/manifest.toml
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: refresh the cli manifest after release"
-            git push
-          fi
+          test "${RELEASE_TAG#v}" = "$(sed -n 's/^version = "\([^"]*\)"/\1/p' gleam.toml)"
+          test "${RELEASE_TAG#v}" = "$(node -p 'require("./editors/vscode/package.json").version')"
+      - name: Install locked editor release tools
+        working-directory: editors/vscode
+        run: npm ci
+      - run: gleam deps download
+      - run: gleam build --target erlang --warnings-as-errors
+      - run: gleam build --target javascript --warnings-as-errors
+      - run: gleam test --target erlang
+      - name: Build release artifacts
+        run: |
+          mkdir -p dist
+          gleam export hex-tarball
+          cp build/*.tar dist/
+          cp docs/protocol-v1.schema.json dist/
+          cp CHANGELOG.md dist/
+      - name: Build the VS Code extension artifact
+        working-directory: editors/vscode
+        run: npm run package -- --out ../../dist/kangaroo-${{ github.event.release.tag_name }}.vsix
+      - name: Generate release checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+      - name: Upload artifacts to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
+      - name: Publish the Hex package
+        env:
+          HEXPM_API_KEY: ${{ secrets.HEXPM_API_KEY }}
+        run: gleam publish --yes
+      - name: Publish to the VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        working-directory: editors/vscode
+        run: npm exec -- vsce publish --packagePath ../../dist/kangaroo-${{ github.event.release.tag_name }}.vsix
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        working-directory: editors/vscode
+        run: npm exec -- ovsx publish ../../dist/kangaroo-${{ github.event.release.tag_name }}.vsix --pat "$OVSX_PAT"

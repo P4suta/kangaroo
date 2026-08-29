@@ -2,71 +2,241 @@ name: test
 
 on:
   push:
-    branches:
-      - master
-      - main
+    branches: [main, master]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  quality:
+    name: format, warnings, package, protocol
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - name: kangaroo (erlang)
-            package: .
-            target: erlang
-          - name: kangaroo (javascript)
-            package: .
-            target: javascript
-          - name: kangaroo_cli (erlang)
-            package: ./cli
-            target: erlang
-          - name: kangaroo_cli (javascript)
-            package: ./cli
-            target: javascript
-    name: ${{ matrix.name }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v6
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29"
           gleam-version: "1.18.1"
           rebar3-version: "3"
-      - uses: oven-sh/setup-bun@v2
-      - name: Sync the local dependency version
-        if: matrix.package == './cli'
-        working-directory: ${{ matrix.package }}
-        run: |
-          version="$(grep -m1 '^version' ../gleam.toml | sed 's/.*"\(.*\)".*/\1/')"
-          sed -i "s/{ name = \"kangaroo\", version = \"[0-9.]*\"/{ name = \"kangaroo\", version = \"${version}\"/" manifest.toml
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
       - name: Download dependencies
-        working-directory: ${{ matrix.package }}
         run: gleam deps download
-      - name: Test
-        working-directory: ${{ matrix.package }}
-        run: |
-          if [ "${{ matrix.target }}" = "javascript" ]; then
-            gleam test -t javascript --runtime bun
-          else
-            gleam test -t erlang
-          fi
       - name: Check formatting
-        working-directory: ${{ matrix.package }}
-        run: gleam format --check src test
+        run: gleam format --check src test fixtures
+      - name: Build Erlang with warnings-as-errors
+        run: gleam build --target erlang --warnings-as-errors
+      - name: Build JavaScript with warnings-as-errors
+        run: gleam build --target javascript --warnings-as-errors
+      - name: Verify the public package interface
+        run: |
+          gleam export package-interface --out package-interface.json
+          jq -e '.modules | keys == ["kangaroo"]' package-interface.json
+      - name: Validate protocol schema
+        run: jq empty docs/protocol-v1.schema.json
+      - name: Test interactive TUI cancellation and restoration
+        run: python3 scripts/tui_pty_test.py
+      - name: Build the clean Hex tarball
+        run: gleam export hex-tarball
+      - name: Test Hex clean-install harness
+        run: python3 -W error::ResourceWarning -m unittest scripts/test_hex_clean_install.py
+      - name: Clean-install the exact Hex tarball on Erlang and Node
+        run: python3 scripts/hex_clean_install_test.py build
+
+  erlang:
+    name: erlang OTP ${{ matrix.otp }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        otp: ["27", "28", "29"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          gleam-version: "1.18.1"
+          rebar3-version: "3"
+      - run: gleam deps download
+      - name: Download watch fixture dependencies
+        working-directory: fixtures/watch_project
+        run: gleam deps download
+      - run: gleam test --target erlang
+
+  javascript:
+    name: ${{ matrix.runtime }} ${{ matrix.version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, runtime: nodejs, version: "22" }
+          - { os: ubuntu-latest, runtime: nodejs, version: "24" }
+          - { os: ubuntu-latest, runtime: nodejs, version: "26" }
+          - { os: ubuntu-latest, runtime: bun, version: "1.4.0" }
+          - { os: ubuntu-latest, runtime: deno, version: "2.9.0" }
+          - { os: macos-latest, runtime: nodejs, version: "22" }
+          - { os: macos-latest, runtime: nodejs, version: "24" }
+          - { os: macos-latest, runtime: nodejs, version: "26" }
+          - { os: macos-latest, runtime: bun, version: "1.4.0" }
+          - { os: macos-latest, runtime: deno, version: "2.9.0" }
+          - { os: windows-latest, runtime: nodejs, version: "22" }
+          - { os: windows-latest, runtime: nodejs, version: "24" }
+          - { os: windows-latest, runtime: nodejs, version: "26" }
+          - { os: windows-latest, runtime: bun, version: "1.4.0" }
+          - { os: windows-latest, runtime: deno, version: "2.9.0" }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: false
+          gleam-version: "1.18.1"
+      - uses: actions/setup-node@v6
+        if: matrix.runtime == 'nodejs'
+        with:
+          node-version: ${{ matrix.version }}
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.runtime == 'bun'
+        with:
+          bun-version: ${{ matrix.version }}
+      - uses: denoland/setup-deno@v2
+        if: matrix.runtime == 'deno'
+        with:
+          deno-version: ${{ matrix.version }}
+      - run: gleam deps download
+      - name: Download watch fixture dependencies
+        working-directory: fixtures/watch_project
+        run: gleam deps download
+      - run: gleam test --target javascript --runtime ${{ matrix.runtime }}
+
+  coverage:
+    name: coverage / ${{ matrix.runtime }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runtime: erlang, target: erlang, otp: "29", version: "29" }
+          - { runtime: nodejs, target: javascript, otp: false, version: "24" }
+          - { runtime: bun, target: javascript, otp: false, version: "1.4.0" }
+          - { runtime: deno, target: javascript, otp: false, version: "2.9.0" }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          gleam-version: "1.18.1"
+      - uses: actions/setup-node@v6
+        if: matrix.runtime == 'nodejs'
+        with:
+          node-version: ${{ matrix.version }}
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.runtime == 'bun'
+        with:
+          bun-version: ${{ matrix.version }}
+      - uses: denoland/setup-deno@v2
+        if: matrix.runtime == 'deno'
+        with:
+          deno-version: ${{ matrix.version }}
+      - name: Download fixture dependencies
+        working-directory: fixtures/coverage_project
+        run: gleam deps download
+      - name: Collect Erlang coverage
+        if: matrix.runtime == 'erlang'
+        working-directory: fixtures/coverage_project
+        run: gleam run --target erlang -m kangaroo -- coverage | tee coverage-output.txt
+      - name: Collect JavaScript coverage
+        if: matrix.target == 'javascript'
+        working-directory: fixtures/coverage_project
+        run: gleam run --target javascript --runtime ${{ matrix.runtime }} -m kangaroo -- coverage | tee coverage-output.txt
+      - name: Verify common Gleam line result and reports
+        working-directory: fixtures/coverage_project
+        run: |
+          grep -q 'TOTAL  66%' coverage-output.txt
+          grep -q 'SF:src/calculator.gleam' coverage/lcov.info
+          grep -q 'filename="src/calculator.gleam"' coverage/cobertura.xml
+
+  benchmark:
+    name: v1 performance gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: false
+          gleam-version: "1.18.1"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Download dependencies
+        run: gleam deps download
+      - name: Build benchmark target with warnings-as-errors
+        run: gleam build --target javascript --warnings-as-errors
+      - name: Test benchmark policy and harness
+        run: python3 -W error::ResourceWarning -m unittest scripts/test_benchmark.py
+      - name: Enforce v1 hard budgets and 15% regression gates
+        run: python3 scripts/benchmark.py --output benchmark-result.json
+      - name: Upload benchmark result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-result
+          path: benchmark-result.json
+          if-no-files-found: ignore
 
   editors:
-    runs-on: ubuntu-latest
     name: editors
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: erlef/setup-beam@v1
         with:
-          node-version: "20"
-      - name: Check the VS Code extension syntax
-        run: node --check editors/vscode/extension.js
-      - name: Check the Neovim plugin manifests
+          otp-version: false
+          gleam-version: "1.18.1"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install VS Code test and packaging tools
+        working-directory: editors/vscode
+        run: npm ci
+      - name: Download VS Code fixture dependencies
+        working-directory: editors/vscode/test/workspace
+        run: gleam deps download
+      - name: Test VS Code integration core
+        working-directory: editors/vscode
+        run: npm test
+      - name: Test inside the VS Code Extension Development Host
+        working-directory: editors/vscode
+        run: xvfb-run -a npm run test:integration
+      - name: Package VS Code extension
+        working-directory: editors/vscode
+        run: npm run package -- --out kangaroo.vsix
+      - name: Verify packaged VS Code entrypoint
+        working-directory: editors/vscode
+        run: unzip -l kangaroo.vsix | grep -q 'extension/extension.js'
+      - name: Install current stable Neovim
         run: |
-          test -f editors/neovim/lua/kangaroo/init.lua
-          test -f editors/vscode/package.json
-          node -e 'JSON.parse(require("fs").readFileSync("editors/vscode/package.json", "utf8"))'
+          curl --fail --location --silent --show-error \
+            https://github.com/neovim/neovim/releases/download/stable/nvim-linux-x86_64.tar.gz \
+            --output nvim-linux-x86_64.tar.gz
+          tar -xzf nvim-linux-x86_64.tar.gz -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/nvim-linux-x86_64/bin" >> "${GITHUB_PATH}"
+      - name: Test Neovim integration headlessly
+        run: nvim --headless -u NONE -l editors/neovim/test/headless.lua

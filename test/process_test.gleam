@@ -1,0 +1,160 @@
+import kangaroo/internal/fs
+import kangaroo/internal/legacy/expect.{expect, to_be_true, to_equal}
+import kangaroo/internal/legacy/suite.{it, suite}
+import kangaroo/internal/process.{
+  ProcessCancelled, ProcessFailed, ProcessFinished, ProcessOutput,
+  ProcessRunning,
+}
+import kangaroo/sys
+
+@external(erlang, "kangaroo_cli_test_ffi", "sleeper_executable")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "sleeper_executable")
+fn sleeper_executable() -> String
+
+@external(erlang, "kangaroo_cli_test_ffi", "sleeper_arguments")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "sleeper_arguments")
+fn sleeper_arguments(milliseconds: Int) -> List(String)
+
+@external(erlang, "kangaroo_cli_test_ffi", "echo_arguments")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "echo_arguments")
+fn echo_arguments() -> List(String)
+
+@external(erlang, "kangaroo_cli_test_ffi", "tree_marker")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "tree_marker")
+fn tree_marker() -> String
+
+@external(erlang, "kangaroo_cli_test_ffi", "tree_arguments")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "tree_arguments")
+fn tree_arguments(marker: String) -> List(String)
+
+pub fn suites() {
+  [
+    suite("cancellable child processes", [
+      it("polls a process to completion and captures output", fn() {
+        let assert Ok(handle) =
+          process.start(
+            ".",
+            sleeper_executable(),
+            sleeper_arguments(10),
+            [],
+            2000,
+          )
+        let assert ProcessFinished(completed) = await_terminal(handle, 2000)
+        expect(completed.exit_code) |> to_equal(0)
+        expect(completed.output) |> to_equal("ready")
+      }),
+      it("cancels a running process without publishing completion", fn() {
+        let assert Ok(handle) =
+          process.start(
+            ".",
+            sleeper_executable(),
+            sleeper_arguments(5000),
+            [],
+            10_000,
+          )
+        fs.sleep(25)
+        let started = sys.now_ms()
+        process.cancel(handle)
+        expect(await_terminal(handle, 1000)) |> to_equal(ProcessCancelled)
+        expect(sys.now_ms() - started < 1000) |> to_be_true()
+      }),
+      it("streams output before the child process completes", fn() {
+        let assert Ok(handle) =
+          process.start(
+            ".",
+            sleeper_executable(),
+            sleeper_arguments(2000),
+            [],
+            5000,
+          )
+        let assert ProcessOutput(output) = await_output(handle, 2000)
+        expect(output) |> to_equal("ready")
+        process.cancel(handle)
+        let assert ProcessCancelled = await_terminal(handle, 1000)
+        Nil
+      }),
+      it(
+        "writes stdin to a running child without closing its process tree",
+        fn() {
+          let assert Ok(handle) =
+            process.start(".", sleeper_executable(), echo_arguments(), [], 2000)
+          process.write(handle, "kangaroo protocol\n")
+          let assert ProcessFinished(completed) = await_terminal(handle, 2000)
+          expect(completed.exit_code) |> to_equal(0)
+          expect(completed.output) |> to_equal("kangaroo protocol\n")
+        },
+      ),
+      it("cancels descendants in the same process tree", fn() {
+        let marker = tree_marker()
+        let assert Ok(handle) =
+          process.start(
+            ".",
+            sleeper_executable(),
+            tree_arguments(marker),
+            [],
+            10_000,
+          )
+        fs.sleep(150)
+        process.cancel(handle)
+        let assert ProcessCancelled = await_terminal(handle, 1000)
+        fs.sleep(700)
+        let survived = fs.exists(marker)
+        case survived {
+          True -> {
+            let _ = fs.remove_file(marker)
+            Nil
+          }
+          False -> Nil
+        }
+        expect(survived) |> to_equal(False)
+      }),
+    ]),
+  ]
+}
+
+fn await_terminal(handle: Int, timeout_ms: Int) -> process.ProcessPoll {
+  let started = sys.now_ms()
+  await_until(handle, started, timeout_ms)
+}
+
+fn await_until(
+  handle: Int,
+  started: Int,
+  timeout_ms: Int,
+) -> process.ProcessPoll {
+  case process.poll(handle) {
+    ProcessRunning ->
+      case sys.now_ms() - started < timeout_ms {
+        True -> {
+          fs.sleep(5)
+          await_until(handle, started, timeout_ms)
+        }
+        False -> ProcessFailed("test polling timed out")
+      }
+    ProcessOutput(_) -> await_until(handle, started, timeout_ms)
+    finished -> finished
+  }
+}
+
+fn await_output(handle: Int, timeout_ms: Int) -> process.ProcessPoll {
+  let started = sys.now_ms()
+  await_output_until(handle, started, timeout_ms)
+}
+
+fn await_output_until(
+  handle: Int,
+  started: Int,
+  timeout_ms: Int,
+) -> process.ProcessPoll {
+  case process.poll(handle) {
+    ProcessRunning ->
+      case sys.now_ms() - started < timeout_ms {
+        True -> {
+          fs.sleep(5)
+          await_output_until(handle, started, timeout_ms)
+        }
+        False -> ProcessFailed("test output polling timed out")
+      }
+    output -> output
+  }
+}

@@ -1,0 +1,16 @@
+name = "kangaroo_watch_fixture"
+version = "1.0.0"
+target = "erlang"
+
+[javascript.deno]
+allow_env = true
+allow_read = true
+allow_run = true
+allow_sys = true
+allow_write = true
+
+[dependencies]
+kangaroo = { path = "../.." }
+
+[tools.kangaroo.watch]
+debounce_ms = 10

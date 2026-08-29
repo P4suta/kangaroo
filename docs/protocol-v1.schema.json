@@ -1,0 +1,356 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/P4suta/kangaroo/blob/v1.0.0/docs/protocol-v1.schema.json",
+  "title": "Kangaroo daemon protocol v1 record",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/response" }
+  ],
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["protocol_version", "id", "command"],
+          "properties": {
+            "protocol_version": { "const": 1 },
+            "id": { "type": "string" },
+            "command": { "const": "discover" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["protocol_version", "id", "command"],
+          "properties": {
+            "protocol_version": { "const": 1 },
+            "id": { "type": "string" },
+            "command": { "enum": ["run", "watch"] },
+            "selectors": { "$ref": "#/$defs/stringArray" },
+            "include_tags": { "$ref": "#/$defs/stringArray" },
+            "exclude_tags": { "$ref": "#/$defs/stringArray" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["protocol_version", "id", "command", "operation_id"],
+          "properties": {
+            "protocol_version": { "const": 1 },
+            "id": { "type": "string" },
+            "command": { "const": "cancel" },
+            "operation_id": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["protocol_version", "id", "command"],
+          "properties": {
+            "protocol_version": { "const": 1 },
+            "id": { "type": "string" },
+            "command": { "const": "shutdown" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "response": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["protocol_version", "type", "request_id", "tests"],
+          "properties": {
+            "protocol_version": { "const": 1 },
+            "type": { "const": "discovered" },
+            "request_id": { "type": "string" },
+            "tests": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/test" }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["protocol_version", "type", "request_id", "operation_id", "operation"],
+          "properties": {
+            "protocol_version": { "const": 1 },
+            "type": { "const": "started" },
+            "request_id": { "type": "string" },
+            "operation_id": { "type": "string" },
+            "operation": { "enum": ["run", "watch"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["protocol_version", "type", "request_id", "event"],
+          "properties": {
+            "protocol_version": { "const": 1 },
+            "type": { "const": "event" },
+            "request_id": { "type": "string" },
+            "event": { "$ref": "#/$defs/event" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["protocol_version", "type", "request_id", "exit_code"],
+          "properties": {
+            "protocol_version": { "const": 1 },
+            "type": { "const": "completed" },
+            "request_id": { "type": "string" },
+            "exit_code": { "type": "integer", "minimum": 0, "maximum": 2 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["protocol_version", "type", "request_id", "operation_id"],
+          "properties": {
+            "protocol_version": { "const": 1 },
+            "type": { "const": "cancelled" },
+            "request_id": { "type": "string" },
+            "operation_id": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["protocol_version", "type", "request_id"],
+          "properties": {
+            "protocol_version": { "const": 1 },
+            "type": { "const": "shutdown" },
+            "request_id": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["protocol_version", "type", "request_id", "message"],
+          "properties": {
+            "protocol_version": { "const": 1 },
+            "type": { "const": "error" },
+            "request_id": { "type": "string" },
+            "message": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "test": {
+      "type": "object",
+      "required": ["id", "name", "path", "module", "line", "column", "end_line", "end_column", "tags", "timeout_ms", "serial"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "path": { "type": "string" },
+        "module": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "end_column": { "type": "integer", "minimum": 1 },
+        "tags": { "$ref": "#/$defs/stringArray" },
+        "timeout_ms": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "null" }
+          ]
+        },
+        "serial": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "run_id", "case_count"],
+          "properties": {
+            "type": { "const": "run_started" },
+            "run_id": { "type": "integer" },
+            "case_count": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "suite", "case"],
+          "properties": {
+            "type": { "const": "case_started" },
+            "suite": { "type": "string" },
+            "case": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "suite", "case", "stdout", "stderr", "outcome"],
+          "properties": {
+            "type": { "const": "case_output" },
+            "suite": { "type": "string" },
+            "case": { "type": "string" },
+            "stdout": { "type": "string" },
+            "stderr": { "type": "string" },
+            "outcome": { "$ref": "#/$defs/outcome" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "suite", "case", "outcome", "duration_ms"],
+          "properties": {
+            "type": { "const": "case_finished" },
+            "suite": { "type": "string" },
+            "case": { "type": "string" },
+            "outcome": { "$ref": "#/$defs/outcome" },
+            "duration_ms": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "suite"],
+          "properties": {
+            "type": { "const": "suite_started" },
+            "suite": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "suite", "outcome"],
+          "properties": {
+            "type": { "const": "suite_finished" },
+            "suite": { "type": "string" },
+            "outcome": { "$ref": "#/$defs/outcome" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "run_id", "summary"],
+          "properties": {
+            "type": { "const": "run_finished" },
+            "run_id": { "type": "integer" },
+            "summary": { "$ref": "#/$defs/summary" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "outcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": { "kind": { "const": "passed" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "const": "skipped" },
+            "reason": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "attempts", "failures"],
+          "properties": {
+            "kind": { "const": "flaky" },
+            "attempts": { "type": "integer", "minimum": 2 },
+            "failures": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/failure" }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "failures"],
+          "properties": {
+            "kind": { "const": "failed" },
+            "failures": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/failure" }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "failure": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "expected", "actual", "diff", "location"],
+          "properties": {
+            "kind": { "const": "equality_mismatch" },
+            "expected": { "type": "string" },
+            "actual": { "type": "string" },
+            "diff": { "type": ["string", "null"] },
+            "location": { "$ref": "#/$defs/nullableLocation" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "message", "location"],
+          "properties": {
+            "kind": { "const": "assertion_failed" },
+            "message": { "type": "string" },
+            "location": { "$ref": "#/$defs/nullableLocation" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "name", "message", "location"],
+          "properties": {
+            "kind": { "const": "unexpected_error" },
+            "name": { "type": "string" },
+            "message": { "type": "string" },
+            "location": { "$ref": "#/$defs/nullableLocation" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "nullableLocation": {
+      "oneOf": [
+        { "$ref": "#/$defs/location" },
+        { "type": "null" }
+      ]
+    },
+    "location": {
+      "type": "object",
+      "required": ["file", "line", "column"],
+      "properties": {
+        "file": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": ["integer", "null"], "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": ["passed", "failed", "skipped", "duration_ms"],
+      "properties": {
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

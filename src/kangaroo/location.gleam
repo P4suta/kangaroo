@@ -112,7 +112,7 @@ fn parse_file_line(line: String) -> Result(Location, Nil) {
             }
             _, _ -> Error(Nil)
           }
-        [line_text, ..rest] ->
+        [line_text, ..] ->
           case int.parse(line_text) {
             Ok(line) -> {
               let file =

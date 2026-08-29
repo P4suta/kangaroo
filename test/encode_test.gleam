@@ -1,14 +1,16 @@
 import gleam/option.{None, Some}
 import kangaroo/encode
 import kangaroo/event.{
-  CaseFinished, CaseStarted, RunFinished, RunStarted, SuiteFinished,
+  CaseFinished, CaseOutput, CaseStarted, RunFinished, RunStarted, SuiteFinished,
   SuiteStarted,
 }
-import kangaroo/expect.{expect, to_equal}
-import kangaroo/failure.{EqualityMismatch, Failed, Passed, Skipped}
+import kangaroo/failure.{
+  EqualityMismatch, Failed, Passed, Skipped, SkippedWithReason,
+}
+import kangaroo/internal/legacy/expect.{expect, to_equal}
+import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/location.{Location}
 import kangaroo/report.{Summary}
-import kangaroo/suite.{it, suite}
 
 pub fn suites() {
   [
@@ -23,6 +25,20 @@ pub fn suites() {
           "{\"type\":\"case_started\",\"suite\":\"math\",\"case\":\"adds\"}",
         )
       }),
+      it("encodes captured case output", fn() {
+        expect(
+          encode.encode(CaseOutput(
+            "math",
+            "adds",
+            "hello\n",
+            "warning\n",
+            Passed,
+          )),
+        )
+        |> to_equal(
+          "{\"type\":\"case_output\",\"suite\":\"math\",\"case\":\"adds\",\"stdout\":\"hello\\n\",\"stderr\":\"warning\\n\",\"outcome\":{\"kind\":\"passed\"}}",
+        )
+      }),
       it("encodes a passed case", fn() {
         expect(encode.encode(CaseFinished("math", "adds", Passed, 5)))
         |> to_equal(
@@ -33,6 +49,19 @@ pub fn suites() {
         expect(encode.encode(CaseFinished("math", "skips", Skipped, 0)))
         |> to_equal(
           "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"skips\",\"outcome\":{\"kind\":\"skipped\"},\"duration_ms\":0}",
+        )
+      }),
+      it("encodes a skip reason for editor and daemon clients", fn() {
+        let output =
+          encode.encode(CaseFinished(
+            "math",
+            "platform",
+            SkippedWithReason("windows only"),
+            0,
+          ))
+        expect(output)
+        |> to_equal(
+          "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"platform\",\"outcome\":{\"kind\":\"skipped\",\"reason\":\"windows only\"},\"duration_ms\":0}",
         )
       }),
       it("encodes a failed case with failures", fn() {

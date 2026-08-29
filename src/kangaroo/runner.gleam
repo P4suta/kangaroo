@@ -2,17 +2,21 @@ import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import kangaroo/event.{
-  type Event, CaseFinished, CaseStarted, RunFinished, RunStarted, SuiteFinished,
-  SuiteStarted,
+  type Event, CaseFinished, CaseOutput, CaseStarted, RunFinished, RunStarted,
+  SuiteFinished, SuiteStarted,
 }
 import kangaroo/failure.{
-  type Failure, type Outcome, Failed, Passed, Skipped, UnexpectedError,
+  type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Flaky,
+  Passed, Skipped, SkippedWithReason, UnexpectedError,
 }
-import kangaroo/isolate.{type Isolated, Completed, Crashed, isolate}
+import kangaroo/internal/legacy/suite.{type Case, type Suite}
+import kangaroo/isolate.{
+  type Isolated, CapturedIsolation, Completed, Crashed, SkippedIsolation,
+  isolate, isolate_captured,
+}
 import kangaroo/report.{
   type CaseResult, type Report, CaseResult, Report, summary,
 }
-import kangaroo/suite.{type Case, type Suite}
 import kangaroo/sys
 
 /// The runner configuration.
@@ -58,6 +62,17 @@ pub fn run_with_config(
   sink: fn(Event) -> Nil,
   config: Config,
 ) -> Report {
+  run_with_retries(suites, sink, config, 0)
+}
+
+/// Runs with an explicit retry budget. Passing after any failed attempt is
+/// classified as flaky rather than passed.
+pub fn run_with_retries(
+  suites: List(Suite),
+  sink: fn(Event) -> Nil,
+  config: Config,
+  retries: Int,
+) -> Report {
   let run_id = sys.now_ms()
   let selected = select(suites)
   let total = list.length(selected.to_run) + list.length(selected.skipped)
@@ -78,7 +93,7 @@ pub fn run_with_config(
         }
         False -> {
           let #(suite_results, suite_outcome, stopped) =
-            run_suite(suite, cases, config, sink)
+            run_suite(suite, cases, config, retries, sink)
           let suite_failures = case suite_outcome {
             None -> suite_failures
             Some(failures) -> [#(suite.name, failures), ..suite_failures]
@@ -134,6 +149,7 @@ fn run_suite(
   suite: Suite,
   cases: List(Case),
   config: Config,
+  retries: Int,
   sink: fn(Event) -> Nil,
 ) -> #(List(CaseResult), Option(List(Failure)), Bool) {
   sink(SuiteStarted(suite.name))
@@ -147,11 +163,12 @@ fn run_suite(
           case stopped {
             True -> #([skip_case(suite, c, sink), ..acc], True)
             False -> {
-              let result = run_case(suite, c, config, sink)
+              let result = run_case(suite, c, config, retries, sink)
               let stopped =
                 config.stop_on_first_failure
                 && case result.outcome {
                   Failed(_) -> True
+                  Flaky(_, _) -> True
                   _ -> False
                 }
               #([result, ..acc], stopped)
@@ -187,20 +204,69 @@ fn run_case(
   suite: Suite,
   c: Case,
   config: Config,
+  retries: Int,
   sink: fn(Event) -> Nil,
 ) -> CaseResult {
   sink(CaseStarted(suite.name, c.name))
   let case_start = sys.now_ms()
-  let isolated = isolate(body_for(suite, c), config.case_timeout_ms)
+  let timeout = case c.timeout_ms {
+    Some(timeout) -> Some(timeout)
+    None -> config.case_timeout_ms
+  }
+  let AttemptResult(outcome, stdout, stderr) =
+    retry(body_for(suite, c), timeout, retries, 1, [], "", "")
   let duration = sys.now_ms() - case_start
-  let outcome = outcome_of(isolated)
   sink(CaseFinished(suite.name, c.name, outcome, duration))
+  case stdout == "" && stderr == "" {
+    True -> Nil
+    False -> sink(CaseOutput(suite.name, c.name, stdout, stderr, outcome))
+  }
   CaseResult(suite.name, c.name, outcome, duration)
 }
 
+type AttemptResult {
+  AttemptResult(outcome: Outcome, stdout: String, stderr: String)
+}
+
+fn retry(
+  body: fn() -> Nil,
+  timeout: Option(Int),
+  retries_left: Int,
+  attempt: Int,
+  previous_failures: List(Failure),
+  previous_stdout: String,
+  previous_stderr: String,
+) -> AttemptResult {
+  let CapturedIsolation(isolated, stdout, stderr) =
+    isolate_captured(body, timeout)
+  let outcome = outcome_of(isolated)
+  let stdout = previous_stdout <> stdout
+  let stderr = previous_stderr <> stderr
+  case outcome, retries_left, previous_failures {
+    Failed(failures), retries, _ if retries > 0 ->
+      retry(
+        body,
+        timeout,
+        retries - 1,
+        attempt + 1,
+        list.append(previous_failures, failures),
+        stdout,
+        stderr,
+      )
+    Passed, _, [] -> AttemptResult(Passed, stdout, stderr)
+    Passed, _, failures ->
+      AttemptResult(Flaky(failures, attempt), stdout, stderr)
+    outcome, _, _ -> AttemptResult(outcome, stdout, stderr)
+  }
+}
+
 fn skip_case(suite: Suite, c: Case, sink: fn(Event) -> Nil) -> CaseResult {
-  let result = CaseResult(suite.name, c.name, Skipped, 0)
-  sink(CaseFinished(suite.name, c.name, Skipped, 0))
+  let outcome = case c.skip_reason {
+    Some(reason) -> SkippedWithReason(reason)
+    None -> Skipped
+  }
+  let result = CaseResult(suite.name, c.name, outcome, 0)
+  sink(CaseFinished(suite.name, c.name, outcome, 0))
   result
 }
 
@@ -215,6 +281,9 @@ fn run_hook(hook: Option(fn() -> Nil), config: Config) -> List(Failure) {
         Crashed(error) -> [
           UnexpectedError(error.name, error.message, error.location),
         ]
+        SkippedIsolation(reason) -> [
+          UnexpectedError("skip", reason, None),
+        ]
       }
   }
 }
@@ -224,7 +293,17 @@ fn outcome_of(isolated: Isolated) -> Outcome {
     Completed([]) -> Passed
     Completed(failures) -> Failed(failures)
     Crashed(error) ->
-      Failed([UnexpectedError(error.name, error.message, error.location)])
+      case error.expected, error.actual {
+        Some(expected), Some(actual) ->
+          Failed([
+            EqualityMismatch(expected, actual, error.diff, error.location),
+          ])
+        _, _ if error.name == "assert" || error.name == "let_assert" ->
+          Failed([AssertionFailed(error.message, error.location)])
+        _, _ ->
+          Failed([UnexpectedError(error.name, error.message, error.location)])
+      }
+    SkippedIsolation(reason) -> SkippedWithReason(reason)
   }
 }
 

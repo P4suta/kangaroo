@@ -1,44 +1,40 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
+All notable changes are documented here. This project follows semantic
+versioning.
 
-## Unreleased
+## 1.0.0
 
 ### Added
 
-- `to_be_ok` / `to_be_error` Result matchers, naming the unexpected value
-- Source `column` in failure locations (JavaScript stacks); the editor
-  protocol carries it as an optional field
-- CLI commands: `--help`, `--version`, pure command-line parsing
-- Compile-failure screen in the TUI (with the truncated compiler report,
-  `r` to retry)
-- Suite-level parallelism: suites run concurrently across BEAM
-  schedulers (Erlang); a single run bracket and cross-group summary
-- Editor consumers: Neovim plugin (`editors/neovim`) and VS Code
-  extension (`editors/vscode`)
-- Watch latency benchmark (`cli/scripts/bench.sh`)
+- Automatic AST discovery of public zero-argument `*_test` functions, stable
+  IDs, literal metadata, source ranges, and incremental dependency indexing.
+- Deterministic module scheduling, serial groups, tags, selectors, fail-fast,
+  retry/flaky classification, timeouts, output capture, dynamic skipping, and
+  teardown-safe fixtures.
+- Isolated Erlang and JavaScript execution with Promise awaiting, process-tree
+  cancellation, and one panic/rejection/timeout failure model.
+- `watch`, `coverage`, `list`, `init`, `doctor`, and protocol-v1 `daemon`
+  commands in the main package.
+- Pretty, dot, NDJSON, and JUnit reporters; terminal, LCOV, and Cobertura
+  coverage reporters with aggregate and per-file thresholds.
+- Runtime-independent, exact Gleam source instrumentation for Erlang, Node.js,
+  Bun, and Deno coverage.
+- VS Code Testing API and Neovim integrations with per-package daemon
+  lifecycles and stale-diagnostic cleanup.
 
 ### Changed
 
-- Watch loop reworked: incremental directory walk, 50 ms polling,
-  adaptive settle — typical save-to-run latency ~120 ms (previously
-  ~400 ms)
-- JSON protocol purity: status and diagnostics go to stderr, so
-  `--json` output is a clean NDJSON stream
-- The in-VM runner pre-loads every test module before collecting
-  suites, skips deleted test files, and no longer purges loaded modules
-  up front (loading the same version is a no-op)
-- The TUI renders on the terminal's alternate screen buffer and shows
-  the run duration
+- Consolidated the project into the single Hex package `kangaroo`.
+- Made ordinary Gleam test functions and built-in `assert`/`let assert` the
+  complete assertion model.
+- Moved all configuration to `[tools.kangaroo]` and reserved only the root
+  `kangaroo` module as stable public API.
 
-### Fixed
+### Removed
 
-- In-VM failure locations pointed at the compiled framework instead of
-  the test body when the CLI ran a project that depends on kangaroo;
-  the compiled artefact form of framework frames is now recognised
-- The deep content check compared different file sets (`.gleam` only vs
-  everything watched), reporting config and ffi files as removed on
-  every deep check
-- Re-listing a directory reported files under its subdirectories as
-  removed
-- Deleted test files left stale beams that kept being executed
+- The pre-release suite/case/matcher DSL and its separate command package.
+- Compatibility aliases for unpublished 0.x APIs.
+
+The 0.1 release candidate was not published. Version 1.0.0 is the first public
+contract.

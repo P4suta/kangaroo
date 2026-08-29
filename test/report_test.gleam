@@ -1,7 +1,9 @@
-import kangaroo/expect.{expect, to_be_false, to_be_true, to_equal}
 import kangaroo/failure.{Counts, Failed, Passed, Skipped}
+import kangaroo/internal/legacy/expect.{
+  expect, to_be_false, to_be_true, to_equal,
+}
+import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/report.{CaseResult, has_failures, summarize_counts, summary}
-import kangaroo/suite.{it, suite}
 
 pub fn suites() {
   [

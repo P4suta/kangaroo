@@ -2,17 +2,17 @@ import gleam/dict
 import gleam/option.{None, Some}
 import gleam/string
 import kangaroo/event.{type Event}
-import kangaroo/expect.{
+import kangaroo/failure.{
+  type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Passed,
+}
+import kangaroo/internal/legacy/expect.{
   expect, to_be_close_to, to_be_empty, to_be_error, to_be_false,
   to_be_greater_than, to_be_less_than, to_be_none, to_be_ok, to_be_some,
   to_be_true, to_contain, to_contain_key, to_contain_text, to_end_with, to_equal,
   to_have_length, to_raise, to_raise_containing, to_start_with,
 }
-import kangaroo/failure.{
-  type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Passed,
-}
+import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/runner
-import kangaroo/suite.{it, suite}
 
 fn outcome_of(body: fn() -> Nil) -> Outcome {
   let r = runner.run([suite("t", [it("t", body)])], fn(_event: Event) { Nil })

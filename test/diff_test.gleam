@@ -1,7 +1,7 @@
 import gleam/option.{None, Some}
 import kangaroo/diff.{Added, Kept, Removed, diff_lines, diff_lines_numbered}
-import kangaroo/expect.{expect, to_equal}
-import kangaroo/suite.{it, suite}
+import kangaroo/internal/legacy/expect.{expect, to_equal}
+import kangaroo/internal/legacy/suite.{it, suite}
 
 pub fn suites() {
   [

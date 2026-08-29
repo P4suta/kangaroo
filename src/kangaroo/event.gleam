@@ -11,6 +11,16 @@ pub type Event {
   RunStarted(run_id: Int, case_count: Int)
   /// A single case has started executing.
   CaseStarted(suite: String, case_name: String)
+  /// Output captured from one case. It is emitted after `CaseFinished` and
+  /// carries the outcome so presentation layers can apply `show_output`
+  /// without keeping mutable case state.
+  CaseOutput(
+    suite: String,
+    case_name: String,
+    stdout: String,
+    stderr: String,
+    outcome: Outcome,
+  )
   /// A single case has finished. Skipped cases do not emit `CaseStarted` but
   /// do emit this event with the `Skipped` outcome.
   CaseFinished(

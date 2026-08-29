@@ -10,8 +10,8 @@
           "jsonpath": "$.version"
         },
         {
-          "type": "toml",
-          "path": "cli/gleam.toml",
+          "type": "json",
+          "path": "editors/vscode/package.json",
           "jsonpath": "$.version"
         }
       ]

@@ -1,17 +1,24 @@
 {
   "name": "kangaroo",
   "displayName": "Kangaroo",
-  "description": "Continuous Gleam test results: failures as diagnostics while you edit.",
-  "version": "0.1.0",
+  "description": "Gleam tests in the Testing view, with continuous runs, diagnostics, and coverage integration.",
+  "version": "1.0.0",
   "publisher": "yasunobu",
-  "engines": { "vscode": "^1.80.0" },
+  "engines": { "vscode": "^1.95.0" },
   "categories": ["Testing", "Other"],
-  "activationEvents": ["onLanguage:gleam", "onCommand:kangaroo.start", "onCommand:kangaroo.stop"],
+  "activationEvents": [
+    "workspaceContains:gleam.toml",
+    "onLanguage:gleam",
+    "onCommand:kangaroo.start",
+    "onCommand:kangaroo.stop",
+    "onCommand:kangaroo.refresh"
+  ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
       { "command": "kangaroo.start", "title": "Kangaroo: Start watching tests" },
-      { "command": "kangaroo.stop", "title": "Kangaroo: Stop watching" }
+      { "command": "kangaroo.stop", "title": "Kangaroo: Stop" },
+      { "command": "kangaroo.refresh", "title": "Kangaroo: Refresh tests" }
     ],
     "configuration": {
       "title": "Kangaroo",
@@ -25,6 +32,25 @@
     }
   },
   "scripts": {
-    "package": "npx @vscode/vsce package"
-  }
+    "test": "npm run test:unit",
+    "test:unit": "node --test test/*.test.js",
+    "test:integration": "vscode-test",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "3.9.2",
+    "ovsx": "1.1.1"
+  },
+  "overrides": {
+    "diff": "8.0.3",
+    "serialize-javascript": "7.0.5"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/P4suta/kangaroo.git"
+  },
+  "files": ["extension.js", "core.js", "README.md", "LICENSE"]
 }

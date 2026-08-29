@@ -1,17 +1,29 @@
+import gleam/io
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
-import kangaroo/event.{type Event}
-import kangaroo/expect.{expect, to_be_false, to_be_true, to_equal}
+import kangaroo/event.{type Event, CaseOutput}
 import kangaroo/failure.{
-  EqualityMismatch, Failed, Passed, Skipped, UnexpectedError,
+  EqualityMismatch, Failed, Flaky, Passed, Skipped, UnexpectedError,
+}
+import kangaroo/internal/event_buffer
+import kangaroo/internal/legacy/expect.{
+  expect, to_be_false, to_be_true, to_equal,
+}
+import kangaroo/internal/legacy/suite.{
+  all_hooks, hooks, it, it_focused, it_skipped, suite, suite_with_hooks,
 }
 import kangaroo/report
 import kangaroo/runner
-import kangaroo/suite.{
-  all_hooks, hooks, it, it_focused, it_skipped, suite, suite_with_hooks,
-}
 import kangaroo/sys
+
+@external(erlang, "kangaroo_cli_test_ffi", "reset_flaky")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "reset_flaky")
+fn reset_flaky() -> Nil
+
+@external(erlang, "kangaroo_cli_test_ffi", "fail_once")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "fail_once")
+fn fail_once() -> Nil
 
 pub fn suites() {
   [
@@ -28,6 +40,31 @@ pub fn suites() {
           )
         expect(report.has_failures(r)) |> to_be_false()
         expect(report.case_count(r)) |> to_equal(1)
+      }),
+      it("emits captured stdout and stderr with the completed outcome", fn() {
+        event_buffer.take()
+        let _ =
+          runner.run(
+            [
+              suite("output", [
+                it("writes", fn() {
+                  io.println("hello")
+                  io.println_error("oops")
+                }),
+              ]),
+            ],
+            event_buffer.append,
+          )
+        let output =
+          event_buffer.take()
+          |> list.filter_map(fn(event) {
+            case event {
+              CaseOutput(_, _, stdout, stderr, outcome) ->
+                Ok(#(stdout, stderr, outcome))
+              _ -> Error(Nil)
+            }
+          })
+        expect(output) |> to_equal([#("hello\n", "oops\n", Passed)])
       }),
       it("reports a failing case with details", fn() {
         let r =
@@ -260,6 +297,26 @@ pub fn suites() {
             expect(third.outcome) |> to_equal(Skipped)
           }
           _ -> panic as "expected three results"
+        }
+      }),
+      it("classifies a retry pass as flaky instead of passed", fn() {
+        reset_flaky()
+        let r =
+          runner.run_with_retries(
+            [suite("retry", [it("eventually passes", fail_once)])],
+            fn(_event: Event) { Nil },
+            runner.Config(Some(30_000), False),
+            1,
+          )
+        case r.cases {
+          [result] -> {
+            case result.outcome {
+              Flaky(attempts: 2, ..) -> Nil
+              _ -> panic as "expected a flaky result after two attempts"
+            }
+            expect(report.has_failures(r)) |> to_be_true()
+          }
+          _ -> panic as "expected one retry result"
         }
       }),
       it("times out slow cases when configured", fn() {

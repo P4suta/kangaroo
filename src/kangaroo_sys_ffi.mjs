@@ -8,9 +8,15 @@ export function now_ms() {
 }
 
 export function env(name) {
-  if (typeof process !== "undefined" && process.env) {
-    const value = process.env[name];
-    return value === undefined ? Option$None$const : new Some(value);
+  try {
+    if (typeof process !== "undefined" && process.env) {
+      const value = process.env[name];
+      return value === undefined ? Option$None$const : new Some(value);
+    }
+  } catch {
+    // Deno denies environment reads unless the caller granted the specific
+    // variable. Optional configuration must behave as absent, not crash the
+    // complete test runner.
   }
   return Option$None$const;
 }

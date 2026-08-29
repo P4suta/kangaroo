@@ -1,6 +1,10 @@
 import gleam/list
-import kangaroo/expect.{expect, to_be_false, to_be_true, to_equal}
-import kangaroo/suite.{it, it_focused, it_skipped, no_hooks, suite}
+import kangaroo/internal/legacy/expect.{
+  expect, to_be_false, to_be_true, to_equal,
+}
+import kangaroo/internal/legacy/suite.{
+  it, it_focused, it_skipped, no_hooks, suite,
+}
 
 fn empty_body() {
   Nil

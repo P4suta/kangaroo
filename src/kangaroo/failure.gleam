@@ -24,7 +24,11 @@ pub type Failure {
 pub type Outcome {
   Passed
   Failed(failures: List(Failure))
+  /// Failed at least once and then passed within the retry budget.
+  /// A flaky outcome is intentionally considered a run failure.
+  Flaky(failures: List(Failure), attempts: Int)
   Skipped
+  SkippedWithReason(reason: String)
 }
 
 /// Counts a list of outcomes.
@@ -33,7 +37,10 @@ pub fn count(outcomes: List(Outcome)) -> Counts {
     case outcome {
       Passed -> Counts(counts.passed + 1, counts.failed, counts.skipped)
       Failed(_) -> Counts(counts.passed, counts.failed + 1, counts.skipped)
+      Flaky(_, _) -> Counts(counts.passed, counts.failed + 1, counts.skipped)
       Skipped -> Counts(counts.passed, counts.failed, counts.skipped + 1)
+      SkippedWithReason(_) ->
+        Counts(counts.passed, counts.failed, counts.skipped + 1)
     }
   })
 }

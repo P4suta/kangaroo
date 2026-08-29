@@ -1,0 +1,7 @@
+{"protocol_version":1,"type":"discovered","request_id":"discover-1","tests":[{"id":"test/math.gleam::addition_test","name":"addition_test","path":"test/math.gleam","module":"math","line":7,"column":1,"end_line":9,"end_column":2,"tags":["unit"],"timeout_ms":null,"serial":false}]}
+{"protocol_version":1,"type":"started","request_id":"run-1","operation_id":"run-1","operation":"run"}
+{"protocol_version":1,"type":"event","request_id":"run-1","event":{"type":"case_finished","suite":"math","case":"test/math.gleam::addition_test","outcome":{"kind":"passed"},"duration_ms":4}}
+{"protocol_version":1,"type":"completed","request_id":"run-1","exit_code":0}
+{"protocol_version":1,"type":"cancelled","request_id":"cancel-1","operation_id":"watch-1"}
+{"protocol_version":1,"type":"error","request_id":"bad-1","message":"invalid \"request\""}
+{"protocol_version":1,"type":"shutdown","request_id":"shutdown-1"}

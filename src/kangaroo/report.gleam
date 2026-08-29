@@ -1,6 +1,6 @@
 import gleam/list
 import kangaroo/failure.{
-  type Counts, type Failure, type Outcome, Counts, Failed, count,
+  type Counts, type Failure, type Outcome, Counts, Failed, Flaky, count,
 }
 
 /// The result of a single test case run.
@@ -45,6 +45,7 @@ pub fn has_failures(report: Report) -> Bool {
   list.any(report.cases, fn(result) {
     case result.outcome {
       Failed(_) -> True
+      Flaky(_, _) -> True
       _ -> False
     }
   })
