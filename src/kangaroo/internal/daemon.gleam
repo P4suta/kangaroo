@@ -18,7 +18,7 @@ import kangaroo/sys
 
 const erlang_input_poll_ms = 35
 
-const javascript_input_poll_ms = 100
+const javascript_input_poll_ms = 150
 
 const operation_timeout_ms = 604_800_000
 
