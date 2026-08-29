@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -11,6 +13,7 @@ permissions:
 
 jobs:
   release-please:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@v4
@@ -18,3 +21,31 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  refresh-cli-manifest:
+    # After a release, the cli's committed manifest.toml still records the
+    # kangaroo path dependency at the old version, which makes
+    # `gleam deps download` fail until the lock is regenerated. Regenerate
+    # it against the released version and push the result to main.
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          gleam-version: "1.18.1"
+      - name: Regenerate the cli manifest
+        working-directory: ./cli
+        run: gleam deps update
+      - name: Commit the refreshed manifest
+        run: |
+          git config user.name "kangaroo bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cli/manifest.toml
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: refresh the cli manifest after release"
+            git push
+          fi
