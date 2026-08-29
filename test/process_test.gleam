@@ -1,7 +1,5 @@
 import gleam/string
 import kangaroo/internal/fs
-import kangaroo/internal/legacy/expect.{expect, to_be_true, to_equal}
-import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/internal/process.{
   ProcessCancelled, ProcessFailed, ProcessFinished, ProcessOutput,
   ProcessRunning,
@@ -86,89 +84,65 @@ pub fn closed_stdin_terminates_process_tree_test() {
   }
 }
 
-pub fn suites() {
-  [
-    suite("cancellable child processes", [
-      it("polls a process to completion and captures output", fn() {
-        let assert Ok(handle) =
-          process.start(
-            ".",
-            sleeper_executable(),
-            sleeper_arguments(10),
-            [],
-            2000,
-          )
-        let assert ProcessFinished(completed) = await_terminal(handle, 2000)
-        expect(completed.exit_code) |> to_equal(0)
-        expect(completed.output) |> to_equal("ready")
-      }),
-      it("cancels a running process without publishing completion", fn() {
-        let assert Ok(handle) =
-          process.start(
-            ".",
-            sleeper_executable(),
-            sleeper_arguments(5000),
-            [],
-            10_000,
-          )
-        fs.sleep(25)
-        let started = sys.now_ms()
-        process.cancel(handle)
-        expect(await_terminal(handle, 1000)) |> to_equal(ProcessCancelled)
-        expect(sys.now_ms() - started < 1000) |> to_be_true()
-      }),
-      it("streams output before the child process completes", fn() {
-        let assert Ok(handle) =
-          process.start(
-            ".",
-            sleeper_executable(),
-            sleeper_arguments(2000),
-            [],
-            5000,
-          )
-        let assert ProcessOutput(output) = await_output(handle, 2000)
-        expect(output) |> to_equal("ready")
-        process.cancel(handle)
-        let assert ProcessCancelled = await_terminal(handle, 1000)
-        Nil
-      }),
-      it(
-        "writes stdin to a running child without closing its process tree",
-        fn() {
-          let assert Ok(handle) =
-            process.start(".", sleeper_executable(), echo_arguments(), [], 2000)
-          process.write(handle, "kangaroo protocol\n")
-          let assert ProcessFinished(completed) = await_terminal(handle, 2000)
-          expect(completed.exit_code) |> to_equal(0)
-          expect(completed.output) |> to_equal("kangaroo protocol\n")
-        },
-      ),
-      it("cancels descendants in the same process tree", fn() {
-        let marker = tree_marker()
-        let assert Ok(handle) =
-          process.start(
-            ".",
-            sleeper_executable(),
-            tree_arguments(marker),
-            [],
-            10_000,
-          )
-        fs.sleep(150)
-        process.cancel(handle)
-        let assert ProcessCancelled = await_terminal(handle, 1000)
-        fs.sleep(700)
-        let survived = fs.exists(marker)
-        case survived {
-          True -> {
-            let _ = fs.remove_file(marker)
-            Nil
-          }
-          False -> Nil
-        }
-        expect(survived) |> to_equal(False)
-      }),
-    ]),
-  ]
+pub fn child_process_completion_captures_output_test() {
+  let assert Ok(handle) =
+    process.start(".", sleeper_executable(), sleeper_arguments(10), [], 2000)
+  let assert ProcessFinished(completed) = await_terminal(handle, 2000)
+  assert completed.exit_code == 0
+  assert completed.output == "ready"
+}
+
+pub fn child_process_cancellation_does_not_publish_completion_test() {
+  let assert Ok(handle) =
+    process.start(
+      ".",
+      sleeper_executable(),
+      sleeper_arguments(5000),
+      [],
+      10_000,
+    )
+  fs.sleep(25)
+  let started = sys.now_ms()
+  process.cancel(handle)
+  assert await_terminal(handle, 1000) == ProcessCancelled
+  assert sys.now_ms() - started < 1000
+}
+
+pub fn child_process_streams_output_before_completion_test() {
+  let assert Ok(handle) =
+    process.start(".", sleeper_executable(), sleeper_arguments(2000), [], 5000)
+  let assert ProcessOutput(output) = await_output(handle, 2000)
+  assert output == "ready"
+  process.cancel(handle)
+  let assert ProcessCancelled = await_terminal(handle, 1000)
+}
+
+pub fn child_process_accepts_stdin_without_closing_its_tree_test() {
+  let assert Ok(handle) =
+    process.start(".", sleeper_executable(), echo_arguments(), [], 2000)
+  process.write(handle, "kangaroo protocol\n")
+  let assert ProcessFinished(completed) = await_terminal(handle, 2000)
+  assert completed.exit_code == 0
+  assert completed.output == "kangaroo protocol\n"
+}
+
+pub fn child_process_cancellation_terminates_descendants_test() {
+  let marker = tree_marker()
+  let assert Ok(handle) =
+    process.start(".", sleeper_executable(), tree_arguments(marker), [], 10_000)
+  fs.sleep(150)
+  process.cancel(handle)
+  let assert ProcessCancelled = await_terminal(handle, 1000)
+  fs.sleep(700)
+  let survived = fs.exists(marker)
+  case survived {
+    True -> {
+      let _ = fs.remove_file(marker)
+      Nil
+    }
+    False -> Nil
+  }
+  assert survived == False
 }
 
 fn await_terminal(handle: Int, timeout_ms: Int) -> process.ProcessPoll {

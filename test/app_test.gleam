@@ -3,42 +3,33 @@ import kangaroo/event.{type Event, CaseOutput, RunStarted}
 import kangaroo/failure.{Failed, Passed, UnexpectedError}
 import kangaroo/internal/app.{Success}
 import kangaroo/internal/config.{Always, Failures, Never}
-import kangaroo/internal/legacy/expect.{expect, to_equal}
-import kangaroo/internal/legacy/suite.{it, suite}
 
 fn discard(_event: Event) {
   Nil
 }
 
-pub fn suites() {
-  [
-    suite("v1 application", [
-      it("discovers and runs a project test root end to end", fn() {
-        expect(app.run_project(".", ["test/v1"], discard))
-        |> to_equal(Success)
-      }),
-      it("classifies an empty selection as an infrastructure error", fn() {
-        case app.run_sources([], ["test"], discard) {
-          app.InfrastructureFailure("no tests found") -> Nil
-          _ -> panic as "expected no-tests infrastructure failure"
-        }
-      }),
-      it("applies show_output only to captured output events", fn() {
-        let passing = CaseOutput("math", "pass", "out", "", Passed)
-        let failing =
-          CaseOutput(
-            "math",
-            "fail",
-            "out",
-            "err",
-            Failed([UnexpectedError("panic", "boom", None)]),
-          )
-        expect(app.include_event(Failures, passing)) |> to_equal(False)
-        expect(app.include_event(Failures, failing)) |> to_equal(True)
-        expect(app.include_event(Always, passing)) |> to_equal(True)
-        expect(app.include_event(Never, failing)) |> to_equal(False)
-        expect(app.include_event(Never, RunStarted(1, 1))) |> to_equal(True)
-      }),
-    ]),
-  ]
+pub fn project_test_root_runs_end_to_end_test() {
+  assert app.run_project(".", ["test/v1"], discard) == Success
+}
+
+pub fn empty_selection_is_an_infrastructure_error_test() {
+  let assert app.InfrastructureFailure("no tests found") =
+    app.run_sources([], ["test"], discard)
+}
+
+pub fn show_output_applies_only_to_captured_output_events_test() {
+  let passing = CaseOutput("math", "pass", "out", "", Passed)
+  let failing =
+    CaseOutput(
+      "math",
+      "fail",
+      "out",
+      "err",
+      Failed([UnexpectedError("panic", "boom", None)]),
+    )
+  assert !app.include_event(Failures, passing)
+  assert app.include_event(Failures, failing)
+  assert app.include_event(Always, passing)
+  assert !app.include_event(Never, failing)
+  assert app.include_event(Never, RunStarted(1, 1))
 }

@@ -1,51 +1,44 @@
 import kangaroo/failure.{Counts, Failed, Passed, Skipped}
-import kangaroo/internal/legacy/expect.{
-  expect, to_be_false, to_be_true, to_equal,
-}
-import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/report.{CaseResult, has_failures, summarize_counts, summary}
 
-pub fn suites() {
-  [
-    suite("report", [
-      it("starts empty", fn() {
-        let r = report.empty()
-        expect(report.case_count(r)) |> to_equal(0)
-      }),
-      it("summarises results", fn() {
-        let r =
-          report.empty()
-          |> report.append(CaseResult("s", "passes", Passed, 1))
-          |> report.append(CaseResult("s", "fails", Failed([]), 2))
-          |> report.append(CaseResult("s", "skips", Skipped, 0))
+pub fn report_starts_empty_test() {
+  assert report.case_count(report.empty()) == 0
+}
 
-        let s = summary(r, 10)
-        expect(s.passed) |> to_equal(1)
-        expect(s.failed) |> to_equal(1)
-        expect(s.skipped) |> to_equal(1)
-        expect(s.duration_ms) |> to_equal(10)
-      }),
-      it("detects failures", fn() {
-        let r =
-          report.empty()
-          |> report.append(CaseResult("s", "a", Passed, 1))
-          |> report.append(CaseResult("s", "b", Failed([]), 1))
-        expect(has_failures(r)) |> to_be_true()
-      }),
-      it("is clean when nothing failed", fn() {
-        let r =
-          report.empty()
-          |> report.append(CaseResult("s", "a", Passed, 1))
-          |> report.append(CaseResult("s", "b", Skipped, 0))
-        expect(has_failures(r)) |> to_be_false()
-      }),
-      it("rolls up counts", fn() {
-        let s = summarize_counts(Counts(3, 2, 1), 42)
-        expect(s.passed) |> to_equal(3)
-        expect(s.failed) |> to_equal(2)
-        expect(s.skipped) |> to_equal(1)
-        expect(s.duration_ms) |> to_equal(42)
-      }),
-    ]),
-  ]
+pub fn report_summarises_results_test() {
+  let report =
+    report.empty()
+    |> report.append(CaseResult("s", "passes", Passed, 1))
+    |> report.append(CaseResult("s", "fails", Failed([]), 2))
+    |> report.append(CaseResult("s", "skips", Skipped, 0))
+
+  let summary = summary(report, 10)
+  assert summary.passed == 1
+  assert summary.failed == 1
+  assert summary.skipped == 1
+  assert summary.duration_ms == 10
+}
+
+pub fn report_detects_failures_test() {
+  let report =
+    report.empty()
+    |> report.append(CaseResult("s", "a", Passed, 1))
+    |> report.append(CaseResult("s", "b", Failed([]), 1))
+  assert has_failures(report)
+}
+
+pub fn report_without_failures_is_clean_test() {
+  let report =
+    report.empty()
+    |> report.append(CaseResult("s", "a", Passed, 1))
+    |> report.append(CaseResult("s", "b", Skipped, 0))
+  assert !has_failures(report)
+}
+
+pub fn report_rolls_up_counts_test() {
+  let summary = summarize_counts(Counts(3, 2, 1), 42)
+  assert summary.passed == 3
+  assert summary.failed == 2
+  assert summary.skipped == 1
+  assert summary.duration_ms == 42
 }

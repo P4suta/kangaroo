@@ -1,7 +1,5 @@
 import gleam/option.{None}
 import kangaroo/internal/index.{type IndexedTest, IndexedTest}
-import kangaroo/internal/legacy/expect.{expect, to_equal}
-import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/internal/selector.{Id, Location, Path, Tag}
 
 fn indexed(
@@ -35,47 +33,42 @@ fn tests() {
   ]
 }
 
-pub fn suites() {
-  [
-    suite("selectors", [
-      it("parses ids tags files and file locations", fn() {
-        expect(selector.parse("test/a_test.gleam::first_test"))
-        |> to_equal(Ok(Id("test/a_test.gleam::first_test")))
-        expect(selector.parse("tag:unit")) |> to_equal(Ok(Tag("unit")))
-        expect(selector.parse("test\\a_test.gleam"))
-        |> to_equal(Ok(Path("test/a_test.gleam")))
-        expect(selector.parse("test/a_test.gleam:9"))
-        |> to_equal(Ok(Location("test/a_test.gleam", 9)))
-      }),
-      it("uses the union of multiple selectors without reordering", fn() {
-        let assert [_, second, third] = tests()
-        let selected =
-          selector.select(
-            tests(),
-            [Location("test/a_test.gleam", 9), Tag("slow")],
-            [],
-            [],
-          )
-        expect(selected)
-        |> to_equal([second, third])
-      }),
-      it("matches a file selector to all tests in that file", fn() {
-        let assert [first, second, third] = tests()
-        expect(selector.select(tests(), [Path("test/a_test.gleam")], [], []))
-        |> to_equal([first, second])
-        expect(selector.select(tests(), [Path("test/")], [], []))
-        |> to_equal([first, second, third])
-      }),
-      it("treats include tags as OR and lets excludes win", fn() {
-        let assert [first, second, third] = tests()
-        expect(selector.select(tests(), [], ["unit", "database"], ["slow"]))
-        |> to_equal([first, second])
-        expect(selector.select(tests(), [Id(third.id)], [], ["slow"]))
-        |> to_equal([])
-      }),
-      it("selects all tests when no selectors or tag filters are present", fn() {
-        expect(selector.select(tests(), [], [], [])) |> to_equal(tests())
-      }),
-    ]),
-  ]
+pub fn selector_parses_ids_tags_files_and_locations_test() {
+  assert selector.parse("test/a_test.gleam::first_test")
+    == Ok(Id("test/a_test.gleam::first_test"))
+  assert selector.parse("tag:unit") == Ok(Tag("unit"))
+  assert selector.parse("test\\a_test.gleam") == Ok(Path("test/a_test.gleam"))
+  assert selector.parse("test/a_test.gleam:9")
+    == Ok(Location("test/a_test.gleam", 9))
+}
+
+pub fn selector_uses_union_without_reordering_test() {
+  let assert [_, second, third] = tests()
+  let selected =
+    selector.select(
+      tests(),
+      [Location("test/a_test.gleam", 9), Tag("slow")],
+      [],
+      [],
+    )
+  assert selected == [second, third]
+}
+
+pub fn file_selector_matches_all_tests_in_file_test() {
+  let assert [first, second, third] = tests()
+  assert selector.select(tests(), [Path("test/a_test.gleam")], [], [])
+    == [first, second]
+  assert selector.select(tests(), [Path("test/")], [], [])
+    == [first, second, third]
+}
+
+pub fn tag_selector_uses_include_or_and_exclude_precedence_test() {
+  let assert [first, second, third] = tests()
+  assert selector.select(tests(), [], ["unit", "database"], ["slow"])
+    == [first, second]
+  assert selector.select(tests(), [Id(third.id)], [], ["slow"]) == []
+}
+
+pub fn empty_selector_and_tags_select_all_tests_test() {
+  assert selector.select(tests(), [], [], []) == tests()
 }

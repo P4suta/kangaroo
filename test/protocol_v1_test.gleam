@@ -1,8 +1,6 @@
 import gleam/option.{None}
 import gleam/string
 import kangaroo/internal/index.{IndexedTest}
-import kangaroo/internal/legacy/expect.{expect, to_be_true, to_equal}
-import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/internal/protocol.{
   CancelRequest, DiscoverRequest, RunRequest, ShutdownRequest, WatchRequest,
 }
@@ -24,85 +22,71 @@ fn indexed() {
   )
 }
 
-pub fn suites() {
-  [
-    suite("protocol v1", [
-      it("decodes every daemon request with defaults", fn() {
-        expect(protocol.decode_request(
-          "{\"protocol_version\":1,\"id\":\"a\",\"command\":\"discover\"}",
-        ))
-        |> to_equal(Ok(DiscoverRequest("a")))
-        expect(protocol.decode_request(
-          "{\"protocol_version\":1,\"id\":\"b\",\"command\":\"run\",\"selectors\":[\"tag:unit\"],\"include_tags\":[\"fast\"]}",
-        ))
-        |> to_equal(Ok(RunRequest("b", ["tag:unit"], ["fast"], [])))
-        expect(protocol.decode_request(
-          "{\"protocol_version\":1,\"id\":\"c\",\"command\":\"watch\"}",
-        ))
-        |> to_equal(Ok(WatchRequest("c", [], [], [])))
-        expect(protocol.decode_request(
-          "{\"protocol_version\":1,\"id\":\"d\",\"command\":\"cancel\",\"operation_id\":\"b\"}",
-        ))
-        |> to_equal(Ok(CancelRequest("d", "b")))
-        expect(protocol.decode_request(
-          "{\"protocol_version\":1,\"id\":\"e\",\"command\":\"shutdown\"}",
-        ))
-        |> to_equal(Ok(ShutdownRequest("e")))
-      }),
-      it("rejects unsupported protocol versions and commands", fn() {
-        expect(protocol.decode_request(
-          "{\"protocol_version\":2,\"id\":\"a\",\"command\":\"discover\"}",
-        ))
-        |> to_equal(Error("unsupported protocol_version 2; expected 1"))
-        expect(protocol.decode_request(
-          "{\"protocol_version\":1,\"id\":\"a\",\"command\":\"erase\"}",
-        ))
-        |> to_equal(Error("unknown daemon command `erase`"))
-      }),
-      it("encodes discovered tests with normalised one-based ranges", fn() {
-        let line = protocol.encode_discovered("req-1", [indexed()])
-        expect(string.contains(line, "\"protocol_version\":1"))
-        |> to_be_true()
-        expect(string.contains(line, "\"request_id\":\"req-1\""))
-        |> to_be_true()
-        expect(string.contains(line, "\"line\":7")) |> to_be_true()
-        expect(string.contains(line, "\"end_line\":9")) |> to_be_true()
-        expect(string.contains(line, "test/math.gleam::addition_test"))
-        |> to_be_true()
-      }),
-      it("encodes operation lifecycle messages with stable ids", fn() {
-        let started = protocol.encode_started("request-1", "run-1", "run")
-        expect(string.contains(started, "\"type\":\"started\""))
-        |> to_be_true()
-        expect(string.contains(started, "\"operation_id\":\"run-1\""))
-        |> to_be_true()
-        expect(string.contains(started, "\"operation\":\"run\""))
-        |> to_be_true()
-        let cancelled = protocol.encode_cancelled("request-2", "run-1")
-        expect(string.contains(cancelled, "\"type\":\"cancelled\""))
-        |> to_be_true()
-        expect(string.contains(cancelled, "\"operation_id\":\"run-1\""))
-        |> to_be_true()
-      }),
-      it("forwards only validated event envelopes from daemon children", fn() {
-        expect(protocol.forwardable_event(
-          "{\"protocol_version\":1,\"type\":\"event\",\"request_id\":\"run-1\",\"event\":{}}",
-          "run-1",
-        ))
-        |> to_equal(True)
-        expect(protocol.forwardable_event("Compiling project", "run-1"))
-        |> to_equal(False)
-        expect(protocol.forwardable_event(
-          "{\"protocol_version\":1,\"type\":\"completed\",\"request_id\":\"run-1\"}",
-          "run-1",
-        ))
-        |> to_equal(False)
-        expect(protocol.forwardable_event(
-          "{\"protocol_version\":1,\"type\":\"event\",\"request_id\":\"other\",\"event\":{}}",
-          "run-1",
-        ))
-        |> to_equal(False)
-      }),
-    ]),
-  ]
+pub fn protocol_decodes_every_daemon_request_with_defaults_test() {
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"a\",\"command\":\"discover\"}",
+    )
+    == Ok(DiscoverRequest("a"))
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"b\",\"command\":\"run\",\"selectors\":[\"tag:unit\"],\"include_tags\":[\"fast\"]}",
+    )
+    == Ok(RunRequest("b", ["tag:unit"], ["fast"], []))
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"c\",\"command\":\"watch\"}",
+    )
+    == Ok(WatchRequest("c", [], [], []))
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"d\",\"command\":\"cancel\",\"operation_id\":\"b\"}",
+    )
+    == Ok(CancelRequest("d", "b"))
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"e\",\"command\":\"shutdown\"}",
+    )
+    == Ok(ShutdownRequest("e"))
+}
+
+pub fn protocol_rejects_unsupported_versions_and_commands_test() {
+  assert protocol.decode_request(
+      "{\"protocol_version\":2,\"id\":\"a\",\"command\":\"discover\"}",
+    )
+    == Error("unsupported protocol_version 2; expected 1")
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"a\",\"command\":\"erase\"}",
+    )
+    == Error("unknown daemon command `erase`")
+}
+
+pub fn protocol_encodes_discovery_with_one_based_ranges_test() {
+  let line = protocol.encode_discovered("req-1", [indexed()])
+  assert string.contains(line, "\"protocol_version\":1")
+  assert string.contains(line, "\"request_id\":\"req-1\"")
+  assert string.contains(line, "\"line\":7")
+  assert string.contains(line, "\"end_line\":9")
+  assert string.contains(line, "test/math.gleam::addition_test")
+}
+
+pub fn protocol_encodes_operation_lifecycle_with_stable_ids_test() {
+  let started = protocol.encode_started("request-1", "run-1", "run")
+  assert string.contains(started, "\"type\":\"started\"")
+  assert string.contains(started, "\"operation_id\":\"run-1\"")
+  assert string.contains(started, "\"operation\":\"run\"")
+  let cancelled = protocol.encode_cancelled("request-2", "run-1")
+  assert string.contains(cancelled, "\"type\":\"cancelled\"")
+  assert string.contains(cancelled, "\"operation_id\":\"run-1\"")
+}
+
+pub fn protocol_forwards_only_validated_child_event_envelopes_test() {
+  assert protocol.forwardable_event(
+    "{\"protocol_version\":1,\"type\":\"event\",\"request_id\":\"run-1\",\"event\":{}}",
+    "run-1",
+  )
+  assert !protocol.forwardable_event("Compiling project", "run-1")
+  assert !protocol.forwardable_event(
+    "{\"protocol_version\":1,\"type\":\"completed\",\"request_id\":\"run-1\"}",
+    "run-1",
+  )
+  assert !protocol.forwardable_event(
+    "{\"protocol_version\":1,\"type\":\"event\",\"request_id\":\"other\",\"event\":{}}",
+    "run-1",
+  )
 }

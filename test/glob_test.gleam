@@ -1,30 +1,17 @@
 import kangaroo/internal/glob
-import kangaroo/internal/legacy/expect.{expect, to_equal}
-import kangaroo/internal/legacy/suite.{it, suite}
 
-pub fn suites() {
-  [
-    suite("glob", [
-      it("matches star and question only inside one path segment", fn() {
-        expect(glob.matches("test/*_test.gleam", "test/math_test.gleam"))
-        |> to_equal(True)
-        expect(glob.matches("test/?_test.gleam", "test/a_test.gleam"))
-        |> to_equal(True)
-        expect(glob.matches("test/*_test.gleam", "test/unit/a_test.gleam"))
-        |> to_equal(False)
-      }),
-      it("matches globstar across zero or more path segments", fn() {
-        expect(glob.matches("src/**/*.gleam", "src/app.gleam"))
-        |> to_equal(True)
-        expect(glob.matches("src/**/*.gleam", "src/app/http.gleam"))
-        |> to_equal(True)
-        expect(glob.matches("test/generated/**", "test/generated/a/b.gleam"))
-        |> to_equal(True)
-      }),
-      it("normalises windows separators", fn() {
-        expect(glob.matches("test/**/*.gleam", "test\\unit\\math.gleam"))
-        |> to_equal(True)
-      }),
-    ]),
-  ]
+pub fn star_and_question_match_only_one_path_segment_test() {
+  assert glob.matches("test/*_test.gleam", "test/math_test.gleam")
+  assert glob.matches("test/?_test.gleam", "test/a_test.gleam")
+  assert !glob.matches("test/*_test.gleam", "test/unit/a_test.gleam")
+}
+
+pub fn globstar_matches_zero_or_more_path_segments_test() {
+  assert glob.matches("src/**/*.gleam", "src/app.gleam")
+  assert glob.matches("src/**/*.gleam", "src/app/http.gleam")
+  assert glob.matches("test/generated/**", "test/generated/a/b.gleam")
+}
+
+pub fn glob_normalises_windows_separators_test() {
+  assert glob.matches("test/**/*.gleam", "test\\unit\\math.gleam")
 }

@@ -2,8 +2,6 @@ import gleam/list
 import gleam/option.{None}
 import kangaroo/internal/dependencies.{All, Selected}
 import kangaroo/internal/index.{IndexedModule, IndexedTest}
-import kangaroo/internal/legacy/expect.{expect, to_equal}
-import kangaroo/internal/legacy/suite.{it, suite}
 
 fn module(
   path: String,
@@ -48,33 +46,26 @@ fn graph() {
   ]
 }
 
-pub fn suites() {
-  [
-    suite("dependency selection", [
-      it("selects transitive dependants in stable source order", fn() {
-        let assert Selected(tests) =
-          dependencies.affected(graph(), ["src/app/math.gleam"])
-        expect(list.map(tests, fn(indexed) { indexed.id }))
-        |> to_equal([
-          "test/math_test.gleam::unit_test",
-          "test/service_test.gleam::first_test",
-          "test/service_test.gleam::second_test",
-        ])
-      }),
-      it("selects only a changed test module", fn() {
-        let assert Selected(tests) =
-          dependencies.affected(graph(), ["test/other_test.gleam"])
-        expect(list.map(tests, fn(indexed) { indexed.id }))
-        |> to_equal(["test/other_test.gleam::other_test"])
-      }),
-      it("falls back to all tests for FFI config and unknown changes", fn() {
-        expect(dependencies.affected(graph(), ["src/app_ffi.erl"]))
-        |> to_equal(All)
-        expect(dependencies.affected(graph(), ["gleam.toml"]))
-        |> to_equal(All)
-        expect(dependencies.affected(graph(), ["priv/data.txt"]))
-        |> to_equal(All)
-      }),
-    ]),
-  ]
+pub fn dependency_selection_finds_transitive_dependants_in_source_order_test() {
+  let assert Selected(tests) =
+    dependencies.affected(graph(), ["src/app/math.gleam"])
+  assert list.map(tests, fn(indexed) { indexed.id })
+    == [
+      "test/math_test.gleam::unit_test",
+      "test/service_test.gleam::first_test",
+      "test/service_test.gleam::second_test",
+    ]
+}
+
+pub fn dependency_selection_limits_changed_test_module_test() {
+  let assert Selected(tests) =
+    dependencies.affected(graph(), ["test/other_test.gleam"])
+  assert list.map(tests, fn(indexed) { indexed.id })
+    == ["test/other_test.gleam::other_test"]
+}
+
+pub fn dependency_selection_falls_back_for_ffi_config_and_unknown_changes_test() {
+  assert dependencies.affected(graph(), ["src/app_ffi.erl"]) == All
+  assert dependencies.affected(graph(), ["gleam.toml"]) == All
+  assert dependencies.affected(graph(), ["priv/data.txt"]) == All
 }
