@@ -135,14 +135,13 @@ function freezeTree(child) {
     globalThis.process.platform === "win32"
   ) return descendants(child?.pid);
   const rootPid = child.pid;
-  let known = descendants(rootPid);
+  // The spawned root is a process-group leader. Stop the whole group before
+  // walking the process table so normal descendants cannot race the snapshot.
+  // A single walk is then sufficient to find children that deliberately
+  // detached into a different group, keeping cancellation within 250 ms even
+  // when a hosted macOS runner is under load.
   signalPidOrGroup(rootPid, "SIGSTOP");
-  for (const pid of known) signalPidOrGroup(pid, "SIGSTOP");
-  // uv_spawn may have created a child while its parent was entering the
-  // stopped state. Let that kernel-visible relationship settle before the
-  // final tree snapshot; once observed, every discovered group is frozen too.
-  Atomics.wait(terminationPause, 0, 0, 5);
-  known = [...new Set([...known, ...descendants(rootPid)])];
+  const known = descendants(rootPid);
   for (const pid of known) signalPidOrGroup(pid, "SIGSTOP");
   return known;
 }
