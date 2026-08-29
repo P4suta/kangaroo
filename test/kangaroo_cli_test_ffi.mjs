@@ -78,7 +78,11 @@ export function closed_stdin_tree_arguments(marker) {
     const outer = `Deno.stdin.close(); new Deno.Command(Deno.execPath(), { args: ["eval", ${JSON.stringify(child)}], stdout: "null", stderr: "null" }).spawn(); Deno.stdout.writeSync(new TextEncoder().encode("ready")); await new Promise(resolve => setTimeout(resolve, 5000));`;
     return toList(["eval", outer]);
   }
-  const child = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "survived"), 400);`;
+  // Windows does not consistently report EPIPE when this process closes the
+  // read end. Delay the marker past the process timeout so the test can verify
+  // that the timeout fallback still terminates the complete taskkill tree.
+  const markerDelay = globalThis.process.platform === "win32" ? 3500 : 400;
+  const child = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "survived"), ${markerDelay});`;
   const outer = `const fs = require("node:fs"); const input = process.stdin; input.once("close", () => { const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(child)}], { detached: true, stdio: "ignore" }); child.unref(); fs.writeSync(1, "ready"); setTimeout(() => {}, 5000); }); input.destroy(); fs.closeSync(0);`;
   return toList(["-e", outer]);
 }

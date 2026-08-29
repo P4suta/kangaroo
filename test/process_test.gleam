@@ -37,22 +37,40 @@ pub fn closed_stdin_terminates_process_tree_test() {
   case vm.runtime_name() {
     "node" -> {
       let marker = tree_marker()
+      let windows = vm.operating_system() == "windows"
+      // Windows named pipes can accept a write after the reader has closed
+      // without reporting EPIPE. The bounded process timeout is the portable
+      // fallback there; Unix runtimes must still report the closed pipe
+      // immediately.
+      let process_timeout = case windows {
+        True -> 2000
+        False -> 10_000
+      }
       let assert Ok(handle) =
         process.start(
           ".",
           sleeper_executable(),
           closed_stdin_tree_arguments(marker),
           [],
-          10_000,
+          process_timeout,
         )
       let assert ProcessOutput("ready") = await_output(handle, 2000)
       process.write(handle, "must fail\n")
-      let assert ProcessFailed(message) = await_terminal(handle, 2000)
-      case string.contains(message, "test polling timed out") {
-        True -> panic as message
-        False -> Nil
+      let assert ProcessFailed(message) = await_terminal(handle, 2500)
+      case windows {
+        True -> {
+          assert message == "process timed out"
+        }
+        False ->
+          case string.contains(message, "test polling timed out") {
+            True -> panic as message
+            False -> Nil
+          }
       }
-      fs.sleep(700)
+      fs.sleep(case windows {
+        True -> 1800
+        False -> 700
+      })
       let survived = fs.exists(marker)
       case survived {
         True -> {
