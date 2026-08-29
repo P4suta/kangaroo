@@ -92,12 +92,15 @@ fn numbered(operations: List(Operation)) -> List(DiffLine) {
     list.fold(operations, #(0, 0, []), fn(state, operation) {
       let #(expected, actual, acc) = state
       case operation {
-        Keep(text) ->
-          #(expected + 1, actual + 1, [Kept(expected + 1, text), ..acc])
-        Remove(text) ->
-          #(expected + 1, actual, [Removed(expected + 1, text), ..acc])
-        Add(text) ->
-          #(expected, actual + 1, [Added(actual + 1, text), ..acc])
+        Keep(text) -> #(expected + 1, actual + 1, [
+          Kept(expected + 1, text),
+          ..acc
+        ])
+        Remove(text) -> #(expected + 1, actual, [
+          Removed(expected + 1, text),
+          ..acc
+        ])
+        Add(text) -> #(expected, actual + 1, [Added(actual + 1, text), ..acc])
       }
     })
   list.reverse(lines)

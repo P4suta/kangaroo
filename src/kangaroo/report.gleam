@@ -54,9 +54,7 @@ pub fn has_failures(report: Report) -> Bool {
 pub fn summary(report: Report, duration_ms: Int) -> Summary {
   let counts = count(list.map(report.cases, fn(result) { result.outcome }))
   let suite_failed =
-    list.length(
-      list.filter(report.suite_failures, fn(entry) { entry.1 != [] }),
-    )
+    list.length(list.filter(report.suite_failures, fn(entry) { entry.1 != [] }))
   summarize_counts(
     Counts(counts.passed, counts.failed + suite_failed, counts.skipped),
     duration_ms,

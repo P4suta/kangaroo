@@ -3,8 +3,8 @@ import gleam/list
 import kangaroo/expect.{expect, to_be_true, to_equal}
 import kangaroo/suite.{it, suite}
 import kangaroo_cli/watcher.{
-  type FileMeta, Added, FileMeta, Modified, Removed, diff, diff_contents,
-  insert, snapshot,
+  type FileMeta, Added, FileMeta, Modified, Removed, diff, diff_contents, insert,
+  snapshot,
 }
 
 fn meta(mtime: Int, size: Int) -> FileMeta {

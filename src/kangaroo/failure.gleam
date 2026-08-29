@@ -17,11 +17,7 @@ pub type Failure {
   /// A boolean condition evaluated to `False`.
   AssertionFailed(message: String, location: Option(Location))
   /// The case body panicked (or timed out).
-  UnexpectedError(
-    name: String,
-    message: String,
-    location: Option(Location),
-  )
+  UnexpectedError(name: String, message: String, location: Option(Location))
 }
 
 /// The outcome of a single test case.

@@ -42,12 +42,15 @@ pub fn suites() {
             None,
           )
         let events = event_buffer.take()
-        let finished = list.length(list.filter(events, fn(event: Event) {
-          case event {
-            CaseFinished(..) -> True
-            _ -> False
-          }
-        }))
+        let finished =
+          list.length(
+            list.filter(events, fn(event: Event) {
+              case event {
+                CaseFinished(..) -> True
+                _ -> False
+              }
+            }),
+          )
         case result {
           Ok(has_failures) -> {
             expect(finished > 0) |> to_be_true()

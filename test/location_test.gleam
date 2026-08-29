@@ -1,10 +1,12 @@
 import gleam/option.{None, Some}
-import kangaroo/suite.{it, suite}
 import kangaroo/expect.{expect, to_be_false, to_be_true, to_equal}
-import kangaroo/failure.{AssertionFailed, EqualityMismatch, UnexpectedError, attach}
+import kangaroo/failure.{
+  AssertionFailed, EqualityMismatch, UnexpectedError, attach,
+}
 import kangaroo/location.{
   Location, from_erlang_stack, from_js_stack, is_framework_file,
 }
+import kangaroo/suite.{it, suite}
 
 pub fn suites() {
   [
@@ -38,12 +40,10 @@ pub fn suites() {
       it("returns none for an empty erlang stack", fn() {
         expect(from_erlang_stack("")) |> to_equal(None)
       }),
-      it("returns none when every erlang frame is framework code",
-        fn() {
-          expect(from_erlang_stack("src/kangaroo/expect.gleam:3"))
-          |> to_equal(None)
-        },
-      ),
+      it("returns none when every erlang frame is framework code", fn() {
+        expect(from_erlang_stack("src/kangaroo/expect.gleam:3"))
+        |> to_equal(None)
+      }),
       it("ignores lines without a line number", fn() {
         let stack = "not a location\n" <> "test/foo_test.gleam:7"
         expect(from_erlang_stack(stack))
@@ -55,25 +55,28 @@ pub fn suites() {
           <> "    at toBeTrue (file:///home/u/proj/build/dev/javascript/kangaroo/kangaroo/expect.mjs:18:5)\n"
           <> "    at main (file:///home/u/proj/build/dev/javascript/kangaroo/runner_test.mjs:12:7)"
         expect(from_js_stack(stack))
-        |> to_equal(Some(Location(
-          "/home/u/proj/build/dev/javascript/kangaroo/runner_test.mjs",
-          12,
-        )))
+        |> to_equal(
+          Some(Location(
+            "/home/u/proj/build/dev/javascript/kangaroo/runner_test.mjs",
+            12,
+          )),
+        )
       }),
       it("parses a v8 stack without parens", fn() {
         let stack =
           "Error: boom\n"
           <> "    at file:///home/u/proj/build/dev/javascript/myapp/foo_test.mjs:3:1"
         expect(from_js_stack(stack))
-        |> to_equal(Some(Location(
-          "/home/u/proj/build/dev/javascript/myapp/foo_test.mjs",
-          3,
-        )))
+        |> to_equal(
+          Some(Location(
+            "/home/u/proj/build/dev/javascript/myapp/foo_test.mjs",
+            3,
+          )),
+        )
       }),
       it("skips node internals in v8 stacks", fn() {
         let stack =
-          "Error: boom\n"
-          <> "    at node:internal/main/run_main_module:12:1"
+          "Error: boom\n" <> "    at node:internal/main/run_main_module:12:1"
         expect(from_js_stack(stack)) |> to_equal(None)
       }),
       it("attaches a location to an equality mismatch", fn() {

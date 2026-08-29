@@ -24,7 +24,14 @@ pub fn suites() {
         |> to_equal(Ok(RunOptions(Some("adds"), False, False)))
       }),
       it("parses combined flags in any order", fn() {
-        expect(kangaroo_cli.parse_run_flags(["--fail-fast", "--json", "--name", "adds"]))
+        expect(
+          kangaroo_cli.parse_run_flags([
+            "--fail-fast",
+            "--json",
+            "--name",
+            "adds",
+          ]),
+        )
         |> to_equal(Ok(RunOptions(Some("adds"), True, True)))
       }),
       it("rejects an unknown flag", fn() {

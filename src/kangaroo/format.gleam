@@ -3,9 +3,7 @@ import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
-import kangaroo/diff.{
-  type DiffLine, Added, Kept, Removed, diff_lines_numbered,
-}
+import kangaroo/diff.{type DiffLine, Added, Kept, Removed, diff_lines_numbered}
 import kangaroo/event.{type Event, CaseFinished, RunFinished}
 import kangaroo/failure.{
   type Failure, AssertionFailed, EqualityMismatch, Failed, UnexpectedError,

@@ -8,8 +8,10 @@ import kangaroo/event.{
 import kangaroo/failure.{
   type Failure, type Outcome, Failed, Passed, Skipped, UnexpectedError,
 }
-import kangaroo/isolate.{type Isolated, isolate, Completed, Crashed}
-import kangaroo/report.{type CaseResult, type Report, CaseResult, Report, summary}
+import kangaroo/isolate.{type Isolated, Completed, Crashed, isolate}
+import kangaroo/report.{
+  type CaseResult, type Report, CaseResult, Report, summary,
+}
 import kangaroo/suite.{type Case, type Suite}
 import kangaroo/sys
 
@@ -94,10 +96,7 @@ pub fn run_with_config(
     })
 
   let report =
-    Report(
-      list.append(results, skipped_results),
-      list.reverse(suite_failures),
-    )
+    Report(list.append(results, skipped_results), list.reverse(suite_failures))
   let duration = sys.now_ms() - start
   sink(RunFinished(run_id, summary(report, duration)))
   report
@@ -166,14 +165,13 @@ fn run_suite(
         _ -> Some(after_failures)
       }
       let stopped =
-        stopped
-        || {
-          config.stop_on_first_failure && after_failures != []
-        }
-      sink(SuiteFinished(suite.name, case outcome {
-        None -> Passed
-        Some(failures) -> Failed(failures)
-      }))
+        stopped || { config.stop_on_first_failure && after_failures != [] }
+      sink(
+        SuiteFinished(suite.name, case outcome {
+          None -> Passed
+          Some(failures) -> Failed(failures)
+        }),
+      )
       #(list.reverse(results), outcome, stopped)
     }
     _ -> {
@@ -185,7 +183,12 @@ fn run_suite(
   }
 }
 
-fn run_case(suite: Suite, c: Case, config: Config, sink: fn(Event) -> Nil) -> CaseResult {
+fn run_case(
+  suite: Suite,
+  c: Case,
+  config: Config,
+  sink: fn(Event) -> Nil,
+) -> CaseResult {
   sink(CaseStarted(suite.name, c.name))
   let case_start = sys.now_ms()
   let isolated = isolate(body_for(suite, c), config.case_timeout_ms)
@@ -209,8 +212,9 @@ fn run_hook(hook: Option(fn() -> Nil), config: Config) -> List(Failure) {
     Some(hook) ->
       case isolate(hook, config.case_timeout_ms) {
         Completed(failures) -> failures
-        Crashed(error) ->
-          [UnexpectedError(error.name, error.message, error.location)]
+        Crashed(error) -> [
+          UnexpectedError(error.name, error.message, error.location),
+        ]
       }
   }
 }
@@ -220,11 +224,7 @@ fn outcome_of(isolated: Isolated) -> Outcome {
     Completed([]) -> Passed
     Completed(failures) -> Failed(failures)
     Crashed(error) ->
-      Failed([UnexpectedError(
-        error.name,
-        error.message,
-        error.location,
-      )])
+      Failed([UnexpectedError(error.name, error.message, error.location)])
   }
 }
 
