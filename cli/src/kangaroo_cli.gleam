@@ -1,21 +1,24 @@
 import gleam/io
-import gleam/option.{Some}
 import gleam/result
-import gleam/string
 import kangaroo_cli/app
+import kangaroo_cli/command.{
+  type Command, Help, Run, RunCoverage, Version, Watch,
+}
 import kangaroo_cli/fs
 import kangaroo_cli/terminal
+import kangaroo_cli/vm
 
 /// The entry point of the Kangaroo CLI.
 ///
 /// Commands:
 ///
-/// - `kangaroo_cli` or `kangaroo_cli watch` — the continuous test runner:
-///   watches `src` and `test` and re-runs the affected tests on change.
+/// - `kangaroo_cli` or `kangaroo_cli watch [--tui|--no-tui|--json]` — the
+///   continuous test runner: watches `src` and `test` and re-runs the
+///   affected tests on change.
 /// - `kangaroo_cli run [--name <substring>] [--json] [--fail-fast]` — runs
 ///   the tests once.
-/// - `kangaroo_cli run --coverage` — runs the tests once with line coverage
-///   (Erlang only).
+/// - `kangaroo_cli run --coverage` — runs the tests once with line coverage.
+/// - `kangaroo_cli --help` / `kangaroo_cli --version` — information.
 pub fn main() -> Nil {
   let args = fs.args()
 
@@ -31,7 +34,7 @@ pub fn main() -> Nil {
           fs.halt(1)
         }
         Ok(project_dir) -> {
-          case run_command(project_dir, args) {
+          case run(project_dir, args) {
             Ok(_) -> fs.halt(0)
             Error(message) -> {
               io.println_error(message)
@@ -43,62 +46,31 @@ pub fn main() -> Nil {
   }
 }
 
-fn run_command(project_dir: String, args: List(String)) -> Result(Nil, String) {
-  case args {
-    [] -> watch(project_dir, default_mode())
-    ["run", "--coverage"] -> {
+fn run(project_dir: String, args: List(String)) -> Result(Nil, String) {
+  case command.parse_command(args, default_mode()) {
+    Ok(Watch(mode)) -> watch(project_dir, mode)
+    Ok(Run(options)) -> run_once(project_dir, options)
+    Ok(RunCoverage) -> {
       case app.run_coverage(project_dir) {
         Ok(_) -> Ok(Nil)
         Error(message) -> Error(message)
       }
     }
-    ["run", ..flags] -> {
-      use options <- result.try(parse_run_flags(flags))
-      run_once(project_dir, options)
+    Ok(Help) -> {
+      io.println(command.usage())
+      Ok(Nil)
     }
-    ["watch"] -> watch(project_dir, default_mode())
-    ["watch", "--tui"] -> watch(project_dir, app.Tui)
-    ["watch", "--no-tui"] -> watch(project_dir, app.Stream)
-    ["watch", "--json"] -> watch(project_dir, app.Json)
-    _ ->
-      Error(
-        "kangaroo: unknown command: "
-        <> string.join(args, " ")
-        <> "\nkangaroo: usage: kangaroo_cli [watch [--tui|--no-tui|--json] | run [--name <substring>] [--json] [--fail-fast] | run --coverage]",
-      )
+    Ok(Version) -> {
+      io.println(version_string())
+      Ok(Nil)
+    }
+    Error(message) -> Error(message)
   }
 }
 
-/// Parses the flags of a `run` command into options. Unknown flags and a
-/// `--name` without a value are errors.
-pub fn parse_run_flags(flags: List(String)) -> Result(app.RunOptions, String) {
-  parse_run_flags_loop(flags, app.default_run_options())
-}
-
-fn parse_run_flags_loop(
-  flags: List(String),
-  options: app.RunOptions,
-) -> Result(app.RunOptions, String) {
-  case flags {
-    [] -> Ok(options)
-    ["--json", ..rest] ->
-      parse_run_flags_loop(
-        rest,
-        app.RunOptions(options.name, True, options.stop_on_first_failure),
-      )
-    ["--fail-fast", ..rest] ->
-      parse_run_flags_loop(
-        rest,
-        app.RunOptions(options.name, options.json, True),
-      )
-    ["--name", name, ..rest] ->
-      parse_run_flags_loop(
-        rest,
-        app.RunOptions(Some(name), options.json, options.stop_on_first_failure),
-      )
-    ["--name"] -> Error("kangaroo: --name requires a value")
-    [flag, ..] -> Error("kangaroo: unknown run flag: " <> flag)
-  }
+/// The version string printed by `--version`.
+pub fn version_string() -> String {
+  "kangaroo_cli " <> command.version()
 }
 
 fn run_once(
