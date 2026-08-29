@@ -74,6 +74,35 @@ pub fn default_run_options() -> RunOptions {
   RunOptions(None, False, False)
 }
 
+/// Parses the flags of a `run` command into options. Unknown flags and a
+/// `--name` without a value are errors.
+pub fn parse_run_flags(flags: List(String)) -> Result(RunOptions, String) {
+  parse_run_flags_loop(flags, default_run_options())
+}
+
+fn parse_run_flags_loop(
+  flags: List(String),
+  options: RunOptions,
+) -> Result(RunOptions, String) {
+  case flags {
+    [] -> Ok(options)
+    ["--json", ..rest] ->
+      parse_run_flags_loop(
+        rest,
+        RunOptions(options.name, True, options.stop_on_first_failure),
+      )
+    ["--fail-fast", ..rest] ->
+      parse_run_flags_loop(rest, RunOptions(options.name, options.json, True))
+    ["--name", name, ..rest] ->
+      parse_run_flags_loop(
+        rest,
+        RunOptions(Some(name), options.json, options.stop_on_first_failure),
+      )
+    ["--name"] -> Error("kangaroo: --name requires a value")
+    [flag, ..] -> Error("kangaroo: unknown run flag: " <> flag)
+  }
+}
+
 /// One full cycle: snapshot the sources, run the tests, and print the
 /// results. Returns `True` if the run reported failures.
 pub fn run_once(
@@ -206,8 +235,10 @@ fn poll_and_run(
   let deep = poll_count % deep_check_every == 0
 
   // Every few polls the full file contents are compared too, so edits that
-  // leave both the mtime and the size unchanged are still seen. Contents are
-  // also refreshed whenever anything changed, keeping the comparison honest.
+  // leave both the mtime and the size unchanged are still seen. When a
+  // change is detected by metadata, only the changed files are re-read:
+  // their metadata change already triggers the run, and the deep check
+  // below catches the metadata-invisible edits.
   let #(settled, settled_changes, contents, content_changes) = case changes {
     [] ->
       case deep {
@@ -225,8 +256,9 @@ fn poll_and_run(
         changes
         |> list.append(diff(current, settled))
         |> unique_changes
-      let fresh = result.unwrap(read_sources(project_dir), contents)
-      #(settled, settled_changes, fresh, diff_contents(contents, fresh))
+      let contents =
+        refresh_contents(project_dir, contents, changed_paths(settled_changes))
+      #(settled, settled_changes, contents, [])
     }
   }
 
@@ -402,6 +434,23 @@ pub fn read_sources(
   list.try_fold(paths, dict.new(), fn(contents, path) {
     use text <- result.try(fs.read_file(path))
     Ok(dict.insert(contents, path, text))
+  })
+}
+
+/// Re-reads the contents of exactly the given files, keeping the content
+/// cache aligned with the files that changed. Files that did not change
+/// keep their cached contents, so the next deep check compares them
+/// against their previous contents.
+fn refresh_contents(
+  project_dir: String,
+  contents: Dict(String, String),
+  paths: List(String),
+) -> Dict(String, String) {
+  list.fold(paths, contents, fn(contents, path) {
+    case fs.read_file(path) {
+      Ok(text) -> dict.insert(contents, path, text)
+      Error(_) -> contents
+    }
   })
 }
 
