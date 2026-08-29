@@ -1,14 +1,14 @@
 %% Platform services for the Kangaroo CLI: file access, subprocess
 %% execution of `gleam test`, and a monotonic clock for the watch loop.
 -module(kangaroo_cli_ffi).
--export([list_files_recursive/1, read_file/1, mtime_ms/1, file_size/1,
-         exists/1, sleep/1, gleam_executable/0, run_gleam_test/3, now_ms/0,
-         current_dir/0, args/0, halt/1, is_erlang/0, add_code_path/1,
-         add_project_paths/1, load_module/1, call_suites/1,
-         list_test_modules/1, cover_start/0, cover_compile_beams/1,
-         cover_analyse/1, event_buffer_append/1, event_buffer_take/0,
-         is_tty/0, raw_mode/1, init_keyboard/0, poll_key/0,
-         run_gleam_test_with/4, remove_dir/1]).
+-export([list_files_recursive/1, list_directory/1, read_file/1, mtime_ms/1,
+         file_size/1, exists/1, sleep/1, gleam_executable/0,
+         run_gleam_test/3, now_ms/0, current_dir/0, args/0, halt/1,
+         is_erlang/0, add_code_path/1, add_project_paths/1, load_module/1,
+         call_suites/1, list_test_modules/1, cover_start/0,
+         cover_compile_beams/1, cover_analyse/1, event_buffer_append/1,
+         event_buffer_take/0, is_tty/0, raw_mode/1, init_keyboard/0,
+         poll_key/0, run_gleam_test_with/4, remove_dir/1]).
 -include_lib("kernel/include/file.hrl").
 
 is_erlang() ->
@@ -203,6 +203,22 @@ list_files_recursive(Directory) ->
                 {ok, Files} -> {ok, lists:sort(Files)};
                 {error, Reason} -> {error, format_error(Reason)}
             end;
+        {error, Reason} ->
+            {error, format_error(Reason)}
+    end.
+
+%% Lists the entries of a directory as `{Name, IsDirectory}` pairs. The
+%% entry names are converted to binaries: `file:list_dir/1` always returns
+%% string lists, even for binary input paths.
+list_directory(Directory) ->
+    case file:list_dir(Directory) of
+        {ok, Entries} ->
+            Entries2 = lists:map(fun(Name) ->
+                                         Path = filename:join(Directory, Name),
+                                         {unicode:characters_to_binary(Name),
+                                          filelib:is_dir(Path)}
+                                 end, Entries),
+            {ok, Entries2};
         {error, Reason} ->
             {error, format_error(Reason)}
     end.

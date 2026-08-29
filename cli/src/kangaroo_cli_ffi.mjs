@@ -32,6 +32,17 @@ export function list_files_recursive(directory) {
   }
 }
 
+export function list_directory(directory) {
+  try {
+    const entries = readdirSync(directory, { withFileTypes: true }).map(
+      (entry) => [entry.name, entry.isDirectory()],
+    );
+    return new Ok(toList(entries));
+  } catch (error) {
+    return new GleamError(String(error.message || error));
+  }
+}
+
 export function read_file(path) {
   try {
     return new Ok(readFileSync(path, "utf8"));

@@ -1,12 +1,8 @@
 import gleam/io
-import gleam/result
 import kangaroo_cli/app
-import kangaroo_cli/command.{
-  type Command, Help, Run, RunCoverage, Version, Watch,
-}
+import kangaroo_cli/command.{Help, Run, RunCoverage, Version, Watch}
 import kangaroo_cli/fs
 import kangaroo_cli/terminal
-import kangaroo_cli/vm
 
 /// The entry point of the Kangaroo CLI.
 ///
