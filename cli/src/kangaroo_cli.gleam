@@ -21,20 +21,20 @@ pub fn main() -> Nil {
 
   case fs.gleam_executable() {
     Error(message) -> {
-      io.println(message)
+      io.println_error(message)
       fs.halt(1)
     }
     Ok(_) ->
       case fs.current_dir() {
         Error(message) -> {
-          io.println("kangaroo: " <> message)
+          io.println_error("kangaroo: " <> message)
           fs.halt(1)
         }
         Ok(project_dir) -> {
           case run_command(project_dir, args) {
             Ok(_) -> fs.halt(0)
             Error(message) -> {
-              io.println(message)
+              io.println_error(message)
               fs.halt(1)
             }
           }
@@ -101,7 +101,10 @@ fn parse_run_flags_loop(
   }
 }
 
-fn run_once(project_dir: String, options: app.RunOptions) -> Result(Nil, String) {
+fn run_once(
+  project_dir: String,
+  options: app.RunOptions,
+) -> Result(Nil, String) {
   case app.run_once(project_dir, options) {
     Ok(True) -> {
       fs.halt(1)
@@ -122,8 +125,10 @@ fn default_mode() -> app.OutputMode {
 }
 
 fn watch(project_dir: String, mode: app.OutputMode) -> Result(Nil, String) {
-  io.println("kangaroo: watching " <> project_dir)
-  io.println("kangaroo: press Ctrl+C to stop")
+  // Watch-session status belongs on stderr so the machine-readable stream
+  // (`watch --json`) stays pure.
+  io.println_error("kangaroo: watching " <> project_dir)
+  io.println_error("kangaroo: press Ctrl+C to stop")
   app.watch(project_dir, mode)
   Ok(Nil)
 }
