@@ -103,6 +103,27 @@ pub fn suites() {
         expect(watcher.run_arguments_for("erlang", "erlang", []))
         |> to_equal(["test", "--target", "erlang", "--"])
       }),
+      it("runs compiled Erlang watch generations without a launcher", fn() {
+        expect(watcher.generation_executable("erlang")) |> to_equal("erl")
+        expect(
+          watcher.generation_arguments_for("erlang", "erlang", [
+            "test/math_test.gleam::addition_test",
+            "--reporter",
+            "dot",
+          ]),
+        )
+        |> to_equal([
+          "-noshell",
+          "-eval",
+          "code:add_paths(filelib:wildcard(\"build/dev/erlang/*/ebin\")), kangaroo:main().",
+          "-extra",
+          "test/math_test.gleam::addition_test",
+          "--reporter",
+          "dot",
+        ])
+        expect(watcher.generation_executable("javascript"))
+        |> to_equal("gleam")
+      }),
       it("starts the watch coordinator through the public run command", fn() {
         expect(
           watcher.coordinator_arguments_for("javascript", "deno", [

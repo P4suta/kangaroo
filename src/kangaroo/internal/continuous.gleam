@@ -289,8 +289,8 @@ pub fn run_until_change_observed(
 ) -> Result(ObservedRunOutcome, String) {
   use handle <- result.try(process.start(
     project_dir,
-    "gleam",
-    watcher.run_arguments_for(vm.target(), vm.runtime_name(), arguments),
+    watcher.generation_executable(vm.target()),
+    watcher.generation_arguments_for(vm.target(), vm.runtime_name(), arguments),
     [],
     run_timeout_ms,
   ))
@@ -313,8 +313,8 @@ pub fn run_until_change_controlled(
 ) -> Result(ControlledRunOutcome(state), String) {
   use handle <- result.try(process.start(
     project_dir,
-    "gleam",
-    watcher.run_arguments_for(vm.target(), vm.runtime_name(), arguments),
+    watcher.generation_executable(vm.target()),
+    watcher.generation_arguments_for(vm.target(), vm.runtime_name(), arguments),
     [],
     run_timeout_ms,
   ))

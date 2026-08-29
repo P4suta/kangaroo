@@ -214,6 +214,33 @@ pub fn run_arguments_for(
   list.append(prefix, arguments)
 }
 
+const erlang_runtime_eval = "code:add_paths(filelib:wildcard(\"build/dev/erlang/*/ebin\")), kangaroo:main()."
+
+/// Chooses the process boundary for an already-compiled watch generation.
+/// Erlang runs the BEAM directly so a finished launcher cannot leave an
+/// orphaned runtime holding the project directory open on Windows.
+pub fn generation_executable(target: String) -> String {
+  case target {
+    "erlang" -> "erl"
+    _ -> "gleam"
+  }
+}
+
+pub fn generation_arguments_for(
+  target: String,
+  runtime: String,
+  arguments: List(String),
+) -> List(String) {
+  case target {
+    "erlang" -> erlang_runtime_arguments(arguments)
+    _ -> run_arguments_for(target, runtime, arguments)
+  }
+}
+
+pub fn erlang_runtime_arguments(arguments: List(String)) -> List(String) {
+  ["-noshell", "-eval", erlang_runtime_eval, "-extra", ..arguments]
+}
+
 /// Starts the long-lived coordinator through the public package module. Test
 /// generations themselves use `gleam test`, but the coordinator must not be a
 /// test command or it can retain the build lock needed by its child runs.
