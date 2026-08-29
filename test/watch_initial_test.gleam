@@ -127,15 +127,15 @@ pub fn suites() {
                   )
                 }
               }
-              // Do not tear the Windows workspace down while the generation
-              // that observed the new root still owns compiler/runtime file
-              // handles. Requiring its result also proves the dynamic root
-              // participates in execution, not only detection.
+              // A change in an extra watch root can correctly select no tests,
+              // so follow it with a source change. Waiting for that generation
+              // prevents Windows teardown from racing compiler/runtime handles.
               let #(settled_dynamic_root, settled_output) = case
                 observed_dynamic_root
               {
                 False -> #(False, root_output)
-                True ->
+                True -> {
+                  schedule_replace(path, replacement, replacement <> "\n", 100)
                   await_output(
                     handle,
                     "1 passed, 0 failed",
@@ -143,6 +143,7 @@ pub fn suites() {
                     15_000,
                     root_output,
                   )
+                }
               }
               process.cancel(handle)
               let _ = await_terminal(handle, sys.now_ms(), 1000)
