@@ -58,6 +58,20 @@ pub fn suites() {
         ))
         |> to_be_false()
       }),
+      it("does not mistake a checkout directory for the framework", fn() {
+        // A checkout under a directory named like the package (e.g. CI
+        // checks out into .../work/kangaroo/kangaroo) must not make user
+        // code look like framework code.
+        expect(is_framework_file(
+          "/home/runner/work/kangaroo/kangaroo/build/dev/javascript/kangaroo/expect_test.mjs",
+        ))
+        |> to_be_false()
+        // The framework's own compiled javascript modules still are.
+        expect(is_framework_file(
+          "/home/runner/work/kangaroo/kangaroo/build/dev/javascript/kangaroo/kangaroo/expect.mjs",
+        ))
+        |> to_be_true()
+      }),
       it(
         "skips compiled artefact frames when picking the first user frame",
         fn() {

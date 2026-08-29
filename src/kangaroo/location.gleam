@@ -40,7 +40,7 @@ pub fn is_framework_file(file: String) -> Bool {
   || string.contains(file, "gleam_json")
   || string.contains(file, "gleeunit")
   || string.contains(file, "prelude.mjs")
-  || string.contains(file, "/kangaroo/kangaroo")
+  || string.contains(file, "/build/dev/javascript/kangaroo/kangaroo/")
   || string.contains(file, "kangaroo_isolate_ffi")
   || string.contains(file, "kangaroo_context_ffi")
   || string.contains(file, "kangaroo_location_ffi")
