@@ -1,6 +1,7 @@
 import gleam/string
 import kangaroo/internal/continuous
 import kangaroo/internal/process
+import kangaroo/internal/vm
 import kangaroo/sys
 
 @external(erlang, "kangaroo_cli_test_ffi", "sleeper_executable")
@@ -50,5 +51,6 @@ pub fn active_process_streams_output_and_cancels_within_budget_test() {
 
   assert state.output == "ready"
   assert state.cancellation_started != 0
-  assert sys.now_ms() - state.cancellation_started < 250
+  assert sys.now_ms() - state.cancellation_started
+    < vm.process_cancellation_budget_ms()
 }

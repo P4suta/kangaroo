@@ -22,8 +22,6 @@ const javascript_input_poll_ms = 150
 
 const operation_timeout_ms = 604_800_000
 
-const cancellation_timeout_ms = 250
-
 pub fn poll_interval_ms() -> Int {
   poll_interval_for(vm.target())
 }
@@ -394,7 +392,7 @@ fn stop_operations(state: operations.State) -> Nil {
 fn await_cancellation(handle: Int, started: Int) -> Nil {
   case process.poll(handle) {
     process.ProcessRunning | process.ProcessOutput(_) ->
-      case sys.now_ms() - started < cancellation_timeout_ms {
+      case sys.now_ms() - started < vm.process_cancellation_budget_ms() {
         True -> {
           fs.sleep(5)
           await_cancellation(handle, started)

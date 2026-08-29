@@ -149,7 +149,12 @@ pub fn suites() {
                 }
               }
               process.cancel(handle)
-              let _ = await_terminal(handle, sys.now_ms(), 1000)
+              let _ =
+                await_terminal(
+                  handle,
+                  sys.now_ms(),
+                  vm.process_cancellation_budget_ms() + 500,
+                )
               let assert Ok(Nil) = fs.remove_tree(workspace)
               case
                 completed_latest

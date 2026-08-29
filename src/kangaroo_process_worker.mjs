@@ -93,27 +93,10 @@ function killTree(
   if (!child || child.pid === undefined) return;
   try {
     if (globalThis.process.platform === "win32") {
-      // Starting taskkill is sufficient to hand the tree to the operating
-      // system. Waiting for taskkill itself can exceed the 250 ms watch
-      // cancellation budget on a busy Windows runner, so let it finish after
-      // the worker has published the terminal result.
-      const killer = spawn(
-        "taskkill",
-        ["/pid", String(child.pid), "/T", "/F"],
-        {
-          windowsHide: true,
-          stdio: "ignore",
-          detached: true,
-        },
-      );
-      killer.once("error", () => {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          // The process already exited.
-        }
+      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
       });
-      killer.unref?.();
     } else {
       const targets = [
         ...new Set([

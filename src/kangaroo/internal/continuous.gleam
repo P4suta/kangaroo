@@ -1,4 +1,5 @@
 import gleam/dict.{type Dict}
+import gleam/int
 import gleam/result
 import kangaroo/internal/fs
 import kangaroo/internal/process
@@ -9,8 +10,6 @@ import kangaroo/sys
 const compile_timeout_ms = 120_000
 
 const process_poll_ms = 10
-
-const cancellation_timeout_ms = 250
 
 const run_timeout_ms = 86_400_000
 
@@ -464,12 +463,17 @@ fn drain_controlled_cancellation(
 ) -> Result(Nil, String) {
   case process.poll(handle) {
     process.ProcessRunning | process.ProcessOutput(_) ->
-      case sys.now_ms() - started < cancellation_timeout_ms {
+      case sys.now_ms() - started < vm.process_cancellation_budget_ms() {
         True -> {
           fs.sleep(5)
           drain_controlled_cancellation(handle, started)
         }
-        False -> Error("process cancellation exceeded 250 ms")
+        False ->
+          Error(
+            "process cancellation exceeded "
+            <> int.to_string(vm.process_cancellation_budget_ms())
+            <> " ms",
+          )
       }
     process.ProcessCancelled | process.ProcessFinished(_) -> Ok(Nil)
     process.ProcessFailed(message) -> Error(message)
@@ -512,7 +516,7 @@ fn poll_run(project_dir, roots, baseline, handle, on_detect) {
 fn drain_cancellation(handle: Int, started: Int) -> Nil {
   case process.poll(handle) {
     process.ProcessRunning ->
-      case sys.now_ms() - started < cancellation_timeout_ms {
+      case sys.now_ms() - started < vm.process_cancellation_budget_ms() {
         True -> {
           fs.sleep(5)
           drain_cancellation(handle, started)

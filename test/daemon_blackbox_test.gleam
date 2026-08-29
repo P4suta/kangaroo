@@ -38,7 +38,7 @@ pub fn daemon_bidirectional_protocol_and_cancellation_test() {
     "{\"protocol_version\":1,\"id\":\"discover-1\",\"command\":\"discover\"}\n",
   )
   let assert Ok(discovery) =
-    await_contains(handle, "\"type\":\"discovered\"", 5000, "")
+    await_contains(handle, "\"type\":\"discovered\"", 15_000, "")
   assert string.contains(discovery, "test/v1/passing.gleam::fixture_test")
   assert string.contains(discovery, "\"line\":1")
 

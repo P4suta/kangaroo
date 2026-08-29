@@ -25,6 +25,20 @@ pub fn runtime_version() -> String
 @external(javascript, "../../kangaroo_vm_ffi.mjs", "operating_system")
 pub fn operating_system() -> String
 
+/// Windows has no portable process-group kill primitive, so complete tree
+/// cleanup waits for `taskkill`. Hosted runners can take longer than the
+/// sub-250 ms Unix signal path even though no stale generation is released.
+pub fn process_cancellation_budget_ms() -> Int {
+  process_cancellation_budget_for(operating_system())
+}
+
+pub fn process_cancellation_budget_for(operating_system: String) -> Int {
+  case operating_system {
+    "windows" -> 2000
+    _ -> 250
+  }
+}
+
 /// Absolute JavaScript entry point used by daemon watch children. Resolving
 /// it beside the running package keeps embedded/editor daemons independent of
 /// whether the project under test already has compiled output.
