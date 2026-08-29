@@ -187,7 +187,14 @@ port.on("message", (message) => {
       return;
     }
     try {
-      child.stdin.write(String(message.data || ""));
+      child.stdin.write(String(message.data || ""), (error) => {
+        if (error && !terminal && !terminating) {
+          terminateTree({
+            type: "failed",
+            message: String(error.message || error),
+          });
+        }
+      });
     } catch (error) {
       terminateTree({ type: "failed", message: String(error.message || error) });
     }

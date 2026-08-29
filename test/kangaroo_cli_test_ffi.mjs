@@ -79,7 +79,7 @@ export function closed_stdin_tree_arguments(marker) {
     return toList(["eval", outer]);
   }
   const child = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "survived"), 400);`;
-  const outer = `const fs = require("node:fs"); fs.closeSync(0); const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(child)}], { detached: true, stdio: "ignore" }); child.unref(); fs.writeSync(1, "ready"); setTimeout(() => {}, 5000);`;
+  const outer = `const fs = require("node:fs"); const input = process.stdin; input.once("close", () => { const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(child)}], { detached: true, stdio: "ignore" }); child.unref(); fs.writeSync(1, "ready"); setTimeout(() => {}, 5000); }); input.destroy(); fs.closeSync(0);`;
   return toList(["-e", outer]);
 }
 

@@ -828,7 +828,7 @@ fn positive_delay(milliseconds: Int) -> Int {
 /// debounce window to become stable.
 pub fn scan_interval(debounce_ms: Int) -> Int {
   case debounce_ms > 0 {
-    True -> debounce_ms * 5 / 2
+    True -> debounce_ms * 3
     False -> 1
   }
 }
