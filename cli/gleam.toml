@@ -2,7 +2,7 @@ name = "kangaroo_cli"
 version = "0.1.0"
 description = "The Kangaroo continuous test runner CLI"
 licences = ["Apache-2.0"]
-repository = { type = "github", user = "yasunobu", repo = "kangaroo" }
+repository = { type = "github", user = "P4suta", repo = "kangaroo" }
 
 [dependencies]
 gleam_erlang = ">= 1.0.0 and < 2.0.0"
