@@ -83,7 +83,7 @@ export function closed_stdin_tree_arguments(marker) {
   // that the timeout fallback still terminates the complete taskkill tree.
   const markerDelay = globalThis.process.platform === "win32" ? 3500 : 400;
   const child = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "survived"), ${markerDelay});`;
-  const outer = `const fs = require("node:fs"); const input = process.stdin; input.once("close", () => { const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(child)}], { detached: true, stdio: "ignore" }); child.unref(); fs.writeSync(1, "ready"); setTimeout(() => {}, 5000); }); input.destroy(); fs.closeSync(0);`;
+  const outer = `const fs = require("node:fs"); const input = process.stdin; input.once("close", () => { const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(child)}], { detached: true, stdio: "ignore" }); child.unref(); fs.writeSync(1, "re"); setTimeout(() => fs.writeSync(1, "ady"), 20); setTimeout(() => {}, 5000); }); input.destroy(); fs.closeSync(0);`;
   return toList(["-e", outer]);
 }
 

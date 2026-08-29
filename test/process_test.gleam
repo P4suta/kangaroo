@@ -54,7 +54,8 @@ pub fn closed_stdin_terminates_process_tree_test() {
           [],
           process_timeout,
         )
-      let assert ProcessOutput("ready") = await_output(handle, 2000)
+      let assert Ok(output) = await_output_containing(handle, "ready", 2000)
+      assert string.contains(output, "ready")
       process.write(handle, "must fail\n")
       let assert ProcessFailed(message) = await_terminal(handle, 2500)
       case windows {
@@ -197,6 +198,61 @@ fn await_until(
 fn await_output(handle: Int, timeout_ms: Int) -> process.ProcessPoll {
   let started = sys.now_ms()
   await_output_until(handle, started, timeout_ms)
+}
+
+fn await_output_containing(
+  handle: Int,
+  expected: String,
+  timeout_ms: Int,
+) -> Result(String, String) {
+  await_output_containing_until(handle, expected, sys.now_ms(), timeout_ms, "")
+}
+
+fn await_output_containing_until(
+  handle: Int,
+  expected: String,
+  started: Int,
+  timeout_ms: Int,
+  output: String,
+) -> Result(String, String) {
+  case process.poll(handle) {
+    ProcessOutput(chunk) -> {
+      let output = output <> chunk
+      case string.contains(output, expected) {
+        True -> Ok(output)
+        False ->
+          await_output_containing_until(
+            handle,
+            expected,
+            started,
+            timeout_ms,
+            output,
+          )
+      }
+    }
+    ProcessRunning ->
+      case sys.now_ms() - started < timeout_ms {
+        True -> {
+          fs.sleep(5)
+          await_output_containing_until(
+            handle,
+            expected,
+            started,
+            timeout_ms,
+            output,
+          )
+        }
+        False -> Error("test output polling timed out: " <> output)
+      }
+    ProcessFinished(completed) ->
+      case string.contains(completed.output, expected) {
+        True -> Ok(completed.output)
+        False ->
+          Error("process exited before expected output: " <> completed.output)
+      }
+    ProcessCancelled -> Error("process was cancelled before expected output")
+    ProcessFailed(message) -> Error(message)
+  }
 }
 
 fn await_output_until(

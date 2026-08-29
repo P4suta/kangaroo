@@ -11,7 +11,7 @@ pub fn completed_record_matching_allows_a_trailing_fragment_test() {
     "{\"type\":\"discovered\"}\n{\"type\":\"part",
     "\"type\":\"discovered\"",
   )
-  assert !completed_output_contains("{\"type\":\"part", "\"type\":\"part\"")
+  assert !completed_output_contains("{\"type\":\"part", "\"type\":\"part")
 }
 
 fn completed_output_contains(output: String, expected: String) -> Bool {

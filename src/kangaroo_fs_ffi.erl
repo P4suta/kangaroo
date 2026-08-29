@@ -88,6 +88,8 @@ collect(Directory, [Entry | Rest], Files) ->
             %% Symlinks are deliberately not followed during recursive
             %% discovery, preventing directory cycles and root escapes.
             collect(Directory, Rest, Files);
+        {ok, _Other} ->
+            collect(Directory, Rest, Files);
         {error, Reason} ->
             {error, format_error(Reason)}
     end.
