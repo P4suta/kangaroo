@@ -435,7 +435,17 @@ format_error(Reason) ->
 format_remove_error(Reason, Path) ->
     ReasonText = format_error(Reason),
     PathText = unicode:characters_to_binary(Path),
-    <<ReasonText/binary, " while removing ", PathText/binary>>.
+    Details = case file:read_link_info(Path) of
+        {ok, #file_info{type = Type, mode = Mode}} ->
+            unicode:characters_to_binary(
+              io_lib:format(" (type=~0p, mode=~.8B, link=~0p)",
+                            [Type, Mode, file:read_link_all(Path)]));
+        Missing ->
+            unicode:characters_to_binary(
+              io_lib:format(" (info=~0p)", [Missing]))
+    end,
+    <<ReasonText/binary, " while removing ", PathText/binary,
+      Details/binary>>.
 
 path_to_list(Value) when is_binary(Value) -> unicode:characters_to_list(Value);
 path_to_list(Value) when is_list(Value) -> Value.
