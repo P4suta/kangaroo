@@ -7,7 +7,9 @@
          is_erlang/0, add_code_path/1, add_project_paths/1, load_module/1,
          call_suites/1, list_test_modules/1, cover_start/0,
          cover_compile_beams/1, cover_analyse/1, event_buffer_append/1,
-         event_buffer_take/0, is_tty/0, raw_mode/1, init_keyboard/0,
+         event_buffer_append/1, event_buffer_take/0,
+         event_buffer_append_session/1, event_buffer_take_session/0,
+         is_tty/0, raw_mode/1, init_keyboard/0,
          poll_key/0, run_gleam_test_with/4, remove_dir/1,
          run_all_in_process/1]).
 -include_lib("kernel/include/file.hrl").
@@ -84,26 +86,30 @@ add_project_paths(ProjectDir) ->
     end.
 
 %% Loads a compiled module (by name, e.g. "foo_test" or "a/b"), replacing
-%% any previous version. Loading the same version is a no-op, so
-%% concurrent in-VM runs that reload the same modules do not race. When
-%% the module has a live old version (e.g. cover re-instrumented it) the
-%% load reports not_purged; the old version is then purged and the load
-%% retried.
+%% any previous version. The previous version is soft-purged first: when
+%% nothing references it, the new beam loads (loading the same version is
+%% a no-op, so concurrent in-VM runs that reload the same modules do not
+%% race). When the old version is still running — another in-VM run is
+%% executing it — the purge is refused and the already-loaded version
+%% stays in place: the tests run against it rather than being skipped,
+%% and no failed load is reported.
 load_module(Name) ->
     Atom = module_atom(Name),
-    case code:load_file(Atom) of
-        {module, Atom} ->
-            {ok, nil};
-        {error, not_purged} ->
-            _ = code:purge(Atom),
+    case code:soft_purge(Atom) of
+        true ->
             case code:load_file(Atom) of
-                {module, Atom} -> {ok, nil};
-                Other -> {error, format_error(Other)}
+                {module, Atom} ->
+                    {ok, nil};
+                {error, not_purged} ->
+                    % Raced with another loader; the loaded version stays.
+                    {ok, nil};
+                {error, Reason} ->
+                    {error, format_error(Reason)};
+                Other ->
+                    {error, format_error(Other)}
             end;
-        {error, Reason} ->
-            {error, format_error(Reason)};
-        Other ->
-            {error, format_error(Other)}
+        false ->
+            {ok, nil}
     end.
 
 call_suites(Module) ->
@@ -393,6 +399,26 @@ event_buffer_take() ->
                  Existing -> lists:reverse(Existing)
              end,
     erase(?EVENT_KEY),
+    Events.
+
+%% A per-run buffer of session events (compile phases), separate from the
+%% runner event buffer.
+-define(SESSION_KEY, kangaroo_session_events).
+
+event_buffer_append_session(Event) ->
+    Existing = case get(?SESSION_KEY) of
+                   undefined -> [];
+                   Events -> Events
+               end,
+    put(?SESSION_KEY, [Event | Existing]),
+    ok.
+
+event_buffer_take_session() ->
+    Events = case get(?SESSION_KEY) of
+                 undefined -> [];
+                 Existing -> lists:reverse(Existing)
+             end,
+    erase(?SESSION_KEY),
     Events.
 
 %% Terminal access for the TUI.

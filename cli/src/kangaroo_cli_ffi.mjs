@@ -223,6 +223,18 @@ export function event_buffer_take() {
   return taken;
 }
 
+// A per-run buffer of session events (compile phases).
+let sessionEvents = [];
+export function event_buffer_append_session(event) {
+  sessionEvents.push(event);
+  return undefined;
+}
+export function event_buffer_take_session() {
+  const taken = toList(sessionEvents);
+  sessionEvents = [];
+  return taken;
+}
+
 // Terminal access for the TUI. The watch loop is synchronous on
 // JavaScript, so keys are read directly from the (non-blocking) terminal
 // file descriptor instead of through events.

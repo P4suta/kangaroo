@@ -25,6 +25,7 @@ import kangaroo_cli/graph.{
 import kangaroo_cli/jscoverage
 import kangaroo_cli/keys
 import kangaroo_cli/parallel
+import kangaroo_cli/session
 import kangaroo_cli/stream.{parse_events}
 import kangaroo_cli/terminal
 import kangaroo_cli/tui
@@ -126,15 +127,31 @@ pub fn run_once(
         True -> event_buffer.append
         False -> format.print_sink
       }
+      let session_sink = case options.json {
+        True -> event_buffer.append_session
+        False -> ignore_session
+      }
       let config =
         runner.Config(
           runner.default_config().case_timeout_ms,
           options.stop_on_first_failure,
         )
-      case run_tests(project_dir, [], sink, config, options.name) {
+      case
+        run_tests(
+          project_dir,
+          [],
+          sink,
+          session_sink,
+          config,
+          options.name,
+          False,
+        )
+      {
         Ok(has_failures) ->
           case options.json {
             True -> {
+              event_buffer.take_session()
+              |> list.each(fn(event) { io.println(session.encode(event)) })
               event_buffer.take()
               |> list.each(fn(event) { io.println(encode.encode(event)) })
               Ok(has_failures)
@@ -157,7 +174,7 @@ pub fn run_once(
 /// The watch loop: continuously polls the source files and runs the tests
 /// whenever anything changes. The tests run once when the loop starts and
 /// then again after every change. Runs forever.
-pub fn watch(project_dir: String, mode: OutputMode) -> Nil {
+pub fn watch(project_dir: String, mode: OutputMode, coverage: Bool) -> Nil {
   case mode {
     Tui -> {
       terminal.raw_mode(True)
@@ -177,6 +194,7 @@ pub fn watch(project_dir: String, mode: OutputMode) -> Nil {
     tui.initial(),
     mode,
     tui.All,
+    coverage,
   )
 }
 
@@ -189,6 +207,7 @@ fn loop(
   ui_state: tui.UiState,
   mode: OutputMode,
   view: tui.View,
+  coverage: Bool,
 ) -> Nil {
   fs.sleep(poll_interval_ms)
 
@@ -211,13 +230,32 @@ fn loop(
             ui_state,
             mode,
             view,
+            coverage,
           )
         }
         keys.Rerun -> {
           // An empty change list runs every test module.
           let next_ui =
-            do_run(project_dir, [], tui.RunInfo(0, None), ui_state, mode, view)
-          loop(project_dir, walk, previous, contents, 0, next_ui, mode, view)
+            do_run(
+              project_dir,
+              [],
+              tui.RunInfo(0, None),
+              ui_state,
+              mode,
+              view,
+              coverage,
+            )
+          loop(
+            project_dir,
+            walk,
+            previous,
+            contents,
+            0,
+            next_ui,
+            mode,
+            view,
+            coverage,
+          )
         }
         keys.Nothing ->
           poll_and_run(
@@ -229,6 +267,7 @@ fn loop(
             ui_state,
             mode,
             view,
+            coverage,
           )
       }
     _ ->
@@ -241,6 +280,7 @@ fn loop(
         ui_state,
         mode,
         view,
+        coverage,
       )
   }
 }
@@ -254,6 +294,7 @@ fn poll_and_run(
   ui_state: tui.UiState,
   mode: OutputMode,
   view: tui.View,
+  coverage: Bool,
 ) -> Nil {
   let #(walk, structural) = advance_walk(project_dir, walk)
   let current = stat_snapshot(project_dir, walk)
@@ -310,6 +351,7 @@ fn poll_and_run(
         ui_state,
         mode,
         view,
+        coverage,
       )
     _ -> {
       let changed = changed_paths(all_changes)
@@ -335,8 +377,19 @@ fn poll_and_run(
         _ -> Nil
       }
 
-      let next_ui = do_run(project_dir, changed, run_info, ui_state, mode, view)
-      loop(project_dir, walk, settled, contents, 0, next_ui, mode, view)
+      let next_ui =
+        do_run(project_dir, changed, run_info, ui_state, mode, view, coverage)
+      loop(
+        project_dir,
+        walk,
+        settled,
+        contents,
+        0,
+        next_ui,
+        mode,
+        view,
+        coverage,
+      )
     }
   }
 }
@@ -441,15 +494,28 @@ fn do_run(
   ui_state: tui.UiState,
   mode: OutputMode,
   view: tui.View,
+  coverage: Bool,
 ) -> tui.UiState {
   let sink = case mode {
     Tui -> event_buffer.append
     Json -> event_buffer.append
     Stream -> format.print_sink
   }
+  let session_sink = case mode {
+    Json -> event_buffer.append_session
+    _ -> ignore_session
+  }
 
   case
-    run_tests(project_dir, changed_paths, sink, runner.default_config(), None)
+    run_tests(
+      project_dir,
+      changed_paths,
+      sink,
+      session_sink,
+      runner.default_config(),
+      None,
+      coverage,
+    )
   {
     Ok(_) ->
       case mode {
@@ -461,6 +527,8 @@ fn do_run(
           next
         }
         Json -> {
+          event_buffer.take_session()
+          |> list.each(fn(event) { io.println(session.encode(event)) })
           let events = event_buffer.take()
           events
           |> list.each(fn(event) { io.println(encode.encode(event)) })
@@ -585,22 +653,34 @@ pub fn existing_test_modules(
   })
 }
 
+/// Ignores session events; used by modes that present the run without the
+/// compile phase (TUI, stream).
+fn ignore_session(_event: session.SessionEvent) -> Nil {
+  Nil
+}
+
 /// Runs the tests. The project is first compiled with a fast compile-only
 /// subprocess for the current target; the affected test modules are then
 /// executed in-VM (on Erlang with hot module reloading, on JavaScript by
 /// loading the compiled `.mjs` files). When in-VM execution is not possible
-/// the whole suite runs as a `gleam test` subprocess instead.
+/// the whole suite runs as a `gleam test` subprocess instead. With
+/// `coverage` (Erlang only) the project's beams are instrumented with
+/// `cover` before the run and the per-module line coverage is reported
+/// after it.
 fn run_tests(
   project_dir: String,
   changed_paths: List(String),
   sink: fn(Event) -> Nil,
+  session_sink: fn(session.SessionEvent) -> Nil,
   config: runner.Config,
   name: Option(String),
+  coverage: Bool,
 ) -> Result(Bool, RunError) {
   let target = case vm.is_erlang() {
     True -> "erlang"
     False -> "javascript"
   }
+  session_sink(session.CompileStarted)
   case
     fs.run_gleam_test_with(
       project_dir,
@@ -610,11 +690,34 @@ fn run_tests(
     )
   {
     Ok(process) if process.exit_code == 0 -> {
+      session_sink(session.CompileFinished)
+      let coverage_on = case coverage && vm.is_erlang() {
+        True ->
+          case start_coverage(project_dir) {
+            Ok(_) -> True
+            Error(message) -> {
+              io.println_error(
+                "  kangaroo: coverage unavailable (" <> message <> ")",
+              )
+              False
+            }
+          }
+        False ->
+          case coverage {
+            True -> {
+              io.println_error(
+                "  kangaroo: watch coverage is Erlang-only, running without it",
+              )
+              False
+            }
+            False -> False
+          }
+      }
       let affected = case compute_affected(project_dir, changed_paths) {
         Ok(affected) -> affected
         Error(_) -> []
       }
-      case run_in_vm(project_dir, affected, sink, config, name) {
+      let result = case run_in_vm(project_dir, affected, sink, config, name) {
         Ok(has_failures) -> Ok(has_failures)
         Error(message) -> {
           io.println_error(
@@ -625,10 +728,32 @@ fn run_tests(
           run_tests_subprocess(project_dir, sink)
         }
       }
+      case coverage_on {
+        True -> report_coverage(project_dir, io.println_error)
+        False -> Nil
+      }
+      result
     }
     Ok(process) -> Error(CompileFailed(process.output))
     Error(message) -> Error(StartupFailed(message))
   }
+}
+
+/// Instruments the project's beams with `cover` so the next in-VM run
+/// records line hits.
+fn start_coverage(project_dir: String) -> Result(Nil, String) {
+  use _ <- result.try(vm.cover_start())
+  use ebin <- result.try(vm.ebin_dir(project_dir))
+  vm.cover_compile_beams(ebin)
+}
+
+/// Prints the per-module line coverage of the project's sources after an
+/// instrumented run.
+fn report_coverage(project_dir: String, print: fn(String) -> Nil) -> Nil {
+  let modules = cover_src_modules(project_dir)
+  modules |> list.each(fn(module) { print("  " <> coverage.table_row(module)) })
+  let total = coverage.percentage(modules)
+  print("  total coverage: " <> int.to_string(total) <> "%")
 }
 
 /// Executes the given test modules in-VM. When `modules` is empty, every
@@ -767,11 +892,8 @@ fn run_coverage_erlang(project_dir: String) -> Result(Int, String) {
         None,
       ))
 
-      let modules = cover_src_modules(project_dir)
-      modules
-      |> list.each(fn(module) { io.println("  " <> coverage.table_row(module)) })
-      let total = coverage.percentage(modules)
-      io.println("  total coverage: " <> int.to_string(total) <> "%")
+      report_coverage(project_dir, io.println)
+      let total = coverage.percentage(cover_src_modules(project_dir))
       Ok(total)
     }
   }
