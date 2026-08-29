@@ -222,6 +222,9 @@ jobs:
       - name: Test VS Code integration core
         working-directory: editors/vscode
         run: npm test
+      - name: Prebuild VS Code fixture daemon
+        working-directory: editors/vscode/test/workspace
+        run: gleam build --target javascript --warnings-as-errors
       - name: Test inside the VS Code Extension Development Host
         working-directory: editors/vscode
         run: xvfb-run -a npm run test:integration

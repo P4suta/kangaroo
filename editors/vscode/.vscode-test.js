@@ -12,6 +12,6 @@ module.exports = defineConfig({
     "--skip-release-notes",
   ],
   mocha: {
-    timeout: 60_000,
+    timeout: 120_000,
   },
 });

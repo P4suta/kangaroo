@@ -243,11 +243,25 @@ remove_tree(Path) ->
     case lists:prefix(".kangaroo-coverage-", filename:basename(Value)) of
         false -> {error, <<"refusing to remove a non-coverage workspace">>};
         true ->
-            case remove_directory(Value) of
+            case remove_directory_retry(Value, 0) of
                 ok -> {ok, nil};
                 {error, enoent} -> {ok, nil};
                 {error, Reason} -> {error, format_error(Reason)}
             end
+    end.
+
+remove_directory_retry(Path, Attempt) ->
+    case remove_directory(Path) of
+        {error, Reason}
+          when (Reason =:= eperm orelse Reason =:= eacces),
+               Attempt < 100 ->
+            %% Windows can retain executable and build artefact handles for a
+            %% short period after taskkill has returned. Retrying the exact
+            %% guarded temporary workspace keeps cleanup deterministic without
+            %% broadening what this function is allowed to remove.
+            timer:sleep(20),
+            remove_directory_retry(Path, Attempt + 1);
+        Result -> Result
     end.
 
 remove_directory(Path) ->

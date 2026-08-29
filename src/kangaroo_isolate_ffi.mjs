@@ -194,6 +194,14 @@ function terminateRegisteredChildren(registry) {
 function terminateProcessTree(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return;
   if (globalThis.process.platform === "win32") {
+    // Terminate the directly registered child through the native process API
+    // first. Starting taskkill can take long enough on a busy Windows host
+    // for a short-lived child to perform work before the tree walk begins.
+    try {
+      globalThis.process.kill(pid, "SIGKILL");
+    } catch {
+      // The process may already have exited.
+    }
     try {
       execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
         stdio: "ignore",

@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const vscode = require("vscode");
 
-async function waitFor(description, predicate, timeoutMs = 30_000) {
+async function waitFor(description, predicate, timeoutMs = 90_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const value = predicate();

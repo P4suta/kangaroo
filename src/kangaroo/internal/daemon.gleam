@@ -16,7 +16,7 @@ import kangaroo/internal/vm
 import kangaroo/internal/watcher
 import kangaroo/sys
 
-const input_poll_ms = 10
+const input_poll_ms = 20
 
 const operation_timeout_ms = 604_800_000
 

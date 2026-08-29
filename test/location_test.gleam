@@ -77,6 +77,14 @@ pub fn suites() {
         ))
         |> to_be_true()
       }),
+      it("normalises Windows separators before classifying stack paths", fn() {
+        expect(is_framework_file("test\\runtime_fixture.gleam"))
+        |> to_be_false()
+        expect(is_framework_file("src\\kangaroo\\isolate.gleam"))
+        |> to_be_true()
+        expect(from_erlang_stack("test\\runtime_fixture.gleam:33"))
+        |> to_equal(Some(Location("test/runtime_fixture.gleam", 33, None)))
+      }),
       it(
         "skips compiled artefact frames when picking the first user frame",
         fn() {

@@ -11,6 +11,7 @@ import kangaroo/internal/protocol
 
 pub fn protocol_v1_output_matches_golden_test() {
   let assert Ok(golden) = fs.read_file("test/golden/protocol-v1.ndjson")
+  let golden = string.replace(golden, each: "\r\n", with: "\n")
   let actual =
     [
       protocol.encode_discovered("discover-1", [indexed_test()]),

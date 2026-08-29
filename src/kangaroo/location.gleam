@@ -29,6 +29,7 @@ pub fn capture() -> Option(Location)
 /// source attributes only for the main package, so those frames carry the
 /// compiled `_gleam_artefacts/*.erl` paths instead.
 pub fn is_framework_file(file: String) -> Bool {
+  let file = normalise_path(file)
   string.starts_with(file, "src/kangaroo")
   || string.starts_with(file, "src/gleam/")
   || string.starts_with(file, "gleam/")
@@ -136,10 +137,15 @@ fn valid_location(
   line: Int,
   column: Option(Int),
 ) -> Result(Location, Nil) {
+  let file = normalise_path(file)
   case file != "" && line > 0 {
     True -> Ok(Location(file, line, column))
     False -> Error(Nil)
   }
+}
+
+fn normalise_path(path: String) -> String {
+  string.replace(path, each: "\\", with: "/")
 }
 
 /// Parses one frame of a JavaScript stack: a line like

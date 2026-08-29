@@ -344,6 +344,10 @@ function writeAll(fileDescriptor, line) {
 export function halt(code) {
   // Returning to the event loop lets protocol output flush and acknowledged
   // stdin Workers finish closing. process.exit() can deadlock while Node is
-  // synchronously joining a Worker that has just released fd 0.
-  process.exitCode = Number(code);
+  // synchronously joining a Worker that has just released fd 0. Windows does
+  // not reliably release a piped fd 0 when the Worker is merely unreferenced,
+  // so explicitly exit there after close_input has acknowledged its reader.
+  const exitCode = Number(code);
+  if (process.platform === "win32") process.exit(exitCode);
+  else process.exitCode = exitCode;
 }

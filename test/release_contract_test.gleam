@@ -69,6 +69,11 @@ pub fn generated_validation_artifacts_are_ignored_test() {
   })
 }
 
+pub fn protocol_golden_uses_lf_on_every_supported_os_test() {
+  let assert Ok(attributes) = fs.read_file(".gitattributes")
+  assert string.contains(attributes, "test/golden/*.ndjson text eol=lf")
+}
+
 pub fn ci_covers_the_supported_platforms_and_runtimes_test() {
   let assert Ok(workflow) = fs.read_file(".github/workflows/test.yml")
 
@@ -86,6 +91,7 @@ pub fn ci_covers_the_supported_platforms_and_runtimes_test() {
     "python3 scripts/benchmark.py",
     "benchmark-result.json",
     "npm run test:integration",
+    "Prebuild VS Code fixture daemon",
     "nvim-linux-x86_64.tar.gz",
     "npm ci",
     "python3 -W error::ResourceWarning -m unittest scripts/test_hex_clean_install.py",

@@ -237,6 +237,11 @@ function terminateProcessTree(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return;
   if (globalThis.process.platform === "win32") {
     try {
+      globalThis.process.kill(pid, "SIGKILL");
+    } catch {
+      // The process may already have exited.
+    }
+    try {
       execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
         stdio: "ignore",
       });
