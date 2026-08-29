@@ -1,6 +1,7 @@
 import affected_test.{suites as affected_suites}
 import collect_test.{suites as collect_suites}
 import coverage_test.{suites as coverage_suites}
+import flags_test.{suites as flags_suites}
 import gleam/list
 import graph_test.{suites as graph_suites}
 import integration_test.{suites as integration_suites}
@@ -29,5 +30,6 @@ pub fn suites() -> List(Suite) {
     integration_suites(),
     jscoverage_suites(),
     keys_suites(),
+    flags_suites(),
   ])
 }

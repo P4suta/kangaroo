@@ -1,9 +1,13 @@
 import gleam/list
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/string
-import kangaroo/event.{CaseFinished, CaseStarted, RunFinished, RunStarted}
+
+import kangaroo/event.{
+  CaseFinished, CaseStarted, RunFinished, RunStarted, SuiteFinished,
+  SuiteStarted,
+}
 import kangaroo/expect.{expect, to_equal}
-import kangaroo/failure.{EqualityMismatch, Failed, Passed, Skipped}
+import kangaroo/failure.{AssertionFailed, EqualityMismatch, Failed, Passed, Skipped}
 import kangaroo/report.{Summary}
 import kangaroo/suite.{it, suite}
 import kangaroo_cli/tui
@@ -12,7 +16,7 @@ pub fn suites() {
   [
     suite("tui", [
       it("starts empty", fn() {
-        expect(tui.initial()) |> to_equal(tui.UiState([], None))
+        expect(tui.initial()) |> to_equal(tui.UiState([], None, None))
       }),
       it("tracks case statuses through a run", fn() {
         let state =
@@ -24,7 +28,7 @@ pub fn suites() {
           |> tui.apply(CaseFinished(
             "math",
             "subs",
-            Failed([EqualityMismatch("2", "1", None)]),
+            Failed([EqualityMismatch("2", "1", None, None)]),
             1,
           ))
           |> tui.apply(RunFinished(1, Summary(1, 1, 0, 5)))
@@ -37,7 +41,7 @@ pub fn suites() {
                 expect(adds.name) |> to_equal("adds")
                 expect(adds.status) |> to_equal(tui.Passed)
                 expect(subs.status)
-                |> to_equal(tui.Failed([EqualityMismatch("2", "1", None)]))
+                |> to_equal(tui.Failed([EqualityMismatch("2", "1", None, None)]))
               }
               _ -> panic as "expected two cases"
             }
@@ -62,7 +66,7 @@ pub fn suites() {
           |> tui.apply(CaseFinished(
             "math",
             "subs",
-            Failed([EqualityMismatch("2", "1", None)]),
+            Failed([EqualityMismatch("2", "1", None, None)]),
             1,
           ))
           |> tui.apply(RunFinished(1, Summary(1, 1, 0, 5)))
@@ -93,12 +97,73 @@ pub fn suites() {
           |> tui.apply(CaseFinished(
             "math",
             "subs",
-            Failed([EqualityMismatch("2", "1", None)]),
+            Failed([EqualityMismatch("2", "1", None, None)]),
             1,
           ))
         let rendered = tui.render(state, tui.FailuresOnly)
         string.contains(rendered, "✗ subs") |> expect |> to_equal(True)
         string.contains(rendered, "✓ adds") |> expect |> to_equal(False)
+      }),
+      it("renders watch session information", fn() {
+        let state =
+          tui.initial()
+          |> tui.apply(RunStarted(1, 1))
+          |> tui.apply(CaseFinished("math", "adds", Passed, 3))
+          |> tui.apply(RunFinished(1, Summary(1, 0, 0, 5)))
+          |> tui.with_run_info(tui.RunInfo(2, Some(3)))
+        let rendered = tui.render(state, tui.All)
+        string.contains(rendered, "2 file(s) changed") |> expect |> to_equal(True)
+        string.contains(rendered, "3 affected test module(s)")
+        |> expect
+        |> to_equal(True)
+      }),
+      it("renders a full run when the affected count is unknown", fn() {
+        let state =
+          tui.initial()
+          |> tui.apply(RunStarted(1, 1))
+          |> tui.apply(CaseFinished("math", "adds", Passed, 3))
+          |> tui.apply(RunFinished(1, Summary(1, 0, 0, 5)))
+          |> tui.with_run_info(tui.RunInfo(0, None))
+        let rendered = tui.render(state, tui.All)
+        string.contains(rendered, "full run") |> expect |> to_equal(True)
+      }),
+      it("finds the slowest case", fn() {
+        let state =
+          tui.initial()
+          |> tui.apply(RunStarted(1, 2))
+          |> tui.apply(CaseFinished("math", "fast", Passed, 1))
+          |> tui.apply(CaseFinished("math", "slow", Passed, 9))
+          |> tui.apply(RunFinished(1, Summary(2, 0, 0, 10)))
+        let rendered = tui.render(state, tui.All)
+        string.contains(rendered, "slowest: slow (9ms)")
+        |> expect
+        |> to_equal(True)
+      }),
+      it("renders suite hook failures", fn() {
+        let state =
+          tui.initial()
+          |> tui.apply(RunStarted(1, 1))
+          |> tui.apply(SuiteStarted("math"))
+          |> tui.apply(SuiteFinished(
+            "math",
+            Failed([AssertionFailed("setup failed", None)]),
+          ))
+          |> tui.apply(RunFinished(1, Summary(0, 1, 0, 5)))
+        let rendered = tui.render(state, tui.All)
+        string.contains(rendered, "suite hooks") |> expect |> to_equal(True)
+        string.contains(rendered, "setup failed") |> expect |> to_equal(True)
+      }),
+      it("shows suites with hook failures in the failures view", fn() {
+        let state =
+          tui.initial()
+          |> tui.apply(RunStarted(1, 1))
+          |> tui.apply(SuiteStarted("math"))
+          |> tui.apply(SuiteFinished(
+            "math",
+            Failed([AssertionFailed("boom", None)]),
+          ))
+        let rendered = tui.render(state, tui.FailuresOnly)
+        string.contains(rendered, "math") |> expect |> to_equal(True)
       }),
       it("hides suites with no failures in the failures view", fn() {
         let state =

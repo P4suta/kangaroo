@@ -1,5 +1,7 @@
 // Small platform services: monotonic clock, environment access, exit.
-import { None, Some } from "../gleam_stdlib/gleam/option.mjs";
+// `Option$None$const` is the shared None instance; the `None` export is the
+// class itself, which must not be returned as a value.
+import { Option$None$const, Some } from "../gleam_stdlib/gleam/option.mjs";
 
 export function now_ms() {
   return Date.now();
@@ -8,9 +10,9 @@ export function now_ms() {
 export function env(name) {
   if (typeof process !== "undefined" && process.env) {
     const value = process.env[name];
-    return value === undefined ? { tag: "None" } : new Some(value);
+    return value === undefined ? Option$None$const : new Some(value);
   }
-  return { tag: "None" };
+  return Option$None$const;
 }
 
 export function halt(code) {

@@ -4,8 +4,6 @@ import gleam/string
 import kangaroo/suite.{type Suite}
 import kangaroo_cli/fs
 
-/// Erlang-only execution engine. On JavaScript every function returns an
-/// error and the CLI falls back to running `gleam test` as a subprocess.
 /// Whether this build of the CLI runs on Erlang.
 @external(erlang, "kangaroo_cli_ffi", "is_erlang")
 @external(javascript, "../kangaroo_cli_ffi.mjs", "is_erlang")
@@ -23,20 +21,75 @@ pub fn add_code_path(directory: String) -> Result(Nil, String)
 pub fn add_project_paths(project_dir: String) -> Result(Nil, String)
 
 /// Loads a compiled module (by name, e.g. `"foo_test"` or `"a/b"`),
-/// purging any previous version first.
+/// purging any previous version first. On Erlang the beam is hot-loaded into
+/// this VM; on JavaScript the compiled `.mjs` file is loaded into this
+/// process.
+pub fn load_module(project_dir: String, name: String) -> Result(Nil, String) {
+  case is_erlang() {
+    True -> load_module_erlang(name)
+    False -> {
+      use path <- result.try(js_module_path(project_dir, name))
+      load_module_js(path)
+    }
+  }
+}
+
+/// Loads a compiled Erlang module by name, purging any previous version.
 @external(erlang, "kangaroo_cli_ffi", "load_module")
 @external(javascript, "../kangaroo_cli_ffi.mjs", "not_supported")
-pub fn load_module(name: String) -> Result(Nil, String)
+fn load_module_erlang(name: String) -> Result(Nil, String)
+
+/// Loads a compiled JavaScript module from its resolved path.
+@external(erlang, "kangaroo_cli_ffi", "not_supported")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "load_js")
+fn load_module_js(path: String) -> Result(Nil, String)
+
+/// The absolute path of a compiled JavaScript module, e.g.
+/// `<project>/build/dev/javascript/<package>/<name>.mjs`.
+pub fn js_module_path(project_dir: String, name: String) -> Result(String, String) {
+  use package <- result.try(package_name(project_dir))
+  let relative_path =
+    project_dir
+    <> "/build/dev/javascript/"
+    <> package
+    <> "/"
+    <> name
+    <> ".mjs"
+  case string.starts_with(relative_path, "/") {
+    True -> Ok(relative_path)
+    False -> {
+      use dir <- result.try(fs.current_dir())
+      Ok(dir <> "/" <> relative_path)
+    }
+  }
+}
 
 /// Calls `suites()` on a loaded test module, returning its suites.
 @external(erlang, "kangaroo_cli_ffi", "call_suites")
-@external(javascript, "../kangaroo_cli_ffi.mjs", "not_supported")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "call_suites")
 pub fn call_suites(module: String) -> Result(List(Suite), String)
 
-/// Lists the `*_test` modules compiled into a project's ebin directory.
+/// Lists the `*_test` modules compiled into the project's build output.
+pub fn list_test_modules(project_dir: String) -> Result(List(String), String) {
+  case is_erlang() {
+    True -> list_test_modules_erlang(project_dir)
+    False -> {
+      use package <- result.try(package_name(project_dir))
+      list_test_modules_js(
+        project_dir <> "/build/dev/javascript/" <> package,
+      )
+    }
+  }
+}
+
 @external(erlang, "kangaroo_cli_ffi", "list_test_modules")
 @external(javascript, "../kangaroo_cli_ffi.mjs", "not_supported")
-pub fn list_test_modules(project_dir: String) -> Result(List(String), String)
+fn list_test_modules_erlang(project_dir: String) -> Result(List(String), String)
+
+/// Lists the `*_test` modules under a compiled JavaScript package directory.
+@external(erlang, "kangaroo_cli_ffi", "not_supported")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "list_test_modules_js")
+fn list_test_modules_js(package_dir: String) -> Result(List(String), String)
 
 /// The project's own ebin directory under `build/dev/erlang/<name>`.
 pub fn ebin_dir(project_dir: String) -> Result(String, String) {

@@ -1,13 +1,14 @@
 %% Platform services for the Kangaroo CLI: file access, subprocess
 %% execution of `gleam test`, and a monotonic clock for the watch loop.
 -module(kangaroo_cli_ffi).
--export([list_files_recursive/1, read_file/1, mtime_ms/1, sleep/1,
-         gleam_executable/0, run_gleam_test/3, now_ms/0, current_dir/0,
-         args/0, halt/1, is_erlang/0, add_code_path/1, add_project_paths/1,
-         load_module/1, call_suites/1, list_test_modules/1, cover_start/0,
-         cover_compile_beams/1, cover_analyse/1, event_buffer_append/1,
-         event_buffer_take/0, is_tty/0, raw_mode/1, init_keyboard/0,
-         poll_key/0, run_gleam_test_with/4, remove_dir/1]).
+-export([list_files_recursive/1, read_file/1, mtime_ms/1, file_size/1,
+         exists/1, sleep/1, gleam_executable/0, run_gleam_test/3, now_ms/0,
+         current_dir/0, args/0, halt/1, is_erlang/0, add_code_path/1,
+         add_project_paths/1, load_module/1, call_suites/1,
+         list_test_modules/1, cover_start/0, cover_compile_beams/1,
+         cover_analyse/1, event_buffer_append/1, event_buffer_take/0,
+         is_tty/0, raw_mode/1, init_keyboard/0, poll_key/0,
+         run_gleam_test_with/4, remove_dir/1]).
 -include_lib("kernel/include/file.hrl").
 
 is_erlang() ->
@@ -68,17 +69,37 @@ list_test_modules(ProjectDir) ->
     case package_name(ProjectDir) of
         {error, Reason} -> {error, Reason};
         {ok, Name} ->
-            Ebin = filename:join([ProjectDir, "build", "dev", "erlang", Name,
-                                  "ebin"]),
+            Ebin0 = filename:join([ProjectDir, "build", "dev", "erlang",
+                                   to_list(Name), "ebin"]),
+            %% beam_lib requires a string path; keep it a list even when the
+            %% input components are binaries.
+            Ebin = unicode:characters_to_list(Ebin0),
             case file:list_dir(Ebin) of
                 {ok, Entries} ->
-                    Tests = [module_of(F)
+                    Beams = [filename:join(Ebin, F)
                              || F <- Entries,
                                 lists:suffix("_test.beam", F)],
+                    Tests = [module_of(filename:basename(B))
+                             || B <- Beams, exports_suites(B)],
                     {ok, lists:sort(Tests)};
                 {error, Reason2} ->
                     {error, format_error(Reason2)}
             end
+    end.
+
+%% Only modules that actually export a `suites` function are runnable test
+%% modules. Gleam can emit empty stub modules for names it knows without
+%% sources, and loading one would purge the real module from the VM.
+exports_suites(BeamPath) ->
+
+    case beam_lib:chunks(BeamPath, [exports]) of
+        {ok, {_, [{exports, Exports}]}} ->
+            R = lists:keymember(suites, 1, Exports),
+
+            R;
+        _ ->
+
+            false
     end.
 
 module_of(FileName) ->
@@ -223,6 +244,17 @@ mtime_ms(Path) ->
         {error, Reason} ->
             {error, format_error(Reason)}
     end.
+
+file_size(Path) ->
+    case file:read_file_info(Path) of
+        {ok, Info} ->
+            {ok, Info#file_info.size};
+        {error, Reason} ->
+            {error, format_error(Reason)}
+    end.
+
+exists(Path) ->
+    filelib:is_file(Path).
 
 sleep(Ms) ->
     timer:sleep(Ms).

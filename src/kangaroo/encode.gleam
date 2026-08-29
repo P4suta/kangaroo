@@ -1,12 +1,14 @@
 import gleam/io
 import gleam/json
 import kangaroo/event.{
-  type Event, CaseFinished, CaseStarted, RunFinished, RunStarted,
+  type Event, CaseFinished, CaseStarted, RunFinished, RunStarted, SuiteFinished,
+  SuiteStarted,
 }
 import kangaroo/failure.{
   type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Passed,
   Skipped, UnexpectedError,
 }
+import kangaroo/location.{type Location}
 import kangaroo/report.{type Summary}
 
 /// The sink used for machine-readable output: every event is printed as a
@@ -38,6 +40,17 @@ pub fn encode(event: Event) -> String {
         #("outcome", outcome_json(outcome)),
         #("duration_ms", json.int(duration_ms)),
       ])
+    SuiteStarted(suite) ->
+      json.object([
+        #("type", json.string("suite_started")),
+        #("suite", json.string(suite)),
+      ])
+    SuiteFinished(suite, outcome) ->
+      json.object([
+        #("type", json.string("suite_finished")),
+        #("suite", json.string(suite)),
+        #("outcome", outcome_json(outcome)),
+      ])
     RunFinished(run_id, summary) ->
       json.object([
         #("type", json.string("run_finished")),
@@ -62,25 +75,35 @@ fn outcome_json(outcome: Outcome) -> json.Json {
 
 fn failure_json(failure: Failure) -> json.Json {
   case failure {
-    EqualityMismatch(expected, actual, diff) ->
+    EqualityMismatch(expected, actual, diff, location) ->
       json.object([
         #("kind", json.string("equality_mismatch")),
         #("expected", json.string(expected)),
         #("actual", json.string(actual)),
         #("diff", json.nullable(diff, json.string)),
+        #("location", json.nullable(location, location_json)),
       ])
-    AssertionFailed(message) ->
+    AssertionFailed(message, location) ->
       json.object([
         #("kind", json.string("assertion_failed")),
         #("message", json.string(message)),
+        #("location", json.nullable(location, location_json)),
       ])
-    UnexpectedError(name, message) ->
+    UnexpectedError(name, message, location) ->
       json.object([
         #("kind", json.string("unexpected_error")),
         #("name", json.string(name)),
         #("message", json.string(message)),
+        #("location", json.nullable(location, location_json)),
       ])
   }
+}
+
+fn location_json(location: Location) -> json.Json {
+  json.object([
+    #("file", json.string(location.file)),
+    #("line", json.int(location.line)),
+  ])
 }
 
 fn summary_json(summary: Summary) -> json.Json {

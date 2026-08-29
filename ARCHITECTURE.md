@@ -8,8 +8,8 @@ Erlang and JavaScript implementations.
 ┌────────────────────────────────────────────────────────────┐
 │  DOMAIN CORE — kangaroo (pure, platform-independent)        │
 │  suite / it / expect / matchers / diff / failure / report   │
-│  event (the single source of truth)                         │
-│  runner:  suites -> events + Report                         │
+│  location (stack parsing) / event (single source of truth)  │
+│  runner:  suites + Config -> events + Report                │
 ├────────────────────────────────────────────────────────────┤
 │  APPLICATION — kangaroo_cli (pure, testable)                │
 │  graph / affected / watcher / stream / collect / tui        │
@@ -17,11 +17,12 @@ Erlang and JavaScript implementations.
 ├────────────────────────────────────────────────────────────┤
 │  PORTS — thin modules with @external pairs                  │
 │  context    (per-case failure storage)                      │
-│  isolate    (run a body in isolation, catch panics)         │
+│  isolate    (run a body in isolation, catch panics, timeout)│
+│  location   (capture the caller's source position)          │
 │  sys        (clock, env, halt)                              │
-│  print      (failure message formatting)                    │
+│  print      (failure message formatting, truncation)        │
 │  fs         (files, subprocess, args, event buffer)         │
-│  vm         (code loading, suites(), cover)                 │
+│  vm         (code loading, suites(), cover; Erlang + JS)    │
 ├────────────────────────────────────────────────────────────┤
 │  ADAPTERS                                                    │
 │  src/kangaroo_*_ffi.erl / .mjs                              │
@@ -34,6 +35,7 @@ Erlang and JavaScript implementations.
 `kangaroo/event.gleam` defines the entire observable behaviour of a run:
 
 - `RunStarted(run_id, case_count)`
+- `SuiteStarted(suite)` / `SuiteFinished(suite, outcome)`
 - `CaseStarted(suite, case_name)`
 - `CaseFinished(suite, case_name, outcome, duration_ms)`
 - `RunFinished(run_id, summary)`
@@ -41,6 +43,8 @@ Erlang and JavaScript implementations.
 Every presentation layer is a fold over this stream: the terminal
 formatter (`format.print_sink`), the TUI (`tui.apply`), and the editor
 protocol (`encode.encode`). Adding a new consumer never touches the runner.
+Suite-level hook failures surface as `SuiteFinished` outcomes and count
+towards the summary.
 
 ## Isolation
 
@@ -48,30 +52,53 @@ Each case body runs through `isolate`, the single execution primitive:
 
 - **Erlang**: a freshly spawned process with the process dictionary as
   per-case storage; panics are caught and reported with the stack trace.
+  The configured timeout bounds the execution.
 - **JavaScript**: a module-global failure array, saved and restored around
-  each body so nested runs cannot leak failures into each other.
+  each body so nested runs cannot leak failures into each other. A
+  synchronous body cannot be interrupted, so timeouts do not apply.
 
 The context port (`record` / `collect`) is drained after every case; on
 Erlang each spawned process has its own dictionary, and on JavaScript the
 isolate saves and restores the shared array.
 
+## Failure locations
+
+Matcher failures and panics carry the source position they originate from:
+
+- `location.capture()` derives the caller's `file:line` from the stack.
+  The pure `kangaroo/location` module parses both Erlang stack text
+  (`file:line` lines, with `.gleam` paths thanks to Gleam's `-file`
+  attributes) and JavaScript `Error().stack`, skipping framework frames.
+- Matchers capture the location eagerly in `expect()`, because matchers are
+  usually the last call in a test body and Erlang's tail-call optimisation
+  would erase the caller's frame by the time the failure is recorded.
+- Panics are located from the crash stack inside the isolate port.
+
 ## Continuous running
 
 `kangaroo_cli` orchestrates a compile-run loop:
 
-1. **Watch** — `src` and `test` are polled every 250 ms; a snapshot diff
-   produces added/modified/removed files.
+1. **Watch** — `src`, `test` and the project config files are polled every
+   250 ms. File metadata (mtime + size) is compared, and every few polls
+   the full contents are compared too, so edits that keep both unchanged
+   are still seen. Detected changes are debounced (150 ms) and the snapshot
+   is re-read so rapid saves coalesce into one run.
 2. **Graph** — every `.gleam` file's imports are parsed into a module
    graph.
 3. **Affected** — the transitive import closure of each test module is
    checked against the changed modules; cycles are handled with a visited
    set.
-4. **Compile** — `gleam test` runs with `KANGAROO_COMPILE_ONLY=1`, a
-   fast compile-only mode that never executes tests.
-5. **Run** — on Erlang the affected `*_test` modules are loaded into the
-   daemon's own VM (`code:purge` + `code:load_file`) and their `suites()`
-   are executed by the framework's runner. JavaScript uses a `gleam test`
-   subprocess and parses the NDJSON output.
+4. **Compile** — `gleam test -t <target>` runs with `KANGAROO_COMPILE_ONLY=1`,
+   a fast compile-only mode that never executes tests and only builds the
+   current target.
+5. **Run** — the affected `*_test` modules are loaded into the daemon's own
+   VM and their `suites()` are executed by the framework's runner. Erlang
+   hot-loads beams with `code:purge` + `code:load_file`. JavaScript loads
+   the compiled `.mjs` files with synchronous `require(esm)`, purging only
+   the project's own package from the require cache so the kangaroo runtime
+   keeps its module identity (required for `instanceof`-based type
+   matching); the loader rejects incompatible modules so the CLI falls back
+   to a `gleam test` subprocess instead of silently passing.
 6. **Present** — events are folded into the TUI, printed as text, or
    streamed as JSON.
 
@@ -96,13 +123,15 @@ The TUI reads keys through a background reader process (`io:get_chars`)
 while the terminal is in raw mode. Raw mode disables ISIG, so Ctrl+C
 arrives as the byte 0x03 and is handled like `q`: restore the terminal,
 then exit. `is_tty` inspects the VM's own stdout (`/proc/self/fd/1`) so
-the TUI is only chosen when stdout is a terminal. Keyboard input is
-Erlang-only; the JavaScript TUI renders but does not read keys.
+the TUI is only chosen when stdout is a terminal. On JavaScript keys are
+read synchronously from the (non-blocking) terminal file descriptor, so the
+watch loop stays synchronous; a SIGINT handler restores the terminal.
 
 ## Testing
 
 Kangaroo tests itself. The framework's tests are written with the
 framework; the CLI's tests cover the pure logic (graph, affected,
-watcher, stream, collect, coverage, TUI) plus integration tests that run
-the real executor against the `kangaroo` package itself — spawning
-`gleam test`, loading its modules in-VM, and measuring its coverage.
+watcher, stream, collect, coverage, TUI, flags) plus integration tests that
+run the real executor against the `kangaroo` package itself — spawning
+`gleam test`, loading its modules in-VM (hot-reloading beams on Erlang and
+`.mjs` files on JavaScript), and measuring its coverage.

@@ -1,8 +1,12 @@
 import gleam/option.{None, Some}
 import kangaroo/encode
-import kangaroo/event.{CaseFinished, CaseStarted, RunFinished, RunStarted}
+import kangaroo/event.{
+  CaseFinished, CaseStarted, RunFinished, RunStarted, SuiteFinished,
+  SuiteStarted,
+}
 import kangaroo/expect.{expect, to_equal}
 import kangaroo/failure.{EqualityMismatch, Failed, Passed, Skipped}
+import kangaroo/location.{Location}
 import kangaroo/report.{Summary}
 import kangaroo/suite.{it, suite}
 
@@ -36,12 +40,43 @@ pub fn suites() {
           encode.encode(CaseFinished(
             "math",
             "adds",
-            Failed([EqualityMismatch("2", "3", None)]),
+            Failed([EqualityMismatch("2", "3", None, None)]),
             5,
           )),
         )
         |> to_equal(
-          "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"adds\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"equality_mismatch\",\"expected\":\"2\",\"actual\":\"3\",\"diff\":null}]},\"duration_ms\":5}",
+          "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"adds\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"equality_mismatch\",\"expected\":\"2\",\"actual\":\"3\",\"diff\":null,\"location\":null}]},\"duration_ms\":5}",
+        )
+      }),
+      it("encodes a failure location", fn() {
+        let location = Some(Location("test/foo_test.gleam", 42))
+        expect(
+          encode.encode(CaseFinished(
+            "math",
+            "adds",
+            Failed([EqualityMismatch("2", "3", None, location)]),
+            5,
+          )),
+        )
+        |> to_equal(
+          "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"adds\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"equality_mismatch\",\"expected\":\"2\",\"actual\":\"3\",\"diff\":null,\"location\":{\"file\":\"test/foo_test.gleam\",\"line\":42}}]},\"duration_ms\":5}",
+        )
+      }),
+      it("encodes suite events", fn() {
+        expect(encode.encode(SuiteStarted("math")))
+        |> to_equal("{\"type\":\"suite_started\",\"suite\":\"math\"}")
+        expect(encode.encode(SuiteFinished("math", Passed)))
+        |> to_equal(
+          "{\"type\":\"suite_finished\",\"suite\":\"math\",\"outcome\":{\"kind\":\"passed\"}}",
+        )
+      }),
+      it("encodes a suite failure", fn() {
+        expect(encode.encode(SuiteFinished(
+          "math",
+          Failed([EqualityMismatch("a", "b", None, None)]),
+        )))
+        |> to_equal(
+          "{\"type\":\"suite_finished\",\"suite\":\"math\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"equality_mismatch\",\"expected\":\"a\",\"actual\":\"b\",\"diff\":null,\"location\":null}]}}",
         )
       }),
       it("encodes run finished with summary", fn() {

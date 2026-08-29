@@ -38,6 +38,71 @@ type Operation {
   Add(String)
 }
 
+/// A single line of a numbered diff: context lines carry the expected line
+/// number, removed lines the expected line number, and added lines the
+/// actual line number.
+pub type DiffLine {
+  Kept(number: Int, text: String)
+  Removed(number: Int, text: String)
+  Added(number: Int, text: String)
+}
+
+/// Like [`diff_lines`](#diff_lines), but keeps context lines and the
+/// original line numbers so renderers can present a unified-style view.
+/// Returns `None` when the texts are identical or both are a single line.
+pub fn diff_lines_numbered(
+  expected: String,
+  actual: String,
+) -> Option(List(DiffLine)) {
+  let expected_lines = lines(expected)
+  let actual_lines = lines(actual)
+
+  case expected_lines == actual_lines {
+    True -> None
+    False ->
+      case list.length(expected_lines) < 2 && list.length(actual_lines) < 2 {
+        True -> None
+        False -> lines_diff_numbered(expected_lines, actual_lines)
+      }
+  }
+}
+
+fn lines_diff_numbered(
+  expected: List(String),
+  actual: List(String),
+) -> Option(List(DiffLine)) {
+  let table = build_table(expected, actual)
+  let expected_len = list.length(expected)
+  let actual_len = list.length(actual)
+
+  let operations =
+    backtrace(table, expected, actual, expected_len, actual_len)
+    |> list.reverse
+
+  case operations {
+    [] -> None
+    _ -> Some(numbered(operations))
+  }
+}
+
+/// Assigns the original line numbers to a list of operations in textual
+/// order.
+fn numbered(operations: List(Operation)) -> List(DiffLine) {
+  let #(_, _, lines) =
+    list.fold(operations, #(0, 0, []), fn(state, operation) {
+      let #(expected, actual, acc) = state
+      case operation {
+        Keep(text) ->
+          #(expected + 1, actual + 1, [Kept(expected + 1, text), ..acc])
+        Remove(text) ->
+          #(expected + 1, actual, [Removed(expected + 1, text), ..acc])
+        Add(text) ->
+          #(expected, actual + 1, [Added(actual + 1, text), ..acc])
+      }
+    })
+  list.reverse(lines)
+}
+
 fn lines_diff(expected: List(String), actual: List(String)) -> Option(String) {
   let table = build_table(expected, actual)
   let expected_len = list.length(expected)

@@ -57,6 +57,44 @@ pub fn suites() {
           _ -> panic as "expected one suite"
         }
       }),
+      it("filters cases by name", fn() {
+        let suites = [
+          suite("math", [it("adds", empty_body), it("subs", empty_body)]),
+        ]
+        let filtered = suite.filter_by_name(suites, "adds")
+        case filtered {
+          [s] ->
+            expect(list.map(s.cases, fn(c) { c.name })) |> to_equal(["adds"])
+          _ -> panic as "expected one suite"
+        }
+      }),
+      it("keeps a suite whole when its name matches", fn() {
+        let suites = [
+          suite("math", [it("adds", empty_body), it("subs", empty_body)]),
+        ]
+        let filtered = suite.filter_by_name(suites, "math")
+        expect(list.length(filtered)) |> to_equal(1)
+        case filtered {
+          [s] -> expect(list.length(s.cases)) |> to_equal(2)
+          _ -> panic as "expected one suite"
+        }
+      }),
+      it("drops suites with no matching cases", fn() {
+        let suites = [
+          suite("math", [it("adds", empty_body)]),
+          suite("physics", [it("falls", empty_body)]),
+        ]
+        let filtered = suite.filter_by_name(suites, "adds")
+        case filtered {
+          [s] -> expect(s.name) |> to_equal("math")
+          _ -> panic as "expected one suite"
+        }
+      }),
+      it("filters nothing away for an empty substring", fn() {
+        let suites = [suite("math", [it("adds", empty_body)])]
+        expect(list.length(suite.filter_by_name(suites, "")))
+        |> to_equal(1)
+      }),
     ]),
   ]
 }

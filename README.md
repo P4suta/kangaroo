@@ -11,19 +11,26 @@ a rich terminal UI or a machine-readable stream for editors.
 
 ## Features
 
-- **Test framework**: `suite` / `it` DSL with matchers, `before_each` /
-  `after_each` hooks, `focus` / `skip`, and line-oriented diffs
-- **Self-hosting**: kangaroo tests itself — 90+ tests across Erlang and
+- **Test framework**: `suite` / `it` DSL with matchers, `before_all` /
+  `before_each` / `after_each` / `after_all` hooks, `focus` / `skip`,
+  per-case timeouts, and line-oriented diffs
+- **Failure locations**: matcher failures and panics carry the source
+  `file:line` they originate from (parsed from the stack, `.gleam` paths on
+  Erlang), shown in the terminal and streamed in the editor protocol
+- **Self-hosting**: kangaroo tests itself — 100+ tests across Erlang and
   JavaScript
 - **Continuous runner** (`kangaroo_cli`): watches `src` and `test`, computes
   the affected test modules from the import graph, and re-runs only those
-- **Hot reloading** (Erlang): the daemon executes tests in its own VM with
-  `code:load_file`, so re-runs never restart the runtime
+- **Hot reloading**: the daemon executes tests in its own VM — `code:load_file`
+  on Erlang, `require(esm)` on JavaScript — so re-runs never restart the
+  runtime
 - **Coverage**: line coverage on both targets — the Erlang `cover` tool
   mapped back to `.gleam` sources, and V8 coverage (`NODE_V8_COVERAGE`)
   on JavaScript
-- **Rich TUI**: full-screen ANSI rendering with per-case status marks and
-  keyboard control (`r` rerun, `f` failures-only, `q` / Ctrl+C quit)
+- **Rich TUI**: full-screen ANSI rendering with per-case status marks,
+  colored numbered diffs, failure locations, run statistics (changed files,
+  affected modules, slowest case), and keyboard control (`r` rerun, `f`
+  failures-only, `q` / Ctrl+C quit) on both targets
 - **Editor protocol**: newline-delimited JSON events for editors and CI
 
 ## Installation
@@ -91,7 +98,12 @@ so every assertion in a body is reported:
 - `to_be_none()` / `to_be_some()`
 - `to_be_empty()`
 - `to_contain(element)` / `to_contain_text(substring)`
-- `to_raise()` — asserts the function raises an error
+- `to_contain_key(key)`
+- `to_be_close_to(expected, tolerance)`
+- `to_be_less_than(n)` / `to_be_greater_than(n)`
+- `to_have_length(n)`
+- `to_start_with(prefix)` / `to_end_with(suffix)`
+- `to_raise()` / `to_raise_containing(substring)`
 
 ## Continuous testing
 
@@ -101,18 +113,26 @@ gleam run -m kangaroo_cli -- watch --tui       # force the TUI
 gleam run -m kangaroo_cli -- watch --no-tui    # streaming output
 gleam run -m kangaroo_cli -- watch --json      # editor protocol
 gleam run -m kangaroo_cli -- run               # run once
-gleam run -m kangaroo_cli -- run --coverage    # run once with coverage
+gleam run -m kangaroo_cli -- run --name <substring>   # run matching tests only
+gleam run -m kangaroo_cli -- run --json              # run once, editor protocol (CI)
+gleam run -m kangaroo_cli -- run --fail-fast         # stop at the first failure
+gleam run -m kangaroo_cli -- run --coverage          # run once with coverage
 ```
 
 In the TUI, `r` forces a full re-run, `f` toggles the failures-only view,
-and `q` (or Ctrl+C) quits, restoring the terminal.
+and `q` (or Ctrl+C) quits, restoring the terminal. Keyboard input works on
+both Erlang and JavaScript.
 
-On Erlang, the runner compiles the project with a fast compile-only
-subprocess and then executes only the affected test modules in its own VM
-with hot module reloading. On JavaScript it falls back to `gleam test`
-subprocesses. Coverage uses Erlang's `cover` (mapped back to `.gleam`
-lines) or, on JavaScript, Node's V8 coverage of the generated `.mjs`
-files, reported per module.
+The runner compiles the project with a fast compile-only subprocess for the
+current target and then executes only the affected test modules in its own
+VM with hot module reloading — `code:load_file` on Erlang, loading the
+compiled `.mjs` files on JavaScript (when the CLI runs from the project's
+own build, i.e. as a dev dependency). When in-VM execution is not possible
+it falls back to a `gleam test` subprocess. Changes are detected from file
+metadata plus periodic content comparison, and rapid saves are debounced.
+Coverage uses Erlang's `cover` (mapped back to `.gleam` lines) or, on
+JavaScript, Node's V8 coverage of the generated `.mjs` files, reported per
+module.
 
 ## Editor protocol
 
@@ -125,13 +145,14 @@ files, reported per module.
 {"type":"run_finished","run_id":...,"summary":{"passed":1,"failed":0,"skipped":0,"duration_ms":5}}
 ```
 
-Failed cases carry their failures:
+Failed cases carry their failures, with a source location for editors:
 
 ```json
-{"type":"case_finished","suite":"math","case":"adds","outcome":{"kind":"failed","failures":[{"kind":"equality_mismatch","expected":"2","actual":"1","diff":null}]},"duration_ms":2}
+{"type":"case_finished","suite":"math","case":"adds","outcome":{"kind":"failed","failures":[{"kind":"equality_mismatch","expected":"2","actual":"1","diff":null,"location":{"file":"test/foo_test.gleam","line":42}}]},"duration_ms":2}
 ```
 
-See [docs/protocol.md](docs/protocol.md) for the full schema.
+Watch runs also emit `changed` events describing the files that triggered a
+run. See [docs/protocol.md](docs/protocol.md) for the full schema.
 
 ## Architecture
 

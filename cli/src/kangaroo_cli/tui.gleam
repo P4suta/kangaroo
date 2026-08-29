@@ -3,13 +3,16 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import kangaroo/event.{
-  type Event, CaseFinished, CaseStarted, RunFinished, RunStarted,
+  type Event, CaseFinished, CaseStarted, RunFinished, RunStarted, SuiteFinished,
+  SuiteStarted,
 }
 import kangaroo/failure.{
   type Failure, type Outcome, AssertionFailed, EqualityMismatch,
   Failed as FailureFailed, Passed as FailurePassed, Skipped as FailureSkipped,
   UnexpectedError,
 }
+import kangaroo/format
+import kangaroo/location.{type Location}
 import kangaroo/report.{type Summary}
 
 /// The status of a single case in the TUI.
@@ -26,28 +29,82 @@ pub type UiCase {
 }
 
 pub type UiSuite {
-  UiSuite(name: String, cases: List(UiCase))
+  UiSuite(name: String, cases: List(UiCase), hook_failures: List(Failure))
 }
 
-/// The full state of the terminal UI, derived purely from events.
+/// The full state of the terminal UI, derived purely from events plus the
+/// watch-session information attached by the CLI.
 pub type UiState {
-  UiState(suites: List(UiSuite), summary: Option(Summary))
+  UiState(
+    suites: List(UiSuite),
+    summary: Option(Summary),
+    run_info: Option(RunInfo),
+  )
+}
+
+/// Watch-session information about the most recent run: how many files
+/// changed and how many test modules were affected (`None` means a full
+/// run).
+pub type RunInfo {
+  RunInfo(changed: Int, affected: Option(Int))
 }
 
 pub fn initial() -> UiState {
-  UiState([], None)
+  UiState([], None, None)
+}
+
+/// Records the watch-session information of the most recent run.
+pub fn with_run_info(state: UiState, info: RunInfo) -> UiState {
+  UiState(state.suites, state.summary, Some(info))
 }
 
 /// Applies a runner event to the UI state.
 pub fn apply(state: UiState, event: Event) -> UiState {
   case event {
-    RunStarted(_, _) -> UiState([], None)
+    RunStarted(_, _) -> UiState([], None, state.run_info)
     CaseStarted(suite_name, case_name) ->
       upsert_case(state, suite_name, case_name, Running, 0)
     CaseFinished(suite_name, case_name, outcome, duration_ms) ->
       upsert_case(state, suite_name, case_name, status_of(outcome), duration_ms)
-    RunFinished(_, summary) -> UiState(state.suites, Some(summary))
+    SuiteStarted(suite_name) -> ensure_suite(state, suite_name)
+    SuiteFinished(suite_name, outcome) ->
+      set_suite_failures(state, suite_name, hook_failures_of(outcome))
+    RunFinished(_, summary) -> UiState(state.suites, Some(summary), state.run_info)
   }
+}
+
+fn hook_failures_of(outcome: Outcome) -> List(Failure) {
+  case outcome {
+    FailurePassed -> []
+    FailureSkipped -> []
+    FailureFailed(failures) -> failures
+  }
+}
+
+fn ensure_suite(state: UiState, suite_name: String) -> UiState {
+  case list.any(state.suites, fn(suite) { suite.name == suite_name }) {
+    True -> state
+    False -> UiState(
+      list.append(state.suites, [UiSuite(suite_name, [], [])]),
+      state.summary,
+      state.run_info,
+    )
+  }
+}
+
+fn set_suite_failures(
+  state: UiState,
+  suite_name: String,
+  failures: List(Failure),
+) -> UiState {
+  let suites =
+    list.map(state.suites, fn(suite) {
+      case suite.name == suite_name {
+        True -> UiSuite(suite.name, suite.cases, failures)
+        False -> suite
+      }
+    })
+  UiState(suites, state.summary, state.run_info)
 }
 
 fn status_of(outcome: Outcome) -> CaseStatus {
@@ -67,7 +124,7 @@ fn upsert_case(
 ) -> UiState {
   let suites =
     upsert_suite(state.suites, suite_name, case_name, status, duration_ms)
-  UiState(suites, state.summary)
+  UiState(suites, state.summary, state.run_info)
 }
 
 fn upsert_suite(
@@ -78,11 +135,12 @@ fn upsert_suite(
   duration_ms: Int,
 ) -> List(UiSuite) {
   case suites {
-    [] -> [UiSuite(suite_name, [UiCase(case_name, status, duration_ms)])]
+    [] -> [UiSuite(suite_name, [UiCase(case_name, status, duration_ms)], [])]
     [first, ..rest] if first.name == suite_name -> [
       UiSuite(
         first.name,
         upsert_case_in(first.cases, case_name, status, duration_ms),
+        first.hook_failures,
       ),
       ..rest
     ]
@@ -120,13 +178,33 @@ pub type View {
   FailuresOnly
 }
 
+/// The slowest completed case across every suite, when any case has a
+/// measurable duration.
+pub fn slowest(suites: List(UiSuite)) -> Option(#(String, Int)) {
+  suites
+  |> list.map(fn(suite) { suite.cases })
+  |> list.flatten
+  |> list.fold(None, fn(best, item) {
+    case item.duration_ms {
+      0 -> best
+      _ ->
+        case best {
+          None -> Some(#(item.name, item.duration_ms))
+          Some(#(_, current)) if item.duration_ms > current ->
+            Some(#(item.name, item.duration_ms))
+          _ -> best
+        }
+    }
+  })
+}
+
 /// Renders the current state as an ANSI screen. The screen is cleared and
 /// the cursor is placed at the top before drawing.
 pub fn render(state: UiState, view: View) -> String {
   clear_screen()
   <> header()
   <> suites_section(visible_suites(state.suites, view))
-  <> summary_section(state.summary)
+  <> summary_section(state)
 }
 
 fn visible_suites(suites: List(UiSuite), view: View) -> List(UiSuite) {
@@ -144,9 +222,12 @@ fn visible_suites(suites: List(UiSuite), view: View) -> List(UiSuite) {
               _ -> False
             }
           }),
+          suite.hook_failures,
         )
       })
-      |> list.filter(fn(suite) { suite.cases != [] })
+      |> list.filter(fn(suite) {
+        suite.cases != [] || suite.hook_failures != []
+      })
   }
 }
 
@@ -180,16 +261,30 @@ fn header() -> String {
 fn suites_section(suites: List(UiSuite)) -> String {
   suites
   |> list.map(fn(suite) {
-    let cases = suite.cases
-    case cases {
-      [] -> ""
-      _ -> {
-        let rendered_cases = cases |> list.map(render_case) |> string.join("\n")
+    case suite.cases != [] || suite.hook_failures != [] {
+      False -> ""
+      True -> {
+        let rendered_cases =
+          suite.cases
+          |> list.map(render_case)
+          |> list.append(render_hook_failures(suite))
+          |> string.join("\n")
         "\n" <> bold <> suite.name <> reset <> "\n" <> rendered_cases <> "\n"
       }
     }
   })
   |> string.join("")
+}
+
+fn render_hook_failures(suite: UiSuite) -> List(String) {
+  case suite.hook_failures {
+    [] -> []
+    failures ->
+      [red <> "  ⚠ suite hooks" <> reset]
+      |> list.append(list.map(failures, fn(failure) {
+        "  " <> render_failure(failure)
+      }))
+  }
 }
 
 fn render_case(c: UiCase) -> String {
@@ -220,7 +315,7 @@ fn render_case(c: UiCase) -> String {
 
 fn render_failure(failure: Failure) -> String {
   case failure {
-    EqualityMismatch(expected, actual, diff) ->
+    EqualityMismatch(expected, actual, diff, location) ->
       "      "
       <> red
       <> "expected: "
@@ -234,11 +329,35 @@ fn render_failure(failure: Failure) -> String {
       <> actual
       <> case diff {
         None -> ""
-        Some(diff) -> "\n      diff:\n" <> indent(diff, 8)
+        Some(_) -> "\n" <> indent(format.render_diff(expected, actual), 4)
       }
-    AssertionFailed(message) -> "      " <> red <> message <> reset
-    UnexpectedError(name, message) ->
-      "      " <> red <> "error (" <> name <> ")" <> reset <> ": " <> message
+      <> location_line(location)
+    AssertionFailed(message, location) ->
+      "      " <> red <> message <> reset <> location_line(location)
+    UnexpectedError(name, message, location) ->
+      "      "
+      <> red
+      <> "error ("
+      <> name
+      <> ")"
+      <> reset
+      <> ": "
+      <> message
+      <> location_line(location)
+  }
+}
+
+fn location_line(location: Option(Location)) -> String {
+  case location {
+    None -> ""
+    Some(location) ->
+      "\n      "
+      <> dim
+      <> "at "
+      <> location.file
+      <> ":"
+      <> int.to_string(location.line)
+      <> reset
   }
 }
 
@@ -250,8 +369,8 @@ fn indent(text: String, spaces: Int) -> String {
   |> string.join("\n")
 }
 
-fn summary_section(summary: Option(Summary)) -> String {
-  case summary {
+fn summary_section(state: UiState) -> String {
+  case state.summary {
     None -> ""
     Some(summary) -> {
       let line =
@@ -263,11 +382,47 @@ fn summary_section(summary: Option(Summary)) -> String {
         0 -> line
         _ -> line <> ", " <> int.to_string(summary.skipped) <> " skipped"
       }
+      let counts =
+        case summary.failed {
+          0 -> green <> with_skipped <> reset
+          _ -> red <> with_skipped <> reset
+        }
       "\n"
-      <> case summary.failed {
-        0 -> green <> with_skipped <> reset
-        _ -> red <> with_skipped <> reset
-      }
+      <> counts
+      <> run_info_suffix(state.run_info)
+      <> slowest_suffix(state.suites)
     }
+  }
+}
+
+fn run_info_suffix(info: Option(RunInfo)) -> String {
+  case info {
+    None -> ""
+    Some(info) ->
+      " · "
+      <> dim
+      <> int.to_string(info.changed)
+      <> " file(s) changed, "
+      <> case info.affected {
+        None -> "full run"
+        Some(affected) ->
+          int.to_string(affected) <> " affected test module(s)"
+      }
+      <> reset
+  }
+}
+
+fn slowest_suffix(suites: List(UiSuite)) -> String {
+  case slowest(suites) {
+    None -> ""
+    Some(#(name, duration)) ->
+      " · "
+      <> dim
+      <> "slowest: "
+      <> name
+      <> " ("
+      <> int.to_string(duration)
+      <> "ms)"
+      <> reset
   }
 }

@@ -1,15 +1,18 @@
 import gleam/dynamic/decode
 import gleam/json
 import gleam/list
+import gleam/option.{type Option, None}
 import gleam/result
 import gleam/string
 import kangaroo/event.{
-  type Event, CaseFinished, CaseStarted, RunFinished, RunStarted,
+  type Event, CaseFinished, CaseStarted, RunFinished, RunStarted, SuiteFinished,
+  SuiteStarted,
 }
 import kangaroo/failure.{
   type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Passed,
   Skipped, UnexpectedError,
 }
+import kangaroo/location.{type Location, Location}
 import kangaroo/report.{type Summary, Summary}
 
 /// Parses the newline-delimited JSON events emitted by the test runner into
@@ -46,6 +49,16 @@ fn event_decoder() -> decode.Decoder(Event) {
           })
         })
       "case_finished" -> case_finished_decoder()
+      "suite_started" ->
+        decode.field("suite", decode.string, fn(suite) {
+          decode.success(SuiteStarted(suite))
+        })
+      "suite_finished" ->
+        decode.field("suite", decode.string, fn(suite) {
+          decode.field("outcome", outcome_decoder(), fn(outcome) {
+            decode.success(SuiteFinished(suite, outcome))
+          })
+        })
       "run_finished" ->
         decode.field("run_id", decode.int, fn(run_id) {
           decode.field("summary", summary_decoder(), fn(summary) {
@@ -89,25 +102,51 @@ fn failure_decoder() -> decode.Decoder(Failure) {
       "equality_mismatch" ->
         decode.field("expected", decode.string, fn(expected) {
           decode.field("actual", decode.string, fn(actual) {
-            decode.field("diff", decode.optional(decode.string), fn(diff) {
-              decode.success(EqualityMismatch(expected, actual, diff))
-            })
+            decode.optional_field(
+              "diff",
+              None,
+              decode.optional(decode.string),
+              fn(diff) {
+                decode.optional_field("location", None, location_decoder(), fn(
+                  location,
+                ) {
+                  decode.success(EqualityMismatch(expected, actual, diff,
+                    location))
+                })
+              },
+            )
           })
         })
       "assertion_failed" ->
         decode.field("message", decode.string, fn(message) {
-          decode.success(AssertionFailed(message))
+          decode.optional_field("location", None, location_decoder(), fn(
+            location,
+          ) {
+            decode.success(AssertionFailed(message, location))
+          })
         })
       "unexpected_error" ->
         decode.field("name", decode.string, fn(name) {
           decode.field("message", decode.string, fn(message) {
-            decode.success(UnexpectedError(name, message))
+            decode.optional_field("location", None, location_decoder(), fn(
+              location,
+            ) {
+              decode.success(UnexpectedError(name, message, location))
+            })
           })
         })
       _ ->
-        decode.failure(AssertionFailed("unknown failure"), "known failure kind")
+        decode.failure(AssertionFailed("unknown failure", None), "known failure kind")
     }
   })
+}
+
+fn location_decoder() -> decode.Decoder(Option(Location)) {
+  decode.optional(decode.field("file", decode.string, fn(file) {
+    decode.field("line", decode.int, fn(line) {
+      decode.success(Location(file, line))
+    })
+  }))
 }
 
 fn summary_decoder() -> decode.Decoder(Summary) {

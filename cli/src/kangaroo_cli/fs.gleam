@@ -15,6 +15,16 @@ pub fn read_file(path: String) -> Result(String, String)
 @external(javascript, "../kangaroo_cli_ffi.mjs", "mtime_ms")
 pub fn mtime_ms(path: String) -> Result(Int, String)
 
+/// The size of a file in bytes.
+@external(erlang, "kangaroo_cli_ffi", "file_size")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "file_size")
+pub fn file_size(path: String) -> Result(Int, String)
+
+/// Whether a file exists.
+@external(erlang, "kangaroo_cli_ffi", "exists")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "exists")
+pub fn exists(path: String) -> Bool
+
 /// Blocks for the given number of milliseconds.
 @external(erlang, "kangaroo_cli_ffi", "sleep")
 @external(javascript, "../kangaroo_cli_ffi.mjs", "sleep")

@@ -1,9 +1,13 @@
 import gleam/option.{None, Some}
-import kangaroo/event.{CaseFinished, CaseStarted, RunFinished, RunStarted}
+import kangaroo/event.{
+  CaseFinished, CaseStarted, RunFinished, RunStarted, SuiteFinished,
+  SuiteStarted,
+}
 import kangaroo/expect.{expect, to_equal}
 import kangaroo/failure.{
   AssertionFailed, EqualityMismatch, Failed, Passed, Skipped, UnexpectedError,
 }
+import kangaroo/location.{Location}
 import kangaroo/report.{Summary}
 import kangaroo/suite.{it, suite}
 import kangaroo_cli/stream
@@ -27,7 +31,7 @@ pub fn suites() {
           CaseFinished(
             "math",
             "fails",
-            Failed([EqualityMismatch("2", "1", None)]),
+            Failed([EqualityMismatch("2", "1", None, None)]),
             2,
           ),
           RunFinished(1, Summary(1, 1, 0, 5)),
@@ -52,7 +56,25 @@ pub fn suites() {
           CaseFinished(
             "s",
             "c",
-            Failed([EqualityMismatch("a\nb", "a\nc", Some("- b\n+ c"))]),
+            Failed([EqualityMismatch("a\nb", "a\nc", Some("- b\n+ c"), None)]),
+            0,
+          ),
+        ])
+      }),
+      it("parses a failure location", fn() {
+        let output =
+          "{\"type\":\"case_finished\",\"suite\":\"s\",\"case\":\"c\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"unexpected_error\",\"name\":\"panic\",\"message\":\"boom\",\"location\":{\"file\":\"test/foo_test.gleam\",\"line\":7}}]},\"duration_ms\":0}\n"
+        let events = stream.parse_events(output)
+        expect(events)
+        |> to_equal([
+          CaseFinished(
+            "s",
+            "c",
+            Failed([UnexpectedError(
+              "panic",
+              "boom",
+              Some(Location("test/foo_test.gleam", 7)),
+            )]),
             0,
           ),
         ])
@@ -67,11 +89,24 @@ pub fn suites() {
             "s",
             "a",
             Failed([
-              AssertionFailed("expected True"),
-              UnexpectedError("panic", "boom"),
+              AssertionFailed("expected True", None),
+              UnexpectedError("panic", "boom", None),
             ]),
             0,
           ),
+        ])
+      }),
+      it("parses suite events", fn() {
+        let output =
+          "{\"type\":\"suite_started\",\"suite\":\"math\"}\n"
+          <> "{\"type\":\"suite_finished\",\"suite\":\"math\",\"outcome\":{\"kind\":\"passed\"}}\n"
+          <> "{\"type\":\"suite_finished\",\"suite\":\"broken\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"assertion_failed\",\"message\":\"boom\",\"location\":null}]}}\n"
+        let events = stream.parse_events(output)
+        expect(events)
+        |> to_equal([
+          SuiteStarted("math"),
+          SuiteFinished("math", Passed),
+          SuiteFinished("broken", Failed([AssertionFailed("boom", None)])),
         ])
       }),
       it("parses skipped outcomes", fn() {

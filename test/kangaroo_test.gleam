@@ -4,6 +4,8 @@ import expect_test.{suites as expect_suites}
 import gleam/list
 import kangaroo
 import kangaroo/suite.{type Suite}
+import location_test.{suites as location_suites}
+import format_test.{suites as format_suites}
 import report_test.{suites as report_suites}
 import runner_test.{suites as runner_suites}
 import suite_test.{suites as suite_suites}
@@ -21,5 +23,7 @@ pub fn suites() -> List(Suite) {
     runner_suites(),
     expect_suites(),
     encode_suites(),
+    location_suites(),
+    format_suites(),
   ])
 }
