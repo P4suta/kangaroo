@@ -19,8 +19,9 @@ import kangaroo_cli/fs
 import kangaroo_cli/graph.{
   type ModuleName, imports, module_name_of_file, module_name_string,
 }
-import kangaroo_cli/stream.{parse_events}
+import kangaroo_cli/jscoverage
 import kangaroo_cli/keys
+import kangaroo_cli/stream.{parse_events}
 import kangaroo_cli/terminal
 import kangaroo_cli/tui
 import kangaroo_cli/vm
@@ -96,7 +97,8 @@ fn loop(
           let next_ui = do_run(project_dir, [], ui_state, mode, view)
           loop(project_dir, previous, next_ui, mode, view)
         }
-        keys.Nothing -> poll_and_run(project_dir, previous, ui_state, mode, view)
+        keys.Nothing ->
+          poll_and_run(project_dir, previous, ui_state, mode, view)
       }
     _ -> poll_and_run(project_dir, previous, ui_state, mode, view)
   }
@@ -301,10 +303,19 @@ pub fn run_in_vm(
   }
 }
 
-/// Runs the tests with line coverage (Erlang only): the project is compiled,
-/// every module is instrumented with `cover`, all tests run in-VM, and a
-/// per-module coverage table is printed. Returns the total percentage.
+/// Runs the tests with line coverage and prints a per-module coverage
+/// table. On Erlang modules are instrumented with `cover` and run in-VM;
+/// on JavaScript the tests run under Node with `NODE_V8_COVERAGE`. Returns
+/// the total percentage.
 pub fn run_coverage(project_dir: String) -> Result(Int, String) {
+  case vm.is_erlang() {
+    True -> run_coverage_erlang(project_dir)
+    False -> run_coverage_js(project_dir)
+  }
+}
+
+/// Line coverage on Erlang via the `cover` tool.
+fn run_coverage_erlang(project_dir: String) -> Result(Int, String) {
   use _ <- result.try(vm.add_project_paths(project_dir))
   use ebin <- result.try(vm.ebin_dir(project_dir))
 
@@ -330,6 +341,78 @@ pub fn run_coverage(project_dir: String) -> Result(Int, String) {
       io.println("  total coverage: " <> int.to_string(total) <> "%")
       Ok(total)
     }
+  }
+}
+
+/// Line coverage on JavaScript via Node's `NODE_V8_COVERAGE`.
+fn run_coverage_js(project_dir: String) -> Result(Int, String) {
+  // Node resolves NODE_V8_COVERAGE relative to its own working directory,
+  // so the directory must be absolute regardless of how the CLI was called.
+  let absolute_dir = case string.starts_with(project_dir, "/") {
+    True -> project_dir
+    False -> result.unwrap(fs.current_dir(), "") <> "/" <> project_dir
+  }
+  let coverage_dir = absolute_dir <> "/build/dev/kangaroo-coverage"
+
+  io.println("  running tests with coverage...")
+  use _ <- result.try(fs.remove_dir(coverage_dir))
+  case
+    fs.run_gleam_test_with(
+      project_dir,
+      ["test", "-t", "javascript", "--runtime", "node"],
+      [#("NODE_V8_COVERAGE", coverage_dir)],
+      run_timeout_ms,
+    )
+  {
+    // Exit code 1 just means tests failed; the coverage data is still
+    // written.
+    Ok(process) if process.exit_code <= 1 -> {
+      let _ = process
+      io.println("  collecting coverage...")
+      use files <- result.try(fs.list_files_recursive(coverage_dir))
+
+      let scripts =
+        files
+        |> list.filter(fn(path) { string.contains(path, "coverage-") })
+        |> list.filter_map(fn(path) {
+          case fs.read_file(path) {
+            Ok(contents) ->
+              case jscoverage.decode_coverage(contents) {
+                Ok(scripts) -> Ok(scripts)
+                Error(_) -> Error(Nil)
+              }
+            Error(_) -> Error(Nil)
+          }
+        })
+        |> list.flatten
+
+      let package = result.unwrap(vm.package_name(project_dir), "")
+
+      let modules =
+        scripts
+        |> list.filter(fn(script) { jscoverage.in_project(script.url, package) })
+        |> list.filter_map(fn(script) {
+          let path = jscoverage.local_path(script.url)
+          case jscoverage.module_from_url(script.url), fs.read_file(path) {
+            Some(module), Ok(source) ->
+              Ok(jscoverage.summarise(module, source, script.ranges))
+            _, _ -> Error(Nil)
+          }
+        })
+        |> list.filter(fn(module) {
+          // Skip the generated Gleam runtime files.
+          module.module != package <> "/gleam"
+          && !string.starts_with(module.module, package <> "/gleam@@")
+        })
+
+      modules
+      |> list.each(fn(module) { io.println("  " <> coverage.table_row(module)) })
+      let total = coverage.percentage(modules)
+      io.println("  total coverage: " <> int.to_string(total) <> "%")
+      Ok(total)
+    }
+    Ok(process) -> Error(process.output)
+    Error(message) -> Error(message)
   }
 }
 

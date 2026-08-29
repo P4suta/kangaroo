@@ -7,7 +7,7 @@
          load_module/1, call_suites/1, list_test_modules/1, cover_start/0,
          cover_compile_beams/1, cover_analyse/1, event_buffer_append/1,
          event_buffer_take/0, is_tty/0, raw_mode/1, init_keyboard/0,
-         poll_key/0]).
+         poll_key/0, run_gleam_test_with/4, remove_dir/1]).
 -include_lib("kernel/include/file.hrl").
 
 is_erlang() ->
@@ -239,6 +239,9 @@ gleam_executable() ->
 %% Runs `gleam test` in the given directory with `KANGAROO_JSON=1` and any
 %% extra environment variables, capturing stdout/stderr and the exit code.
 run_gleam_test(ProjectDir, ExtraEnv, TimeoutMs) ->
+    run_gleam_test_with(ProjectDir, ["test"], ExtraEnv, TimeoutMs).
+
+run_gleam_test_with(ProjectDir, Args, ExtraEnv, TimeoutMs) ->
     case os:find_executable("gleam") of
         false ->
             {error, <<"Could not find the `gleam` executable on PATH">>};
@@ -249,7 +252,7 @@ run_gleam_test(ProjectDir, ExtraEnv, TimeoutMs) ->
                              [binary, use_stdio, stderr_to_stdout,
                               exit_status,
                               {cd, ProjectDir},
-                              {args, ["test"]},
+                              {args, [to_list(A) || A <- Args]},
                               {env, Env}]),
             collect_output(Port, [], TimeoutMs)
     end.
@@ -362,6 +365,13 @@ poll_key() ->
             {some, unicode:characters_to_binary([Char])}
     after 0 ->
         none
+    end.
+
+remove_dir(Path) ->
+    case file:del_dir_r(Path) of
+        ok -> {ok, nil};
+        {error, enoent} -> {ok, nil};
+        {error, Reason} -> {error, format_error(Reason)}
     end.
 
 format_error(Reason) ->

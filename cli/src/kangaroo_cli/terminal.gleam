@@ -5,7 +5,6 @@ import gleam/option.{type Option}
 /// Keyboard input is fully supported on Erlang (a background reader
 /// process plus a signal handler that restores the terminal); on
 /// JavaScript `poll_key` always returns `None` for now.
-
 /// Whether stdout is a terminal.
 @external(erlang, "kangaroo_cli_ffi", "is_tty")
 @external(javascript, "../kangaroo_cli_ffi.mjs", "is_tty")

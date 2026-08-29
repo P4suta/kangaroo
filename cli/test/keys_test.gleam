@@ -13,9 +13,7 @@ pub fn suites() {
       it("maps f to the view toggle", fn() {
         expect(action(Some("f"))) |> to_equal(ToggleView)
       }),
-      it("maps q to quit", fn() {
-        expect(action(Some("q"))) |> to_equal(Quit)
-      }),
+      it("maps q to quit", fn() { expect(action(Some("q"))) |> to_equal(Quit) }),
       it("maps Ctrl+C to quit", fn() {
         expect(action(Some("\u{3}"))) |> to_equal(Quit)
       }),

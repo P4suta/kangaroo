@@ -51,6 +51,21 @@ pub fn suites() {
           }
         }
       }),
+      it("measures V8 coverage on JavaScript", fn() {
+        // V8 coverage runs under Node with NODE_V8_COVERAGE.
+        case vm.is_erlang() {
+          True -> Nil
+          False -> {
+            let result = app.run_coverage("..")
+            case result {
+              Ok(total) -> {
+                expect(total >= 0 && total <= 100) |> to_equal(True)
+              }
+              Error(message) -> panic as message
+            }
+          }
+        }
+      }),
     ]),
   ]
 }

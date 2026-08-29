@@ -30,6 +30,11 @@ pub fn now_ms() -> Int
 @external(javascript, "../kangaroo_cli_ffi.mjs", "gleam_executable")
 pub fn gleam_executable() -> Result(String, String)
 
+/// Removes a directory tree, ignoring missing directories.
+@external(erlang, "kangaroo_cli_ffi", "remove_dir")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "remove_dir")
+pub fn remove_dir(path: String) -> Result(Nil, String)
+
 /// The current working directory.
 @external(erlang, "kangaroo_cli_ffi", "current_dir")
 @external(javascript, "../kangaroo_cli_ffi.mjs", "current_dir")
@@ -56,6 +61,17 @@ pub type ProcessResult {
 @external(javascript, "../kangaroo_cli_ffi.mjs", "run_gleam_test")
 pub fn run_gleam_test(
   project_dir: String,
+  extra_env: List(#(String, String)),
+  timeout_ms: Int,
+) -> Result(ProcessResult, String)
+
+/// Runs `gleam` with explicit arguments in the given project directory,
+/// with `KANGAROO_JSON=1` and any extra environment variables.
+@external(erlang, "kangaroo_cli_ffi", "run_gleam_test_with")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "run_gleam_test_with")
+pub fn run_gleam_test_with(
+  project_dir: String,
+  args: List(String),
   extra_env: List(#(String, String)),
   timeout_ms: Int,
 ) -> Result(ProcessResult, String)

@@ -1,5 +1,5 @@
-import gleam/option.{Some, type Option}
-import kangaroo_cli/tui.{All, FailuresOnly, type View}
+import gleam/option.{type Option, Some}
+import kangaroo_cli/tui.{type View, All, FailuresOnly}
 
 /// What a pressed key should do.
 pub type KeyAction {

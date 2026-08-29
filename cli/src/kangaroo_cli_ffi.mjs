@@ -1,9 +1,9 @@
 // Platform services for the Kangaroo CLI: file access, subprocess
 // execution of `gleam test`, and a monotonic clock for the watch loop.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { Error as GleamError, Ok, toList } from "./gleam.mjs";
+import { Empty, Error as GleamError, Ok, toList } from "./gleam.mjs";
 import { ProcessResult } from "./kangaroo_cli/fs.mjs";
 
 export function list_files_recursive(directory) {
@@ -73,6 +73,15 @@ export function halt(code) {
   return undefined;
 }
 
+export function remove_dir(path) {
+  try {
+    rmSync(path, { recursive: true, force: true });
+    return new Ok(undefined);
+  } catch (error) {
+    return new GleamError(String(error.message || error));
+  }
+}
+
 export function gleam_executable() {
   // spawnSync resolves executables through PATH on all platforms
   return new Ok("gleam");
@@ -119,11 +128,26 @@ export function poll_key() {
 }
 
 export function run_gleam_test(projectDir, extraEnv, timeoutMs) {
+  return run_gleam_test_with(projectDir, toList(["test"]), extraEnv, timeoutMs);
+}
+
+// Converts a Gleam linked list to a plain JavaScript array.
+function listToArray(list) {
+  const result = [];
+  let current = list;
+  while (current !== null && !(current instanceof Empty)) {
+    result.push(current.head);
+    current = current.tail;
+  }
+  return result;
+}
+
+export function run_gleam_test_with(projectDir, args, extraEnv, timeoutMs) {
   const env = { ...process.env, KANGAROO_JSON: "1" };
   for (const [key, value] of extraEnv) {
     env[key] = value;
   }
-  const result = spawnSync("gleam", ["test"], {
+  const result = spawnSync("gleam", listToArray(args), {
     cwd: projectDir,
     env,
     encoding: "utf8",
