@@ -422,11 +422,14 @@ raw_mode(True) ->
     %% Raw mode disables ISIG, so Ctrl+C arrives as a byte (0x03) that the
     %% key reader turns into a quit, letting us restore the terminal first.
     %% The os:cmd shell has no controlling terminal of its own, so the tty
-    %% must be addressed explicitly.
+    %% must be addressed explicitly. The alternate screen buffer (smcup)
+    %% keeps the TUI from clobbering the shell's scrollback.
+    io:put_chars("\e[?1049h"),
     os:cmd("stty raw < /dev/tty"),
     ok;
 raw_mode(False) ->
     os:cmd("stty sane < /dev/tty"),
+    io:put_chars("\e[?1049l"),
     ok.
 
 init_keyboard() ->
