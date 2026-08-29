@@ -302,16 +302,30 @@ def _wait_for_line(
             return line
 
 
-def wait_for_watch_run(
-    pump: _LinePump, process: subprocess.Popen[str], *, timeout: float
+def wait_for_ready_generation(
+    marker: Path,
+    previous: str,
+    process: subprocess.Popen[str],
+    *,
+    timeout: float,
 ) -> str:
-    """Wait until watch has left settle/compile and is observing a test run."""
-    return _wait_for_line(
-        pump,
-        "kangaroo benchmark: watch run start",
-        timeout=timeout,
-        process=process,
-    )
+    """Wait until a new fixture test body is executing, after compilation."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            token = marker.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            token = ""
+        if token and token != previous:
+            return token
+        exit_code = process.poll()
+        if exit_code is not None:
+            raise RuntimeError(
+                f"watch daemon exited {exit_code} before the next test generation"
+            )
+        if time.monotonic() >= deadline:
+            raise TimeoutError("timed out waiting for an executing test generation")
+        time.sleep(0.005)
 
 
 class _DaemonClient:
@@ -456,6 +470,27 @@ def copy_fixture_project(source: Path, destination: Path) -> None:
         )
 
 
+def instrument_watch_fixture(fixture: Path, marker: Path) -> None:
+    """Make the copied Node fixture identify each executing generation."""
+    source = fixture.read_text(encoding="utf-8")
+    original = (
+        "export function delay() {\n"
+        "  return new Promise((resolve) => setTimeout(resolve, 5000));\n"
+        "}\n"
+    )
+    replacement = (
+        'import { writeFileSync } from "node:fs";\n\n'
+        "export function delay() {\n"
+        f"  writeFileSync({json.dumps(str(marker))}, `${{process.pid}}-${{Date.now()}}`);\n"
+        "  return new Promise((resolve) => setTimeout(resolve, 5000));\n"
+        "}\n"
+    )
+    fixture.write_text(
+        required_replace(source, original, replacement),
+        encoding="utf-8",
+    )
+
+
 def measure_warm_discovery(
     root: Path, *, test_count: int = 10_000, samples: int = 5
 ) -> list[float]:
@@ -526,6 +561,11 @@ def measure_save_detection(root: Path, *, samples: int = 20) -> list[float]:
             probe.read_text(encoding="utf-8") + "\n// kangaroo-benchmark: 0\n",
             encoding="utf-8",
         )
+        ready_marker = project / ".kangaroo-benchmark-ready"
+        instrument_watch_fixture(
+            project / "test" / "kangaroo_watch_fixture_ffi.mjs",
+            ready_marker,
+        )
         config = project / "gleam.toml"
         config.write_text(
             required_replace(
@@ -557,6 +597,12 @@ def measure_save_detection(root: Path, *, samples: int = 20) -> list[float]:
                 timeout=20,
                 process=client.process,
             )
+            ready_generation = wait_for_ready_generation(
+                ready_marker,
+                "",
+                client.process,
+                timeout=20,
+            )
             timings: list[float] = []
             for generation in range(1, samples + 1):
                 started = time.perf_counter_ns()
@@ -572,11 +618,12 @@ def measure_save_detection(root: Path, *, samples: int = 20) -> list[float]:
                 )
                 if generation < samples:
                     # Detection intentionally precedes settle and compilation.
-                    # Synchronise on the next observed run so those phases are
-                    # outside every latency sample; cancellation has its own
-                    # independent benchmark.
-                    wait_for_watch_run(
-                        client.stderr,
+                    # Synchronise on code executing inside the replacement
+                    # test process, rather than a pre-spawn trace, so neither
+                    # compilation nor runtime startup enters the next sample.
+                    ready_generation = wait_for_ready_generation(
+                        ready_marker,
+                        ready_generation,
                         client.process,
                         timeout=10,
                     )
@@ -760,10 +807,10 @@ def collect_metrics(
     root: Path, *, quick: bool = False
 ) -> tuple[dict[str, Number], dict[str, list[Number]]]:
     discovery_samples = measure_warm_discovery(
-        root, test_count=10_000, samples=2 if quick else 5
+        root, test_count=10_000, samples=2 if quick else 20
     )
-    save_samples = measure_save_detection(root, samples=3 if quick else 20)
-    cancellation_samples = measure_cancellation(root, samples=2 if quick else 10)
+    save_samples = measure_save_detection(root, samples=3 if quick else 40)
+    cancellation_samples = measure_cancellation(root, samples=2 if quick else 20)
     idle_duration = idle_sample_duration(quick)
     idle_cpu = measure_idle_cpu(root, duration_seconds=idle_duration)
     samples: dict[str, list[Number]] = {

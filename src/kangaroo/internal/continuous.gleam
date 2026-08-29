@@ -261,9 +261,14 @@ pub fn run_until_change(
   arguments: List(String),
 ) -> Result(RunOutcome, String) {
   use outcome <- result.try(
-    run_until_change_observed(project_dir, roots, baseline, arguments, fn(_) {
-      Nil
-    }),
+    run_until_change_observed(
+      project_dir,
+      roots,
+      baseline,
+      arguments,
+      fn() { Nil },
+      fn(_) { Nil },
+    ),
   )
   Ok(case outcome {
     ObservedChildCompleted(result) -> ChildCompleted(result)
@@ -271,12 +276,15 @@ pub fn run_until_change(
   })
 }
 
-/// Run variant that publishes save detection before cancellation latency.
+/// Run variant that publishes process readiness and save detection before
+/// cancellation latency. The readiness callback runs only after the child
+/// process boundary has been created and the snapshot poll can begin.
 pub fn run_until_change_observed(
   project_dir: String,
   roots: List(String),
   baseline: Dict(String, String),
   arguments: List(String),
+  on_ready: fn() -> Nil,
   on_detect: fn(List(Change)) -> Nil,
 ) -> Result(ObservedRunOutcome, String) {
   use handle <- result.try(process.start(
@@ -286,6 +294,7 @@ pub fn run_until_change_observed(
     [],
     run_timeout_ms,
   ))
+  on_ready()
   poll_run(project_dir, roots, baseline, handle, on_detect)
 }
 
@@ -823,12 +832,12 @@ fn positive_delay(milliseconds: Int) -> Int {
   }
 }
 
-/// Idle scans are deliberately less frequent than the settle debounce. Save
-/// detection is reported on the first scan, while compilation waits for the
-/// debounce window to become stable.
+/// Idle scans are deliberately less frequent than the settle debounce. The
+/// two-debounce interval leaves protocol polling headroom inside the 150 ms
+/// save-detection budget, while compilation still waits for a stable window.
 pub fn scan_interval(debounce_ms: Int) -> Int {
   case debounce_ms > 0 {
-    True -> debounce_ms * 3
+    True -> debounce_ms * 2
     False -> 1
   }
 }

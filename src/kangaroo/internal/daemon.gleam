@@ -16,7 +16,7 @@ import kangaroo/internal/vm
 import kangaroo/internal/watcher
 import kangaroo/sys
 
-const input_poll_ms = 25
+const input_poll_ms = 35
 
 const operation_timeout_ms = 604_800_000
 
@@ -304,49 +304,57 @@ fn start_operation(
 
 fn drain_operations(state: operations.State) -> operations.State {
   list.fold(operations.entries(state), state, fn(state, entry) {
-    case process.poll(entry.handle) {
-      process.ProcessRunning -> state
-      process.ProcessOutput(output) -> {
-        let #(state, lines) = operations.append_output(state, entry.id, output)
-        emit_lines(entry.id, lines)
-        state
-      }
-      process.ProcessFinished(completed) -> {
-        let #(state, remainder) = operations.finish_output(state, entry.id)
-        case remainder {
-          Some(line) -> emit_line(entry.id, line)
-          None -> Nil
-        }
-        let #(state, publish) = operations.complete(state, entry.id)
-        case publish {
-          True ->
-            fs.write_stdout_line(protocol.encode_completed(
-              entry.id,
-              completed.exit_code,
-            ))
-          False -> Nil
-        }
-        state
-      }
-      process.ProcessFailed(message) -> {
-        let #(state, remainder) = operations.finish_output(state, entry.id)
-        case remainder {
-          Some(line) -> emit_line(entry.id, line)
-          None -> Nil
-        }
-        let #(state, publish) = operations.complete(state, entry.id)
-        case publish {
-          True -> fs.write_stdout_line(protocol.encode_error(entry.id, message))
-          False -> Nil
-        }
-        state
-      }
-      process.ProcessCancelled -> {
-        let #(state, _) = operations.complete(state, entry.id)
-        state
-      }
-    }
+    drain_operation(state, entry)
   })
+}
+
+// Child output commonly arrives as one port message per reporter event. Drain
+// every message already waiting before the daemon sleeps again so a large
+// event burst cannot delay later change or cancellation notifications by one
+// full protocol poll per line.
+fn drain_operation(state: operations.State, entry: operations.Entry) {
+  case process.poll(entry.handle) {
+    process.ProcessRunning -> state
+    process.ProcessOutput(output) -> {
+      let #(state, lines) = operations.append_output(state, entry.id, output)
+      emit_lines(entry.id, lines)
+      drain_operation(state, entry)
+    }
+    process.ProcessFinished(completed) -> {
+      let #(state, remainder) = operations.finish_output(state, entry.id)
+      case remainder {
+        Some(line) -> emit_line(entry.id, line)
+        None -> Nil
+      }
+      let #(state, publish) = operations.complete(state, entry.id)
+      case publish {
+        True ->
+          fs.write_stdout_line(protocol.encode_completed(
+            entry.id,
+            completed.exit_code,
+          ))
+        False -> Nil
+      }
+      state
+    }
+    process.ProcessFailed(message) -> {
+      let #(state, remainder) = operations.finish_output(state, entry.id)
+      case remainder {
+        Some(line) -> emit_line(entry.id, line)
+        None -> Nil
+      }
+      let #(state, publish) = operations.complete(state, entry.id)
+      case publish {
+        True -> fs.write_stdout_line(protocol.encode_error(entry.id, message))
+        False -> Nil
+      }
+      state
+    }
+    process.ProcessCancelled -> {
+      let #(state, _) = operations.complete(state, entry.id)
+      state
+    }
+  }
 }
 
 fn emit_lines(operation_id: String, lines: List(String)) -> Nil {

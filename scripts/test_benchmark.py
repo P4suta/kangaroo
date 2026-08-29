@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import io
 import sys
 import tempfile
 import unittest
@@ -91,26 +90,63 @@ class BenchmarkPolicyTest(unittest.TestCase):
         self.assertEqual(benchmark.idle_sample_duration(quick=True), 1)
         self.assertEqual(benchmark.idle_sample_duration(quick=False), 10)
 
-    def test_save_measurement_waits_until_the_next_run_is_watched(self) -> None:
-        pump = benchmark._LinePump(io.StringIO(
-            "kangaroo benchmark: watch compile start 1ms\n"
-            "kangaroo benchmark: watch run start 2ms\n"
-        ))
+    def test_production_p95_metrics_use_statistically_meaningful_samples(self) -> None:
+        with (
+            mock.patch.object(
+                benchmark, "measure_warm_discovery", return_value=[1.0] * 20
+            ) as discovery,
+            mock.patch.object(
+                benchmark, "measure_save_detection", return_value=[1.0] * 40
+            ) as saves,
+            mock.patch.object(
+                benchmark, "measure_cancellation", return_value=[1.0] * 20
+            ) as cancellations,
+            mock.patch.object(benchmark, "measure_idle_cpu", return_value=0.5),
+        ):
+            benchmark.collect_metrics(ROOT)
 
+        self.assertEqual(discovery.call_args.kwargs["samples"], 20)
+        self.assertEqual(saves.call_args.kwargs["samples"], 40)
+        self.assertEqual(cancellations.call_args.kwargs["samples"], 20)
+
+    def test_save_measurement_waits_for_an_executing_test_generation(self) -> None:
         class RunningProcess:
             @staticmethod
             def poll() -> None:
                 return None
 
-        line = benchmark.wait_for_watch_run(
-            pump,
-            RunningProcess(),
-            timeout=1,
-        )
-        self.assertIn("watch run start", line)
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "ready"
+            marker.write_text("generation-2", encoding="utf-8")
+            token = benchmark.wait_for_ready_generation(
+                marker,
+                "generation-1",
+                RunningProcess(),
+                timeout=1,
+            )
+            self.assertEqual(token, "generation-2")
 
 
 class BenchmarkFixtureTest(unittest.TestCase):
+    def test_instruments_the_watch_fixture_with_a_generation_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.mjs"
+            marker = root / "ready marker"
+            fixture.write_text(
+                "export function delay() {\n"
+                "  return new Promise((resolve) => setTimeout(resolve, 5000));\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            benchmark.instrument_watch_fixture(fixture, marker)
+
+            source = fixture.read_text(encoding="utf-8")
+            self.assertIn("writeFileSync", source)
+            self.assertIn(json.dumps(str(marker)), source)
+            self.assertIn("setTimeout(resolve, 5000)", source)
+
     def test_required_replace_rejects_a_stale_fixture_literal(self) -> None:
         self.assertEqual(
             benchmark.required_replace("before token after", "token", "new"),

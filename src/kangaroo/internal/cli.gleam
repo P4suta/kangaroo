@@ -716,6 +716,7 @@ fn watch_plain_project(
     roots,
     snapshot,
     command.run_arguments(options, options.selectors),
+    fn() { Nil },
     report_plain_changes,
   ))
   let state = case initial {
@@ -852,16 +853,14 @@ fn run_watch_selection(
     Selected(_), [] -> []
     _, selected ->
       case
-        {
-          trace_plain("run start")
-          continuous.run_until_change_observed(
-            project_dir,
-            roots,
-            baseline,
-            command.run_arguments(options, selected),
-            report_plain_changes,
-          )
-        }
+        continuous.run_until_change_observed(
+          project_dir,
+          roots,
+          baseline,
+          command.run_arguments(options, selected),
+          fn() { trace_plain("run start") },
+          report_plain_changes,
+        )
       {
         Error(message) -> {
           fs.write_stderr_line("kangaroo: " <> message)
