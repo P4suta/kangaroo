@@ -44,7 +44,7 @@ pub fn main() -> Nil {
 
 fn run(project_dir: String, args: List(String)) -> Result(Nil, String) {
   case command.parse_command(args, default_mode()) {
-    Ok(Watch(mode)) -> watch(project_dir, mode)
+    Ok(Watch(mode, coverage)) -> watch(project_dir, mode, coverage)
     Ok(Run(options)) -> run_once(project_dir, options)
     Ok(RunCoverage) -> {
       case app.run_coverage(project_dir) {
@@ -92,11 +92,15 @@ fn default_mode() -> app.OutputMode {
   }
 }
 
-fn watch(project_dir: String, mode: app.OutputMode) -> Result(Nil, String) {
+fn watch(
+  project_dir: String,
+  mode: app.OutputMode,
+  coverage: Bool,
+) -> Result(Nil, String) {
   // Watch-session status belongs on stderr so the machine-readable stream
   // (`watch --json`) stays pure.
   io.println_error("kangaroo: watching " <> project_dir)
   io.println_error("kangaroo: press Ctrl+C to stop")
-  app.watch(project_dir, mode)
+  app.watch(project_dir, mode, coverage)
   Ok(Nil)
 }

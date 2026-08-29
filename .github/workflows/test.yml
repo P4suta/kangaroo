@@ -41,6 +41,21 @@ jobs:
         working-directory: ${{ matrix.package }}
         run: gleam test -t ${{ matrix.target }} --runtime bun
       - name: Check formatting
-        if: matrix.target == 'erlang'
         working-directory: ${{ matrix.package }}
         run: gleam format --check src test
+
+  editors:
+    runs-on: ubuntu-latest
+    name: editors
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check the VS Code extension syntax
+        run: node --check editors/vscode/extension.js
+      - name: Check the Neovim plugin manifests
+        run: |
+          test -f editors/neovim/lua/kangaroo/init.lua
+          test -f editors/vscode/package.json
+          node -e 'JSON.parse(require("fs").readFileSync("editors/vscode/package.json", "utf8"))'

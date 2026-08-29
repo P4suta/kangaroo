@@ -11,6 +11,7 @@ import kangaroo/suite.{type Suite}
 import keys_test.{suites as keys_suites}
 import parallel_test.{suites as parallel_suites}
 import protocol_test.{suites as protocol_suites}
+import session_test.{suites as session_suites}
 import stream_test.{suites as stream_suites}
 import tui_test.{suites as tui_suites}
 import watcher_test.{suites as watcher_suites}
@@ -28,6 +29,7 @@ pub fn suites() -> List(Suite) {
     coverage_suites(),
     watcher_suites(),
     stream_suites(),
+    session_suites(),
     tui_suites(),
     integration_suites(),
 

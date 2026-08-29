@@ -26,6 +26,20 @@ file changes.
 - `affected` is the number of test modules affected by the changes. It is
   `null` when the affected computation failed.
 
+### CompileStarted / CompileFinished
+
+Emitted around the compile-only step that precedes every run, so editors
+can show progress while the project compiles. They appear on the same
+stream as the runner events, before `RunStarted`.
+
+```json
+{"type": "compile_started"}
+{"type": "compile_finished"}
+```
+
+A failed compile emits `compile_started` but no `compile_finished` and no
+run events.
+
 ### RunStarted
 
 Emitted once per run.

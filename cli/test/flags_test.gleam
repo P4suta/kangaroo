@@ -36,17 +36,31 @@ pub fn suites() {
       }),
       it("parses no command as watch with the default mode", fn() {
         expect(command.parse_command([], app.Stream))
-        |> to_equal(Ok(command.Watch(app.Stream)))
+        |> to_equal(Ok(command.Watch(app.Stream, False)))
       }),
       it("parses the watch modes", fn() {
         expect(command.parse_command(["watch"], app.Stream))
-        |> to_equal(Ok(command.Watch(app.Stream)))
+        |> to_equal(Ok(command.Watch(app.Stream, False)))
         expect(command.parse_command(["watch", "--tui"], app.Stream))
-        |> to_equal(Ok(command.Watch(app.Tui)))
+        |> to_equal(Ok(command.Watch(app.Tui, False)))
         expect(command.parse_command(["watch", "--no-tui"], app.Stream))
-        |> to_equal(Ok(command.Watch(app.Stream)))
+        |> to_equal(Ok(command.Watch(app.Stream, False)))
         expect(command.parse_command(["watch", "--json"], app.Stream))
-        |> to_equal(Ok(command.Watch(app.Json)))
+        |> to_equal(Ok(command.Watch(app.Json, False)))
+      }),
+      it("parses watch coverage in any flag order", fn() {
+        expect(command.parse_command(["watch", "--coverage"], app.Stream))
+        |> to_equal(Ok(command.Watch(app.Stream, True)))
+        expect(command.parse_command(
+          ["watch", "--tui", "--coverage"],
+          app.Stream,
+        ))
+        |> to_equal(Ok(command.Watch(app.Tui, True)))
+        expect(command.parse_command(
+          ["watch", "--coverage", "--json"],
+          app.Stream,
+        ))
+        |> to_equal(Ok(command.Watch(app.Json, True)))
       }),
       it("parses run and its flags", fn() {
         expect(command.parse_command(["run"], app.Stream))

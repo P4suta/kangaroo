@@ -4,6 +4,7 @@ import gleam/string
 import kangaroo/expect.{expect, to_be_true, to_equal}
 import kangaroo/suite.{it, suite}
 import kangaroo_cli/app
+import kangaroo_cli/session
 import kangaroo_cli/stream
 
 /// Captures everything the current process writes to stdout while `run`
@@ -30,8 +31,12 @@ pub fn suites() {
           |> string.split("\n")
           |> list.filter(fn(line) { string.trim(line) != "" })
         let events = stream.parse_events(stdout)
+        let session_events = list.length(list.filter_map(lines, session.decode))
         expect(lines != []) |> to_be_true()
-        expect(list.length(events)) |> to_equal(list.length(lines))
+        expect(list.length(events) + session_events)
+        |> to_equal(list.length(lines))
+        // The compile phase is reported, so editors can show progress.
+        expect(session_events > 0) |> to_be_true()
       }),
     ]),
   ]
