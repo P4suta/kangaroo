@@ -254,14 +254,15 @@ remove_tree(Path) ->
         true ->
             case remove_directory_retry(Value, 0) of
                 ok -> {ok, nil};
-                {error, enoent} -> {ok, nil};
-                {error, Reason} -> {error, format_error(Reason)}
+                {error, {enoent, _FailedPath}} -> {ok, nil};
+                {error, {Reason, FailedPath}} ->
+                    {error, format_remove_error(Reason, FailedPath)}
             end
     end.
 
 remove_directory_retry(Path, Attempt) ->
     case remove_directory(Path) of
-        {error, Reason}
+        {error, {Reason, _FailedPath}}
           when (Reason =:= eperm orelse Reason =:= eacces),
                Attempt < 500 ->
             %% Windows can retain executable and build artefact handles for a
@@ -277,8 +278,8 @@ remove_directory_retry(Path, Attempt) ->
 remove_directory(Path) ->
     remove_directory(Path, 0).
 
-remove_directory(_Path, Attempt) when Attempt >= 50 ->
-    {error, eexist};
+remove_directory(Path, Attempt) when Attempt >= 50 ->
+    {error, {eexist, Path}};
 remove_directory(Path, Attempt) ->
     case file:list_dir(Path) of
         {ok, Entries} ->
@@ -291,12 +292,13 @@ remove_directory(Path, Attempt) ->
                         {error, enotempty} ->
                             timer:sleep(5),
                             remove_directory(Path, Attempt + 1);
-                        Result -> Result
+                        ok -> ok;
+                        {error, Reason} -> {error, {Reason, Path}}
                     end;
                 Error -> Error
             end;
         {error, enoent} -> ok;
-        Error -> Error
+        {error, Reason} -> {error, {Reason, Path}}
     end.
 
 remove_entries(_Path, []) -> ok;
@@ -304,9 +306,13 @@ remove_entries(Path, [Name | Rest]) ->
     Child = filename:join(Path, Name),
     Result = case file:read_link_info(Child) of
         {ok, #file_info{type = directory}} -> remove_directory(Child);
-        {ok, _} -> file:delete(Child);
+        {ok, _} ->
+            case file:delete(Child) of
+                ok -> ok;
+                {error, Reason} -> {error, {Reason, Child}}
+            end;
         {error, enoent} -> ok;
-        ReadError -> ReadError
+        {error, Reason} -> {error, {Reason, Child}}
     end,
     case Result of
         ok -> remove_entries(Path, Rest);
@@ -425,6 +431,11 @@ halt(Code) -> erlang:halt(Code).
 
 format_error(Reason) ->
     unicode:characters_to_binary(io_lib:format("~0p", [Reason])).
+
+format_remove_error(Reason, Path) ->
+    ReasonText = format_error(Reason),
+    PathText = unicode:characters_to_binary(Path),
+    <<ReasonText/binary, " while removing ", PathText/binary>>.
 
 path_to_list(Value) when is_binary(Value) -> unicode:characters_to_list(Value);
 path_to_list(Value) when is_list(Value) -> Value.
