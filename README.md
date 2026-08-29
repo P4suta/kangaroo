@@ -19,9 +19,11 @@ a rich terminal UI or a machine-readable stream for editors.
   the affected test modules from the import graph, and re-runs only those
 - **Hot reloading** (Erlang): the daemon executes tests in its own VM with
   `code:load_file`, so re-runs never restart the runtime
-- **Coverage** (Erlang): line coverage via the `cover` tool, mapped back to
-  `.gleam` sources
-- **Rich TUI**: full-screen ANSI rendering with per-case status marks
+- **Coverage**: line coverage on both targets — the Erlang `cover` tool
+  mapped back to `.gleam` sources, and V8 coverage (`NODE_V8_COVERAGE`)
+  on JavaScript
+- **Rich TUI**: full-screen ANSI rendering with per-case status marks and
+  keyboard control (`r` rerun, `f` failures-only, `q` / Ctrl+C quit)
 - **Editor protocol**: newline-delimited JSON events for editors and CI
 
 ## Installation
@@ -94,17 +96,23 @@ so every assertion in a body is reported:
 ## Continuous testing
 
 ```sh
-gleam run -m kangaroo_cli            # watch mode with TUI
-gleam run -m kangaroo_cli -- watch --no-tui   # streaming output
-gleam run -m kangaroo_cli -- watch --json     # editor protocol
-gleam run -m kangaroo_cli -- run              # run once
-gleam run -m kangaroo_cli -- run --coverage   # run once with coverage
+gleam run -m kangaroo_cli            # watch mode: TUI on a terminal, streaming otherwise
+gleam run -m kangaroo_cli -- watch --tui       # force the TUI
+gleam run -m kangaroo_cli -- watch --no-tui    # streaming output
+gleam run -m kangaroo_cli -- watch --json      # editor protocol
+gleam run -m kangaroo_cli -- run               # run once
+gleam run -m kangaroo_cli -- run --coverage    # run once with coverage
 ```
+
+In the TUI, `r` forces a full re-run, `f` toggles the failures-only view,
+and `q` (or Ctrl+C) quits, restoring the terminal.
 
 On Erlang, the runner compiles the project with a fast compile-only
 subprocess and then executes only the affected test modules in its own VM
 with hot module reloading. On JavaScript it falls back to `gleam test`
-subprocesses.
+subprocesses. Coverage uses Erlang's `cover` (mapped back to `.gleam`
+lines) or, on JavaScript, Node's V8 coverage of the generated `.mjs`
+files, reported per module.
 
 ## Editor protocol
 

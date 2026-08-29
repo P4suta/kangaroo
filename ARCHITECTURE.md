@@ -77,11 +77,27 @@ isolate saves and restores the shared array.
 
 ## Coverage
 
-`run --coverage` (Erlang) instruments every beam of the project's ebin
-with `cover`, runs all tests in-VM, and reads per-line hit counts. Gleam's
-generated abstract code carries `.gleam` source line numbers, so cover's
-lines map directly back to the sources; lines beyond the file are
-generated code and are ignored.
+`run --coverage` has one flow per target:
+
+- **Erlang** instruments every beam of the project's ebin with `cover`,
+  runs all tests in-VM, and reads per-line hit counts. Gleam's generated
+  abstract code carries `.gleam` source line numbers, so cover's lines map
+  directly back to the sources; lines beyond the file are generated code
+  and are ignored.
+- **JavaScript** runs the tests under Node with `NODE_V8_COVERAGE`. The
+  coverage files report character offsets within the generated `.mjs`
+  files; `jscoverage` maps offsets back to lines and derives module names
+  from the script URLs, reporting per-module coverage of the project's own
+  package.
+
+## Terminal input
+
+The TUI reads keys through a background reader process (`io:get_chars`)
+while the terminal is in raw mode. Raw mode disables ISIG, so Ctrl+C
+arrives as the byte 0x03 and is handled like `q`: restore the terminal,
+then exit. `is_tty` inspects the VM's own stdout (`/proc/self/fd/1`) so
+the TUI is only chosen when stdout is a terminal. Keyboard input is
+Erlang-only; the JavaScript TUI renders but does not read keys.
 
 ## Testing
 
