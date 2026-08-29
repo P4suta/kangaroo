@@ -43,9 +43,22 @@ def active_run_visible(output: bytes | bytearray) -> bool:
 
 
 def stop_process_group(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is None:
+    try:
         os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if process.poll() is None:
         process.wait(timeout=2)
+
+
+def process_group_exists(pid: int) -> bool:
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def exercise(command: list[str], runtime: str) -> int:
@@ -89,6 +102,8 @@ def exercise(command: list[str], runtime: str) -> int:
         assert ENTER in output, "alternate screen was not entered"
         assert LEAVE in output, "alternate screen was not restored"
         assert b"stopping" in output, "quit was not handled during the run"
+        if process_group_exists(process.pid):
+            raise AssertionError("TUI left a watch worker process running")
         print(
             f"TUI cancellation and restoration passed on {runtime} in {elapsed_ms}ms"
         )

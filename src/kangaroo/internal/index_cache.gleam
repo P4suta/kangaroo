@@ -1,5 +1,6 @@
 import gleam/dict.{type Dict}
 import gleam/list
+import gleam/set
 import gleam/string
 import kangaroo/internal/index.{type IndexError, type IndexedModule}
 
@@ -32,9 +33,10 @@ pub fn update(
     |> list.map(fn(source) { #(normalise(source.0), source.1) })
     |> list.sort(fn(left, right) { string.compare(left.0, right.0) })
   let current_paths = list.map(sources, fn(source) { source.0 })
+  let current_path_set = set.from_list(current_paths)
   let removed =
     dict.keys(cache.modules)
-    |> list.filter(fn(path) { !list.contains(current_paths, path) })
+    |> list.filter(fn(path) { !set.contains(current_path_set, path) })
     |> list.sort(string.compare)
   let initial = #(dict.new(), [], [], 0, [])
   let #(modules_by_path, modules, changed, reused, errors) =
@@ -45,7 +47,7 @@ pub fn update(
       case dict.get(cache.modules, path) {
         Ok(module) if module.content_hash == hash -> #(
           dict.insert(by_path, path, module),
-          list.append(modules, [module]),
+          [module, ..modules],
           changed,
           reused + 1,
           errors,
@@ -54,18 +56,15 @@ pub fn update(
           case index.index(path, contents, test_paths) {
             Ok(module) -> #(
               dict.insert(by_path, path, module),
-              list.append(modules, [module]),
-              list.append(changed, [path]),
+              [module, ..modules],
+              [path, ..changed],
               reused,
               errors,
             )
-            Error(error) -> #(
-              by_path,
-              modules,
-              list.append(changed, [path]),
-              reused,
-              list.append(errors, [error]),
-            )
+            Error(error) -> #(by_path, modules, [path, ..changed], reused, [
+              error,
+              ..errors
+            ])
           }
       }
     })
@@ -73,12 +72,12 @@ pub fn update(
     [] ->
       Ok(Updated(
         cache: IndexCache(modules_by_path),
-        modules:,
-        changed_paths: list.append(changed, removed)
+        modules: list.reverse(modules),
+        changed_paths: list.append(list.reverse(changed), removed)
           |> list.sort(string.compare),
         reused:,
       ))
-    _ -> Error(errors)
+    _ -> Error(list.reverse(errors))
   }
 }
 

@@ -40,6 +40,9 @@ pub fn run_with_options(
   fail_fast: Bool,
   retry: Int,
 ) -> Result(Report, String) {
+  use _ <- result.try(
+    runtime.prepare_modules(list.map(tests, fn(indexed) { indexed.module })),
+  )
   use resolved <- result.try(list.try_map(tests, resolve))
   let suites = to_suites(resolved)
   Ok(runner.run_with_retries(
@@ -84,6 +87,9 @@ pub fn run_scheduled_seeded(
   serial_tags: List(String),
   shuffle_seed: Option(Int),
 ) -> Result(Report, String) {
+  use _ <- result.try(
+    runtime.prepare_modules(list.map(tests, fn(indexed) { indexed.module })),
+  )
   let effective_workers = case fail_fast {
     True -> 1
     False -> workers

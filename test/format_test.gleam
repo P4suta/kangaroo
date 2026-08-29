@@ -1,11 +1,24 @@
 import gleam/option.{None, Some}
 import gleam/string
+import kangaroo/event.{CaseOutput}
 import kangaroo/failure.{EqualityMismatch, Failed, Passed}
 import kangaroo/format
 import kangaroo/internal/legacy/expect.{expect, to_be_true, to_equal}
 import kangaroo/internal/legacy/suite.{it, suite}
+import kangaroo/isolate.{CapturedIsolation, Completed, isolate_captured}
 import kangaroo/location.{Location}
 import kangaroo/report.{CaseResult}
+
+pub fn empty_case_output_does_not_print_a_blank_line_test() {
+  assert format.case_output_text("case", "", "", Passed) == None
+  let assert CapturedIsolation(Completed([]), stdout, stderr) =
+    isolate_captured(
+      fn() { format.print_sink(CaseOutput("suite", "case", "", "", Passed)) },
+      None,
+    )
+  assert stdout == ""
+  assert stderr == ""
+}
 
 pub fn suites() {
   [

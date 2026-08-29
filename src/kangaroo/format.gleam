@@ -46,7 +46,10 @@ pub fn print_sink(event: Event) -> Nil {
       failures |> list.each(failure_line)
     }
     CaseOutput(_, case_name, stdout, stderr, outcome) ->
-      fs.write_stdout_line(output_text(case_name, stdout, stderr, outcome))
+      case case_output_text(case_name, stdout, stderr, outcome) {
+        None -> Nil
+        Some(text) -> print_line(text)
+      }
     RunFinished(_, summary) -> print_line(summary_line(summary))
     _ -> Nil
   }
@@ -87,6 +90,18 @@ pub fn output_text(
     _ -> [output_section("stderr", case_name, stderr), ..sections]
   }
   sections |> list.reverse |> string.join("\n")
+}
+
+pub fn case_output_text(
+  case_name: String,
+  stdout: String,
+  stderr: String,
+  outcome: Outcome,
+) -> Option(String) {
+  case output_text(case_name, stdout, stderr, outcome) {
+    "" -> None
+    text -> Some(text)
+  }
 }
 
 fn output_section(label: String, case_name: String, output: String) -> String {

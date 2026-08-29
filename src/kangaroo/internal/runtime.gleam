@@ -1,3 +1,4 @@
+import gleam/list
 import gleam/option.{type Option}
 import kangaroo/internal/index.{type IndexedTest}
 import kangaroo/isolate.{
@@ -6,6 +7,12 @@ import kangaroo/isolate.{
 
 pub type LoadedTest {
   LoadedTest(index: IndexedTest, body: fn() -> Nil)
+}
+
+/// Reloads every compiled module once at the execution-generation boundary.
+/// Individual export resolution then performs only an arity/publicity check.
+pub fn prepare_modules(modules: List(String)) -> Result(Nil, String) {
+  reload_modules(list.unique(modules))
 }
 
 /// Resolves an indexed test against its compiled module.
@@ -40,3 +47,7 @@ fn resolve_export(
   module: String,
   function: String,
 ) -> Result(fn() -> Nil, String)
+
+@external(erlang, "kangaroo_runtime_ffi", "reload_modules")
+@external(javascript, "../../kangaroo_runtime_ffi.mjs", "reload_modules")
+fn reload_modules(modules: List(String)) -> Result(Nil, String)

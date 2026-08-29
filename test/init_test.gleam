@@ -3,6 +3,17 @@ import kangaroo/internal/init.{AlreadyConfigured, Create, ReplaceKnown, Suggest}
 import kangaroo/internal/legacy/expect.{expect, to_equal}
 import kangaroo/internal/legacy/suite.{it, suite}
 
+pub fn annotated_known_runner_test() {
+  let unitest =
+    "import unitest\n\npub fn main() -> Nil {\n  unitest.main()\n}\n"
+  assert init.plan("my_app", Some(unitest))
+    == ReplaceKnown(
+      "test/my_app_test.gleam",
+      unitest,
+      "import kangaroo\n\npub fn main() {\n  kangaroo.main()\n}\n",
+    )
+}
+
 pub fn suites() {
   [
     suite("init", [

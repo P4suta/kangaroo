@@ -1,4 +1,8 @@
+import gleam/dict.{type Dict}
 import gleam/list
+import gleam/option.{None, Some}
+import gleam/result
+import gleam/set.{type Set}
 import gleam/string
 import kangaroo/internal/index.{type IndexedModule, type IndexedTest}
 
@@ -18,10 +22,12 @@ pub fn affected(
   case list.try_map(changed_paths, changed_module) {
     Error(_) -> All
     Ok(changed) -> {
+      let reverse = reverse_dependencies(modules)
+      let affected = reachable(reverse, changed, set.new())
       let tests =
         modules
         |> list.flat_map(fn(module) {
-          case module.tests, module_is_affected(module, modules, changed) {
+          case module.tests, set.contains(affected, module.module) {
             [], _ -> []
             tests, True -> tests
             _, False -> []
@@ -32,33 +38,39 @@ pub fn affected(
   }
 }
 
-fn module_is_affected(
-  module: IndexedModule,
+fn reverse_dependencies(
   modules: List(IndexedModule),
-  changed: List(String),
-) -> Bool {
-  list.contains(changed, module.module)
-  || list.any(changed, fn(target) {
-    imports(module.module, target, modules, [])
+) -> Dict(String, List(String)) {
+  list.fold(modules, dict.new(), fn(reverse, module) {
+    list.fold(module.imports, reverse, fn(reverse, imported) {
+      dict.upsert(reverse, imported, fn(dependants) {
+        case dependants {
+          None -> [module.module]
+          Some(dependants) -> [module.module, ..dependants]
+        }
+      })
+    })
   })
 }
 
-fn imports(
-  module_name: String,
-  target: String,
-  modules: List(IndexedModule),
-  visited: List(String),
-) -> Bool {
-  case list.contains(visited, module_name) {
-    True -> False
-    False ->
-      case list.find(modules, fn(module) { module.module == module_name }) {
-        Error(_) -> False
-        Ok(module) ->
-          list.contains(module.imports, target)
-          || list.any(module.imports, fn(imported) {
-            imports(imported, target, modules, [module_name, ..visited])
-          })
+fn reachable(
+  reverse: Dict(String, List(String)),
+  pending: List(String),
+  visited: Set(String),
+) -> Set(String) {
+  case pending {
+    [] -> visited
+    [module, ..rest] ->
+      case set.contains(visited, module) {
+        True -> reachable(reverse, rest, visited)
+        False -> {
+          let dependants = dict.get(reverse, module) |> result.unwrap([])
+          reachable(
+            reverse,
+            list.append(dependants, rest),
+            set.insert(visited, module),
+          )
+        }
       }
   }
 }

@@ -38,8 +38,10 @@ dependency. There is no separate CLI package or build step.
 Diagnostics use the protocol's one-based source positions and are converted
 to Neovim's zero-based API exactly once. A new run and a daemon crash both
 clear all diagnostics from the previous generation. A daemon crash schedules
-an automatic restart and fresh discovery. Each coverage refresh also removes
-signs for files omitted by the new LCOV report.
+an automatic restart and fresh discovery. Rapid crash loops use exponential
+backoff and stop after five attempts; `:KangarooStart` explicitly retries.
+Each coverage refresh also removes signs for files omitted by the new LCOV
+report.
 
 ## Headless test
 

@@ -4,6 +4,17 @@ local namespace = vim.api.nvim_create_namespace("kangaroo")
 local coverage_namespace = vim.api.nvim_create_namespace("kangaroo-coverage")
 local sessions = {}
 local configured = false
+local stable_daemon_ms = 10000
+local restart_delays = { 200, 400, 800, 1600, 3200 }
+
+local function restart_delay(attempt)
+  return restart_delays[attempt]
+end
+
+local function now_ms()
+  local event_loop = vim.uv or vim.loop
+  return event_loop.now()
+end
 
 local function take_lines(remainder, chunk)
   local buffer = remainder .. chunk
@@ -181,7 +192,28 @@ local function alive(session)
     and vim.fn.jobwait({ session.job_id }, 0)[1] == -1
 end
 
-local function start_root(root)
+local start_root
+
+local function schedule_restart(session, root, reset_attempts)
+  if session.stopping then return end
+  if reset_attempts then session.restart_attempt = 0 end
+  session.restart_attempt = (session.restart_attempt or 0) + 1
+  local delay = restart_delay(session.restart_attempt)
+  if delay == nil then
+    vim.schedule(function()
+      vim.notify(
+        "kangaroo: daemon restart limit reached; run :KangarooStart to retry",
+        vim.log.levels.ERROR
+      )
+    end)
+    return
+  end
+  vim.defer_fn(function()
+    if not session.stopping then start_root(root, true) end
+  end, delay)
+end
+
+start_root = function(root, restarting)
   local existing = sessions[root]
   if alive(existing) then return existing end
   local session = existing or {
@@ -196,12 +228,16 @@ local function start_root(root)
     operation_order = {},
     summary = nil,
     stopping = false,
+    restart_attempt = 0,
+    started_at_ms = 0,
   }
   sessions[root] = session
+  if not restarting then session.restart_attempt = 0 end
   session.stopping = false
   session.stdout_remainder = ""
   session.active_operations = {}
   session.operation_order = {}
+  session.started_at_ms = now_ms()
   session.job_id = vim.fn.jobstart(
     { "gleam", "run", "-m", "kangaroo", "--", "daemon" },
     {
@@ -217,23 +253,22 @@ local function start_root(root)
           end)
         end
       end,
-      on_exit = function()
+      on_exit = function(exited_job_id)
+        if session.job_id ~= exited_job_id then return end
         session.job_id = nil
         session.failures = {}
         session.active_operations = {}
         session.operation_order = {}
         clear_diagnostics(session)
-        if not session.stopping then
-          vim.defer_fn(function()
-            if not session.stopping then start_root(root) end
-          end, 200)
-        end
+        local stable = now_ms() - session.started_at_ms >= stable_daemon_ms
+        schedule_restart(session, root, stable)
       end,
     }
   )
   if session.job_id <= 0 then
     session.job_id = nil
     vim.notify("kangaroo: could not start daemon", vim.log.levels.ERROR)
+    schedule_restart(session, root, false)
     return session
   end
   request(session, "discover")
@@ -465,6 +500,7 @@ M._test = {
   operation_started = operation_started,
   relative_path = relative_path,
   request = request,
+  restart_delay = restart_delay,
   select_test = select_test,
   start_root = start_root,
   take_lines = take_lines,

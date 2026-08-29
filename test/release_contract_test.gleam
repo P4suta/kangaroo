@@ -108,9 +108,14 @@ pub fn release_is_one_versioned_package_test() {
   let assert Ok(config) = fs.read_file("release-please-config.json")
   let assert Ok(manifest) = fs.read_file(".release-please-manifest.json")
   let assert Ok(workflow) = fs.read_file(".github/workflows/release-please.yml")
+  let assert Ok(command_source) =
+    fs.read_file("src/kangaroo/internal/command.gleam")
 
   assert !string.contains(config, "cli")
   assert !string.contains(workflow, "cli")
+  assert string.contains(config, "src/kangaroo/internal/command.gleam")
+  assert string.contains(command_source, "x-release-please-start-version")
+  assert string.contains(command_source, "x-release-please-end")
   assert string.contains(manifest, "1.0.0")
   assert string.contains(workflow, "gleam publish")
   assert string.contains(workflow, "vsce publish")

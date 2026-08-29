@@ -1,3 +1,5 @@
+import gleam/dict
+import gleam/option.{None, Some}
 import kangaroo/internal/continuous
 import kangaroo/internal/daemon
 import kangaroo/internal/vm
@@ -23,4 +25,29 @@ pub fn process_cleanup_timeout_is_separate_from_the_performance_budget_test() {
   assert vm.process_cleanup_timeout_for("linux") == 1000
   assert vm.process_cleanup_timeout_for("macos") == 1000
   assert vm.process_cleanup_timeout_for("windows") == 5000
+}
+
+pub fn stale_generation_output_is_not_folded_test() {
+  let baseline = dict.from_list([#("test/example.gleam", "before")])
+  let changed = dict.from_list([#("test/example.gleam", "after")])
+  assert continuous.fold_output_if_current(
+      baseline,
+      baseline,
+      "",
+      "current",
+      fn(output, chunk) { output <> chunk },
+    )
+    == Some("current")
+  assert continuous.fold_output_if_current(
+      baseline,
+      changed,
+      "unchanged",
+      "stale",
+      fn(_, _) { panic as "stale output callback must not run" },
+    )
+    == None
+}
+
+pub fn shuffle_seed_uses_wall_clock_entropy_test() {
+  assert vm.shuffle_seed() > 1_000_000_000_000
 }

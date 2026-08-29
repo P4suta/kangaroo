@@ -18,6 +18,7 @@ isolate_captured(Body, Timeout) ->
                     none -> ?DEFAULT_TIMEOUT_MS
                 end,
     ensure_stderr_proxy(),
+    kangaroo_coverage_probe_ffi:ensure_started(),
     Collector = spawn(fun() -> output_collector([], []) end),
     true = ets:insert(kangaroo_output_collectors, {Collector}),
     Parent = self(),
@@ -99,6 +100,7 @@ collect_descendants(Root, Descendants) ->
     end.
 
 finish_capture(Collector, Result) ->
+    kangaroo_coverage_probe_ffi:flush(),
     Reference = make_ref(),
     Collector ! {kangaroo_take_output, self(), Reference},
     receive
@@ -170,11 +172,16 @@ stderr_proxy_installer() ->
             end,
             Installer = self(),
             Proxy = spawn(fun() ->
-                              ets:new(kangaroo_output_collectors,
-                                      [named_table, public, set,
-                                       {read_concurrency, true}]),
-                              Installer ! {kangaroo_stderr_table_ready, self()},
-                              stderr_proxy(Original)
+                              case ensure_output_collectors_table(4000) of
+                                  ok ->
+                                      Installer !
+                                        {kangaroo_stderr_table_ready, self()},
+                                      stderr_proxy(Original);
+                                  {error, Reason} ->
+                                      Installer !
+                                        {kangaroo_stderr_table_failed,
+                                         self(), Reason}
+                              end
                           end),
             receive
                 {kangaroo_stderr_table_ready, Proxy} ->
@@ -186,6 +193,9 @@ stderr_proxy_installer() ->
                     persistent_term:put(OriginalKey, Original),
                     persistent_term:put(Key, Proxy),
                     Parent ! {kangaroo_stderr_installed, self()},
+                    unregister_stderr_installer(self());
+                {kangaroo_stderr_table_failed, Proxy, Reason} ->
+                    Parent ! {kangaroo_stderr_install_failed, self(), Reason},
                     unregister_stderr_installer(self())
             after 4000 ->
                 exit(Proxy, kill),
@@ -193,6 +203,31 @@ stderr_proxy_installer() ->
                           kangaroo_stderr_table_timeout},
                 unregister_stderr_installer(self())
             end
+    end.
+
+ensure_output_collectors_table(Remaining) when Remaining =< 0 ->
+    {error, kangaroo_stderr_table_timeout};
+ensure_output_collectors_table(Remaining) ->
+    case ets:whereis(kangaroo_output_collectors) of
+        undefined ->
+            try
+                _ = ets:new(kangaroo_output_collectors,
+                            [named_table, public, set,
+                             {read_concurrency, true}]),
+                ok
+            catch
+                error:badarg ->
+                    receive after 1 -> ok end,
+                    ensure_output_collectors_table(Remaining - 1)
+            end;
+        Table ->
+            case ets:info(Table, owner) of
+                Owner when is_pid(Owner), Owner =/= self() ->
+                    exit(Owner, kill);
+                _ -> ok
+            end,
+            receive after 1 -> ok end,
+            ensure_output_collectors_table(Remaining - 1)
     end.
 
 unregister_stderr_installer(Installer) ->

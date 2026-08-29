@@ -6,6 +6,8 @@ import { createRequire, syncBuiltinESMExports } from "node:module";
 import { execFileSync } from "node:child_process";
 import { inspect as inspectValue } from "../gleam_stdlib/gleam/string.mjs";
 import { collect as collectMatcherFailures } from "./kangaroo_context_ffi.mjs";
+import { flush as flushCoverage } from "./kangaroo_coverage_probe_ffi.mjs";
+import { diff_lines as diffLines } from "./kangaroo/diff.mjs";
 
 const require = createRequire(import.meta.url);
 const childProcess = require("node:child_process");
@@ -276,32 +278,29 @@ function sourceExpression(error) {
 }
 
 function valueDiff(expected, actual) {
-  let expectedLines;
-  let actualLines;
+  let expectedText;
+  let actualText;
   if (typeof expected === "string" && typeof actual === "string") {
-    expectedLines = expected.split("\n");
-    actualLines = actual.split("\n");
+    expectedText = expected;
+    actualText = actual;
   } else if (
     expected && actual &&
     typeof expected[Symbol.iterator] === "function" &&
     typeof actual[Symbol.iterator] === "function"
   ) {
-    expectedLines = Array.from(expected, inspectValue);
-    actualLines = Array.from(actual, inspectValue);
+    expectedText = Array.from(expected, inspectValue).join("\n");
+    actualText = Array.from(actual, inspectValue).join("\n");
   } else {
     return undefined;
   }
-  if (expectedLines.length < 2 && actualLines.length < 2) return undefined;
-  return [
-    ...expectedLines.map((line) => `- ${line}`),
-    ...actualLines.map((line) => `+ ${line}`),
-  ].join("\n");
+  return optionValue(diffLines(expectedText, actualText)) ?? undefined;
 }
 
 function finish(status, payload) {
   signalStarted();
   clearInterval(cancellationPoll);
   terminateChildProcesses();
+  flushCoverage();
   let encoded = new TextEncoder().encode(JSON.stringify(payload));
   if (encoded.length > data.length) {
     encoded = new TextEncoder().encode(

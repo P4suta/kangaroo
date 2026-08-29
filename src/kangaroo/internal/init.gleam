@@ -30,6 +30,7 @@ pub fn entrypoint() -> String {
 }
 
 fn known_runner(source: String) -> Bool {
+  let source = string.replace(source, each: "->Nil", with: "")
   source == "importgleeunitpubfnmain(){gleeunit.main()}"
   || source == "importunitestpubfnmain(){unitest.main()}"
 }

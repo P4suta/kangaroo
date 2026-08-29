@@ -1,5 +1,6 @@
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/string
+import kangaroo
 import kangaroo/failure.{EqualityMismatch}
 import kangaroo/internal/index.{type IndexedTest, IndexedTest}
 import kangaroo/internal/legacy/expect.{expect, to_be_true, to_equal}
@@ -48,6 +49,29 @@ pub fn worker_returns_matcher_failures_test() {
     runtime.run(loaded, None)
   assert expected == "2"
   assert actual == "1"
+}
+
+pub fn multiline_assert_uses_the_shared_diff_test() {
+  let assert Ok(loaded) = runtime.resolve(fixture("string_assert_fixture"))
+  let assert Crashed(error) = runtime.run(loaded, None)
+  assert error.diff == Some("- new\n+ old")
+}
+
+pub fn runtime_prepares_each_generation_module_once_test() {
+  assert runtime.prepare_modules(["runtime_fixture", "runtime_fixture"])
+    == Ok(Nil)
+}
+
+pub fn stderr_proxy_recovers_after_restart_test() {
+  kangaroo.serial()
+  kill_stderr_proxy()
+  let assert Ok(loaded) = runtime.resolve(fixture("output_fixture"))
+  assert runtime.run_captured(loaded, None)
+    == CapturedIsolation(
+      Completed([]),
+      "captured stdout\n",
+      "captured stderr\n",
+    )
 }
 
 pub fn suites() {
@@ -114,17 +138,6 @@ pub fn suites() {
         }
       }),
       it("captures stdout and stderr without leaking them", fn() {
-        let assert Ok(loaded) = runtime.resolve(fixture("output_fixture"))
-        expect(runtime.run_captured(loaded, None))
-        |> to_equal(CapturedIsolation(
-          Completed([]),
-          "captured stdout\n",
-          "captured stderr\n",
-        ))
-      }),
-      it("reinstalls the stderr proxy after an unexpected crash", fn() {
-        // JavaScript has no global stderr proxy; its test FFI is a no-op.
-        kill_stderr_proxy()
         let assert Ok(loaded) = runtime.resolve(fixture("output_fixture"))
         expect(runtime.run_captured(loaded, None))
         |> to_equal(CapturedIsolation(

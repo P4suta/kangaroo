@@ -6,12 +6,20 @@ import { join } from "node:path";
 import { Error as GleamError, Ok } from "./gleam.mjs";
 
 const require = createRequire(import.meta.url);
+const packageNames = new Map();
 
 function packageName(projectDir) {
+  const cached = packageNames.get(projectDir);
+  if (cached !== undefined) return cached;
   const toml = readFileSync(join(projectDir, "gleam.toml"), "utf8");
   const match = toml.match(/^\s*name\s*=\s*"([^"]+)"/m);
   if (!match) throw new Error("could not find package name in gleam.toml");
+  packageNames.set(projectDir, match[1]);
   return match[1];
+}
+
+export function reload_modules(_moduleNames) {
+  return new Ok(undefined);
 }
 
 export function resolve_export(moduleName, functionName) {

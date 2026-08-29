@@ -112,6 +112,7 @@ pub fn suites() {
         expect(command.parse(["daemon"])) |> to_equal(Ok(Daemon))
         expect(command.parse(["--help"])) |> to_equal(Ok(Help))
         expect(command.parse(["--version"])) |> to_equal(Ok(Version))
+        expect(command.version()) |> to_equal("kangaroo 1.0.0")
       }),
       it("lets coverage reporters override the configured output", fn() {
         let assert Ok(Coverage(options)) =

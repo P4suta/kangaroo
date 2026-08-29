@@ -50,4 +50,4 @@ daemon_runner_path() ->
     <<"build/dev/javascript/kangaroo/kangaroo_daemon_child.mjs">>.
 
 shuffle_seed() ->
-    erlang:unique_integer([positive, monotonic]).
+    erlang:system_time(millisecond).

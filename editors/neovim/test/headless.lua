@@ -28,6 +28,11 @@ assert(vim.deep_equal(test.coverage_arguments(), {
   "--coverage-reporter", "lcov",
 }))
 
+assert(test.restart_delay(1) == 200)
+assert(test.restart_delay(2) == 400)
+assert(test.restart_delay(5) == 3200)
+assert(test.restart_delay(6) == nil)
+
 assert(test.relative_path("C:\\work\\pkg", "c:\\work\\pkg\\test\\math.gleam")
   == "test/math.gleam")
 
@@ -113,7 +118,7 @@ local ok, lifecycle_error = pcall(function()
   session.failures = { { message = "stale" } }
   session.diagnostic_buffers[77] = true
   running[jobs[1].id] = false
-  jobs[1].options.on_exit()
+  jobs[1].options.on_exit(jobs[1].id)
   assert(#session.failures == 0)
   assert(test.latest_operation(session) == nil)
   assert(vim.deep_equal(resets, { 77 }))
@@ -123,6 +128,11 @@ local ok, lifecycle_error = pcall(function()
   assert(#jobs == 2)
   assert(vim.json.decode(writes[3].contents).command == "discover")
   assert(vim.json.decode(writes[4].contents).command == "watch")
+
+  session.restart_attempt = 5
+  running[jobs[2].id] = false
+  jobs[2].options.on_exit(jobs[2].id)
+  assert(#deferred == 1)
 end)
 
 kangaroo.stop_all()

@@ -1,5 +1,6 @@
 import gleam/dict.{type Dict}
 import gleam/int
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import kangaroo/internal/fs
 import kangaroo/internal/process
@@ -355,16 +356,44 @@ fn poll_controlled_run(
         }
         [] ->
           case process.poll(handle) {
-            process.ProcessOutput(chunk) ->
-              controlled_run_decide(
-                project_dir,
-                roots,
-                baseline,
-                handle,
-                on_output(state, chunk),
-                on_output,
-                on_control,
-              )
+            process.ProcessOutput(chunk) -> {
+              case watcher.snapshot_project(project_dir, roots) {
+                Error(message) -> {
+                  process.cancel(handle)
+                  let _ = drain_controlled_cancellation(handle, sys.now_ms())
+                  Error(message)
+                }
+                Ok(latest) ->
+                  case
+                    fold_output_if_current(
+                      baseline,
+                      latest,
+                      state,
+                      chunk,
+                      on_output,
+                    )
+                  {
+                    None -> {
+                      process.cancel(handle)
+                      use _ <- result.try(drain_controlled_cancellation(
+                        handle,
+                        sys.now_ms(),
+                      ))
+                      Ok(ControlledChildSuperseded(state))
+                    }
+                    Some(state) ->
+                      controlled_run_decide(
+                        project_dir,
+                        roots,
+                        baseline,
+                        handle,
+                        state,
+                        on_output,
+                        on_control,
+                      )
+                  }
+              }
+            }
             process.ProcessRunning ->
               controlled_run_decide(
                 project_dir,
@@ -411,6 +440,22 @@ fn controlled_run_decide(
         on_control,
       )
     }
+  }
+}
+
+/// Folds one output chunk only while the source snapshot still belongs to the
+/// active generation. `None` tells the caller to cancel without publishing the
+/// stale chunk.
+pub fn fold_output_if_current(
+  baseline: Dict(String, String),
+  current: Dict(String, String),
+  state: state,
+  chunk: String,
+  on_output: fn(state, String) -> state,
+) -> Option(state) {
+  case watcher.diff(baseline, current) {
+    [] -> Some(on_output(state, chunk))
+    [_, ..] -> None
   }
 }
 

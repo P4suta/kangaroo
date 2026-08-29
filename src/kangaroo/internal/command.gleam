@@ -3,6 +3,11 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 
+// x-release-please-start-version
+pub const package_version = "1.0.0"
+
+// x-release-please-end
+
 pub type Reporter {
   Pretty
   Dot
@@ -359,5 +364,5 @@ pub fn usage() -> String {
 }
 
 pub fn version() -> String {
-  "kangaroo 1.0.0"
+  "kangaroo " <> package_version
 }
