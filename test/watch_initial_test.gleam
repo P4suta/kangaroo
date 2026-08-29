@@ -127,11 +127,31 @@ pub fn suites() {
                   )
                 }
               }
+              // Do not tear the Windows workspace down while the generation
+              // that observed the new root still owns compiler/runtime file
+              // handles. Requiring its result also proves the dynamic root
+              // participates in execution, not only detection.
+              let #(settled_dynamic_root, settled_output) = case
+                observed_dynamic_root
+              {
+                False -> #(False, root_output)
+                True ->
+                  await_output(
+                    handle,
+                    "1 passed, 0 failed",
+                    sys.now_ms(),
+                    15_000,
+                    root_output,
+                  )
+              }
               process.cancel(handle)
               let _ = await_terminal(handle, sys.now_ms(), 1000)
               let assert Ok(Nil) = fs.remove_tree(workspace)
               case
-                completed_latest && configured_roots && observed_dynamic_root
+                completed_latest
+                && configured_roots
+                && observed_dynamic_root
+                && settled_dynamic_root
               {
                 True -> expect(True) |> to_be_true()
                 False -> {
@@ -140,6 +160,7 @@ pub fn suites() {
                     <> initial_output
                     <> config_output
                     <> root_output
+                    <> settled_output
                   panic as message
                 }
               }
