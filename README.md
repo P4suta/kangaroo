@@ -117,11 +117,14 @@ gleam run -m kangaroo_cli -- run --name <substring>   # run matching tests only
 gleam run -m kangaroo_cli -- run --json              # run once, editor protocol (CI)
 gleam run -m kangaroo_cli -- run --fail-fast         # stop at the first failure
 gleam run -m kangaroo_cli -- run --coverage          # run once with coverage
+gleam run -m kangaroo_cli -- --help                  # usage
+gleam run -m kangaroo_cli -- --version               # version
 ```
 
 In the TUI, `r` forces a full re-run, `f` toggles the failures-only view,
 and `q` (or Ctrl+C) quits, restoring the terminal. Keyboard input works on
-both Erlang and JavaScript.
+both Erlang and JavaScript. When a run fails to compile, the TUI shows the
+compiler's report instead of the stale results, with `r` to retry.
 
 The runner compiles the project with a fast compile-only subprocess for the
 current target and then executes only the affected test modules in its own
@@ -129,7 +132,8 @@ VM with hot module reloading — `code:load_file` on Erlang, loading the
 compiled `.mjs` files on JavaScript (when the CLI runs from the project's
 own build, i.e. as a dev dependency). When in-VM execution is not possible
 it falls back to a `gleam test` subprocess. Changes are detected from file
-metadata plus periodic content comparison, and rapid saves are debounced.
+metadata plus periodic content comparison, and rapid saves are debounced;
+test modules whose source files have been deleted are not re-run.
 Coverage uses Erlang's `cover` (mapped back to `.gleam` lines) or, on
 JavaScript, Node's V8 coverage of the generated `.mjs` files, reported per
 module.

@@ -69,6 +69,11 @@ Matcher failures and panics carry the source position they originate from:
   The pure `kangaroo/location` module parses both Erlang stack text
   (`file:line` lines, with `.gleam` paths thanks to Gleam's `-file`
   attributes) and JavaScript `Error().stack`, skipping framework frames.
+  Framework frames are recognised in two forms: the `.gleam` source paths
+  of a self-run, and the compiled `_gleam_artefacts/*.erl` paths the
+  framework's own modules carry when the CLI executes the project's tests
+  in its own VM (Gleam emits the `-file` source attributes only for the
+  main package).
 - Matchers capture the location eagerly in `expect()`, because matchers are
   usually the last call in a test body and Erlang's tail-call optimisation
   would erase the caller's frame by the time the failure is recorded.
@@ -81,8 +86,10 @@ Matcher failures and panics carry the source position they originate from:
 1. **Watch** — `src`, `test` and the project config files are polled every
    250 ms. File metadata (mtime + size) is compared, and every few polls
    the full contents are compared too, so edits that keep both unchanged
-   are still seen. Detected changes are debounced (150 ms) and the snapshot
-   is re-read so rapid saves coalesce into one run.
+   are still seen. When metadata changes are detected, only the changed
+   files are re-read into the content cache. Detected changes are
+   debounced (150 ms) and the snapshot is re-read so rapid saves coalesce
+   into one run.
 2. **Graph** — every `.gleam` file's imports are parsed into a module
    graph.
 3. **Affected** — the transitive import closure of each test module is
@@ -98,7 +105,10 @@ Matcher failures and panics carry the source position they originate from:
    the project's own package from the require cache so the kangaroo runtime
    keeps its module identity (required for `instanceof`-based type
    matching); the loader rejects incompatible modules so the CLI falls back
-   to a `gleam test` subprocess instead of silently passing.
+   to a `gleam test` subprocess instead of silently passing. Test modules
+   whose source files no longer exist are skipped: the compiler leaves
+   stale beams behind when a test file is deleted, so the module list is
+   filtered against the sources before running.
 6. **Present** — events are folded into the TUI, printed as text, or
    streamed as JSON.
 
