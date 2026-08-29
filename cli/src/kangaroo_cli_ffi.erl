@@ -8,11 +8,50 @@
          call_suites/1, list_test_modules/1, cover_start/0,
          cover_compile_beams/1, cover_analyse/1, event_buffer_append/1,
          event_buffer_take/0, is_tty/0, raw_mode/1, init_keyboard/0,
-         poll_key/0, run_gleam_test_with/4, remove_dir/1]).
+         poll_key/0, run_gleam_test_with/4, remove_dir/1,
+         run_all_in_process/1]).
 -include_lib("kernel/include/file.hrl").
 
 is_erlang() ->
     true.
+
+%% Runs each function in a fresh process and collects the results in
+%% order, so the work runs in parallel across BEAM schedulers.
+run_all_in_process(Funs) ->
+    Parent = self(),
+    Pids = [spawn(fun() ->
+                          try
+                              Parent ! {self(), {ok, F()}}
+                          catch
+                              Class:Reason:Stack ->
+                                  Parent ! {self(), {crash, Class, Reason, Stack}}
+                          end
+                  end) || F <- Funs],
+    collect_workers(Pids, []).
+
+collect_workers([], Acc) ->
+    lists:reverse(Acc);
+collect_workers([Pid | Rest], Acc) ->
+    receive
+        {Pid, {ok, Result}} ->
+            collect_workers(Rest, [Result | Acc]);
+        {Pid, {crash, Class, Reason, Stack}} ->
+            io:format(standard_error,
+                      "worker ~p crashed: ~p:~p~n  ~p~n",
+                      [Pid, Class, Reason, Stack]),
+            erlang:raise(Class, Reason, Stack)
+    after 60000 ->
+        io:format(standard_error, "worker ~p timed out~n", [Pid]),
+        io:format(standard_error, "  current: ~p~n",
+                  [process_info(Pid, current_function)]),
+        io:format(standard_error, "  stack: ~p~n",
+                  [process_info(Pid, current_stacktrace)]),
+        [io:format(standard_error, "  other ~p: ~p~n",
+                   [Other, process_info(Other, current_function)])
+         || Other <- [Pid | Rest]],
+        exit(Pid, kill),
+        erlang:error(timeout)
+    end.
 
 add_code_path(Directory) ->
     code:add_patha(Directory),
@@ -44,15 +83,27 @@ add_project_paths(ProjectDir) ->
             {ok, nil}
     end.
 
+%% Loads a compiled module (by name, e.g. "foo_test" or "a/b"), replacing
+%% any previous version. Loading the same version is a no-op, so
+%% concurrent in-VM runs that reload the same modules do not race. When
+%% the module has a live old version (e.g. cover re-instrumented it) the
+%% load reports not_purged; the old version is then purged and the load
+%% retried.
 load_module(Name) ->
     Atom = module_atom(Name),
-    case code:purge(Atom) of
-        _ ->
+    case code:load_file(Atom) of
+        {module, Atom} ->
+            {ok, nil};
+        {error, not_purged} ->
+            _ = code:purge(Atom),
             case code:load_file(Atom) of
                 {module, Atom} -> {ok, nil};
-                {error, Reason} -> {error, format_error(Reason)};
-                Error -> {error, format_error(Error)}
-            end
+                Other -> {error, format_error(Other)}
+            end;
+        {error, Reason} ->
+            {error, format_error(Reason)};
+        Other ->
+            {error, format_error(Other)}
     end.
 
 call_suites(Module) ->

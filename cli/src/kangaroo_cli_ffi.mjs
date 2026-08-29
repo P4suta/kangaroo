@@ -124,6 +124,11 @@ export function is_erlang() {
   return false;
 }
 
+// JavaScript has no processes, so "running in a process" runs inline.
+export function run_all_in_process(funs) {
+  return toList(listToArray(funs).map((fun) => fun()));
+}
+
 // The in-VM execution engine only exists on Erlang.
 export function not_supported(_arg) {
   return new GleamError("in-VM execution is not supported on JavaScript");

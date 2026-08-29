@@ -10,10 +10,11 @@ import kangaroo/encode
 import kangaroo/event.{type Event, CaseFinished}
 import kangaroo/failure.{Failed}
 import kangaroo/format
-import kangaroo/report
+
 import kangaroo/runner
 import kangaroo/suite
 import kangaroo_cli/affected.{affected_tests}
+
 import kangaroo_cli/collect
 import kangaroo_cli/coverage
 import kangaroo_cli/event_buffer
@@ -23,6 +24,7 @@ import kangaroo_cli/graph.{
 }
 import kangaroo_cli/jscoverage
 import kangaroo_cli/keys
+import kangaroo_cli/parallel
 import kangaroo_cli/stream.{parse_events}
 import kangaroo_cli/terminal
 import kangaroo_cli/tui
@@ -37,6 +39,12 @@ const poll_interval_ms = 50
 /// The most polls the settle loop runs while waiting for the filesystem to
 /// quiet down after a change.
 const max_settle_polls = 5
+
+/// The most suites one parallel group runs. Suites are never split across
+/// groups, so a suite larger than this runs alone. Two suites per group
+/// keeps the worker count reasonable while still running many suites
+/// concurrently.
+const suites_per_group = 2
 
 /// How often (in polls) the watcher compares full file contents to catch
 /// edits that metadata cannot distinguish.
@@ -671,10 +679,12 @@ fn run_in_vm_common(
       }
     })
 
-  let suite_lists =
+  // Every loaded module with its suites, kept grouped by module so the
+  // executor can run modules in parallel.
+  let pairs =
     list.filter_map(loaded, fn(module) {
       case vm.call_suites(module) {
-        Ok(suites) -> Ok(suites)
+        Ok(suites) -> Ok(#(module, suites))
         Error(_) -> Error(Nil)
       }
     })
@@ -684,25 +694,37 @@ fn run_in_vm_common(
     <> int.to_string(list.length(module_list))
     <> " test module(s) in-VM...",
   )
-  let suites = case name {
-    None -> collect.collect_suites(suite_lists)
-    Some(substring) ->
-      collect.collect_suites(suite_lists)
-      |> suite.filter_by_name(substring)
-  }
 
   // The in-VM call rejects incompatible modules (see the JavaScript
-  // `call_suites`), so an empty collection here means nothing could be
-  // loaded; fall back to the subprocess rather than silently passing.
-  case suites == [] && module_list != [] {
+  // `call_suites`), so no collected suites means nothing could be loaded;
+  // fall back to the subprocess rather than silently passing.
+  case pairs == [] && module_list != [] {
     True ->
       Error(
         "no suites were collected from the loaded modules; "
         <> "falling back to subprocess",
       )
     False -> {
-      let report = runner.run_with_config(suites, sink, config)
-      Ok(report.has_failures(report))
+      // The suites are merged (de-duplicating the aggregator modules) and
+      // then chunked, so suites run concurrently without being split.
+      let merged =
+        pairs
+        |> list.map(fn(pair) { pair.1 })
+        |> collect.collect_suites
+      let merged = case name {
+        None -> merged
+        Some(substring) -> suite.filter_by_name(merged, substring)
+      }
+      let groups = parallel.chunk_suites(merged, suites_per_group)
+      let has_failures =
+        parallel.run_groups(
+          groups,
+          config,
+          sink,
+          vm.run_all_in_process,
+          fs.now_ms,
+        )
+      Ok(has_failures)
     }
   }
 }

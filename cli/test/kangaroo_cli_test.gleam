@@ -9,6 +9,7 @@ import jscoverage_test.{suites as jscoverage_suites}
 import kangaroo
 import kangaroo/suite.{type Suite}
 import keys_test.{suites as keys_suites}
+import parallel_test.{suites as parallel_suites}
 import protocol_test.{suites as protocol_suites}
 import stream_test.{suites as stream_suites}
 import tui_test.{suites as tui_suites}
@@ -30,6 +31,7 @@ pub fn suites() -> List(Suite) {
     tui_suites(),
     integration_suites(),
 
+    parallel_suites(),
     protocol_suites(),
     jscoverage_suites(),
     keys_suites(),
