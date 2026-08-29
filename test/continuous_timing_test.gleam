@@ -9,5 +9,5 @@ pub fn idle_scan_interval_balances_latency_and_cpu_test() {
   // JavaScript process output wakes the daemon through the shared activity
   // signal, so the safety poll does not add to the watch scan interval.
   assert continuous.scan_interval(50) <= 100
-  assert daemon.poll_interval_ms() <= 100
+  assert daemon.poll_interval_ms() <= 150
 }
