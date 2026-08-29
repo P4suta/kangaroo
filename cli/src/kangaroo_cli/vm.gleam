@@ -9,6 +9,13 @@ import kangaroo_cli/fs
 @external(javascript, "../kangaroo_cli_ffi.mjs", "is_erlang")
 pub fn is_erlang() -> Bool
 
+/// Runs each function in its own process on Erlang, collecting the
+/// results in order (true module-level parallelism); on JavaScript the
+/// functions run inline, one after the other.
+@external(erlang, "kangaroo_cli_ffi", "run_all_in_process")
+@external(javascript, "../kangaroo_cli_ffi.mjs", "run_all_in_process")
+pub fn run_all_in_process(funs: List(fn() -> a)) -> List(a)
+
 /// Adds a directory to the Erlang code path.
 @external(erlang, "kangaroo_cli_ffi", "add_code_path")
 @external(javascript, "../kangaroo_cli_ffi.mjs", "not_supported")
