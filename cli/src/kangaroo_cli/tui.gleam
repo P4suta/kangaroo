@@ -442,6 +442,11 @@ fn summary_section(state: UiState) -> String {
       }
       "\n"
       <> counts
+      <> dim
+      <> " in "
+      <> int.to_string(summary.duration_ms)
+      <> "ms"
+      <> reset
       <> run_info_suffix(state.run_info)
       <> slowest_suffix(state.suites)
     }

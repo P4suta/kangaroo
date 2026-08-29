@@ -235,6 +235,9 @@ export function raw_mode(on) {
   if (process.stdin && process.stdin.isTTY) {
     process.stdin.setRawMode(Boolean(on));
     process.stdin.resume();
+    // The alternate screen buffer keeps the TUI from clobbering the
+    // shell's scrollback.
+    process.stdout.write(on ? "\u001b[?1049h" : "\u001b[?1049l");
   }
   return undefined;
 }
@@ -244,7 +247,10 @@ export function init_keyboard() {
     process.stdin.resume();
   }
   process.on("SIGINT", () => {
-    if (process.stdin && process.stdin.isTTY) process.stdin.setRawMode(false);
+    if (process.stdin && process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+      process.stdout.write("\u001b[?1049l");
+    }
     process.exit(130);
   });
   process.on("exit", () => {

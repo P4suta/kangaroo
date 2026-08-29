@@ -179,6 +179,15 @@ pub fn suites() {
         let rendered = tui.render(state, tui.FailuresOnly)
         string.contains(rendered, "math") |> expect |> to_equal(False)
       }),
+      it("renders the run duration", fn() {
+        let state =
+          tui.initial()
+          |> tui.apply(RunStarted(1, 1))
+          |> tui.apply(CaseFinished("math", "adds", Passed, 3))
+          |> tui.apply(RunFinished(1, Summary(1, 0, 0, 523)))
+        let rendered = tui.render(state, tui.All)
+        string.contains(rendered, "in 523ms") |> expect |> to_equal(True)
+      }),
       it("renders a compile failure screen", fn() {
         let state =
           tui.initial()
