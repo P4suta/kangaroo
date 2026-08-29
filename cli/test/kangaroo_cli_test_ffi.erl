@@ -5,7 +5,11 @@
 %% while accumulating the written chunks. Tests use it to assert that the
 %% JSON protocol stream is the only thing ever written to stdout.
 -module(kangaroo_cli_test_ffi).
--export([capture_stdout/1]).
+-export([capture_stdout/1, module_path/1]).
+
+module_path(Name) ->
+    unicode:characters_to_binary(
+        io_lib:format("~ts", [code:which(binary_to_atom(Name, utf8))])).
 
 capture_stdout(Fun) ->
     Parent = self(),

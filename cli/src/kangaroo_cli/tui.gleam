@@ -39,6 +39,7 @@ pub type UiState {
     suites: List(UiSuite),
     summary: Option(Summary),
     run_info: Option(RunInfo),
+    compile_error: Option(String),
   )
 }
 
@@ -50,18 +51,24 @@ pub type RunInfo {
 }
 
 pub fn initial() -> UiState {
-  UiState([], None, None)
+  UiState([], None, None, None)
 }
 
 /// Records the watch-session information of the most recent run.
 pub fn with_run_info(state: UiState, info: RunInfo) -> UiState {
-  UiState(state.suites, state.summary, Some(info))
+  UiState(state.suites, state.summary, Some(info), state.compile_error)
+}
+
+/// Shows the compiler's report when the latest run could not be compiled.
+/// A new run (`RunStarted`) clears it.
+pub fn with_compile_error(state: UiState, output: Option(String)) -> UiState {
+  UiState(state.suites, state.summary, state.run_info, output)
 }
 
 /// Applies a runner event to the UI state.
 pub fn apply(state: UiState, event: Event) -> UiState {
   case event {
-    RunStarted(_, _) -> UiState([], None, state.run_info)
+    RunStarted(_, _) -> UiState([], None, state.run_info, None)
     CaseStarted(suite_name, case_name) ->
       upsert_case(state, suite_name, case_name, Running, 0)
     CaseFinished(suite_name, case_name, outcome, duration_ms) ->
@@ -70,7 +77,7 @@ pub fn apply(state: UiState, event: Event) -> UiState {
     SuiteFinished(suite_name, outcome) ->
       set_suite_failures(state, suite_name, hook_failures_of(outcome))
     RunFinished(_, summary) ->
-      UiState(state.suites, Some(summary), state.run_info)
+      UiState(state.suites, Some(summary), state.run_info, state.compile_error)
   }
 }
 
@@ -90,6 +97,7 @@ fn ensure_suite(state: UiState, suite_name: String) -> UiState {
         list.append(state.suites, [UiSuite(suite_name, [], [])]),
         state.summary,
         state.run_info,
+        state.compile_error,
       )
   }
 }
@@ -106,7 +114,7 @@ fn set_suite_failures(
         False -> suite
       }
     })
-  UiState(suites, state.summary, state.run_info)
+  UiState(suites, state.summary, state.run_info, state.compile_error)
 }
 
 fn status_of(outcome: Outcome) -> CaseStatus {
@@ -126,7 +134,7 @@ fn upsert_case(
 ) -> UiState {
   let suites =
     upsert_suite(state.suites, suite_name, case_name, status, duration_ms)
-  UiState(suites, state.summary, state.run_info)
+  UiState(suites, state.summary, state.run_info, state.compile_error)
 }
 
 fn upsert_suite(
@@ -201,12 +209,56 @@ pub fn slowest(suites: List(UiSuite)) -> Option(#(String, Int)) {
 }
 
 /// Renders the current state as an ANSI screen. The screen is cleared and
-/// the cursor is placed at the top before drawing.
+/// the cursor is placed at the top before drawing. When the latest run
+/// failed to compile, the compiler's report replaces the (stale) run
+/// content.
 pub fn render(state: UiState, view: View) -> String {
   clear_screen()
   <> header()
-  <> suites_section(visible_suites(state.suites, view))
-  <> summary_section(state)
+  <> case state.compile_error {
+    None ->
+      suites_section(visible_suites(state.suites, view))
+      <> summary_section(state)
+    Some(output) -> compile_error_section(output)
+  }
+}
+
+/// The most lines of compiler output shown on the failure screen; the rest
+/// is reported as omitted.
+const max_compile_error_lines = 40
+
+fn compile_error_section(output: String) -> String {
+  "\n"
+  <> red
+  <> bold
+  <> "compile failed"
+  <> reset
+  <> "\n\n"
+  <> indent(truncate_lines(output, max_compile_error_lines), 2)
+  <> "\n\n"
+  <> dim
+  <> "  r retry · q quit"
+  <> reset
+  <> "\n"
+}
+
+/// Keeps the first `max_lines` lines of a text and reports how many were
+/// omitted, so a long compiler report cannot overwhelm the screen.
+fn truncate_lines(text: String, max_lines: Int) -> String {
+  let lines = string.split(text, "\n")
+  case list.length(lines) <= max_lines {
+    True -> text
+    False -> {
+      let omitted = list.length(lines) - max_lines
+      string.join(list.take(lines, max_lines), "\n")
+      <> "\n"
+      <> dim
+      <> "  (... "
+      <> int.to_string(omitted)
+      <> " more lines ...)"
+      <> reset
+    }
+  }
 }
 
 fn visible_suites(suites: List(UiSuite), view: View) -> List(UiSuite) {

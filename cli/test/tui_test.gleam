@@ -6,7 +6,7 @@ import kangaroo/event.{
   CaseFinished, CaseStarted, RunFinished, RunStarted, SuiteFinished,
   SuiteStarted,
 }
-import kangaroo/expect.{expect, to_equal}
+import kangaroo/expect.{expect, to_be_less_than, to_equal}
 import kangaroo/failure.{
   AssertionFailed, EqualityMismatch, Failed, Passed, Skipped,
 }
@@ -18,7 +18,7 @@ pub fn suites() {
   [
     suite("tui", [
       it("starts empty", fn() {
-        expect(tui.initial()) |> to_equal(tui.UiState([], None, None))
+        expect(tui.initial()) |> to_equal(tui.UiState([], None, None, None))
       }),
       it("tracks case statuses through a run", fn() {
         let state =
@@ -178,6 +178,47 @@ pub fn suites() {
           |> tui.apply(CaseFinished("math", "adds", Passed, 1))
         let rendered = tui.render(state, tui.FailuresOnly)
         string.contains(rendered, "math") |> expect |> to_equal(False)
+      }),
+      it("renders a compile failure screen", fn() {
+        let state =
+          tui.initial()
+          |> tui.with_compile_error(Some(
+            "error: unknown type\n  --> src/main.gleam:4",
+          ))
+        let rendered = tui.render(state, tui.All)
+        string.contains(rendered, "compile failed") |> expect |> to_equal(True)
+        string.contains(rendered, "error: unknown type")
+        |> expect
+        |> to_equal(True)
+      }),
+      it("hides stale run content behind a compile failure", fn() {
+        let state =
+          tui.initial()
+          |> tui.apply(RunStarted(1, 1))
+          |> tui.apply(CaseFinished("math", "adds", Passed, 3))
+          |> tui.apply(RunFinished(1, Summary(1, 0, 0, 5)))
+          |> tui.with_compile_error(Some("error: unknown type"))
+        let rendered = tui.render(state, tui.All)
+        string.contains(rendered, "✓ adds") |> expect |> to_equal(False)
+        string.contains(rendered, "error: unknown type")
+        |> expect
+        |> to_equal(True)
+      }),
+      it("truncates very long compile output", fn() {
+        let output = string.repeat("error line\n", 200)
+        let state = tui.initial() |> tui.with_compile_error(Some(output))
+        let rendered = tui.render(state, tui.All)
+        string.contains(rendered, "error line") |> expect |> to_equal(True)
+        string.contains(rendered, "more lines") |> expect |> to_equal(True)
+        expect(string.split(rendered, "\n") |> list.length)
+        |> to_be_less_than(60)
+      }),
+      it("clears the compile error when a new run starts", fn() {
+        let state =
+          tui.initial()
+          |> tui.with_compile_error(Some("boom"))
+          |> tui.apply(RunStarted(1, 0))
+        expect(state.compile_error) |> to_equal(None)
       }),
     ]),
   ]

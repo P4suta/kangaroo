@@ -29,6 +29,7 @@ pub fn suites() -> List(Suite) {
     stream_suites(),
     tui_suites(),
     integration_suites(),
+
     protocol_suites(),
     jscoverage_suites(),
     keys_suites(),
