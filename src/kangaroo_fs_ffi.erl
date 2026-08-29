@@ -252,27 +252,12 @@ remove_tree(Path) ->
     case lists:prefix(".kangaroo-coverage-", filename:basename(Value)) of
         false -> {error, <<"refusing to remove a non-coverage workspace">>};
         true ->
-            case remove_directory_retry(Value, 0) of
+            case remove_directory(Value) of
                 ok -> {ok, nil};
                 {error, {enoent, _FailedPath}} -> {ok, nil};
                 {error, {Reason, FailedPath}} ->
                     {error, format_remove_error(Reason, FailedPath)}
             end
-    end.
-
-remove_directory_retry(Path, Attempt) ->
-    case remove_directory(Path) of
-        {error, {Reason, _FailedPath}}
-          when (Reason =:= eperm orelse Reason =:= eacces),
-               Attempt < 500 ->
-            %% Windows can retain executable and build artefact handles for a
-            %% short period after taskkill has returned. Retrying the exact
-            %% guarded temporary workspace keeps cleanup deterministic without
-            %% broadening what this function is allowed to remove. The ten
-            %% second ceiling covers slow hosted Windows filesystem filters.
-            timer:sleep(20),
-            remove_directory_retry(Path, Attempt + 1);
-        Result -> Result
     end.
 
 remove_directory(Path) ->
@@ -285,16 +270,7 @@ remove_directory(Path, Attempt) ->
         {ok, Entries} ->
             case remove_entries(Path, Entries) of
                 ok ->
-                    case file:del_dir(Path) of
-                        {error, eexist} ->
-                            timer:sleep(5),
-                            remove_directory(Path, Attempt + 1);
-                        {error, enotempty} ->
-                            timer:sleep(5),
-                            remove_directory(Path, Attempt + 1);
-                        ok -> ok;
-                        {error, Reason} -> {error, {Reason, Path}}
-                    end;
+                    remove_empty_directory(Path, Attempt, 0);
                 Error -> Error
             end;
         {error, enoent} -> ok;
@@ -307,11 +283,7 @@ remove_entries(Path, [Name | Rest]) ->
     Result = case file:read_link_info(Child) of
         {ok, #file_info{type = directory}} -> remove_directory(Child);
         {ok, #file_info{type = symlink}} -> remove_link(Child);
-        {ok, _} ->
-            case file:delete(Child) of
-                ok -> ok;
-                {error, Reason} -> {error, {Reason, Child}}
-            end;
+        {ok, _} -> remove_file_entry(Child, 0);
         {error, enoent} -> ok;
         {error, Reason} -> {error, {Reason, Child}}
     end,
@@ -320,17 +292,53 @@ remove_entries(Path, [Name | Rest]) ->
         RemoveError -> RemoveError
     end.
 
+remove_empty_directory(Path, TreeAttempt, AccessAttempt) ->
+    case file:del_dir(Path) of
+        {error, Reason}
+          when (Reason =:= eperm orelse Reason =:= eacces),
+               AccessAttempt < 500 ->
+            %% Retry the same closed-handle operation. Reopening list_dir/1 on
+            %% every attempt can keep an OTP 27 Windows enumeration handle
+            %% alive and prevent removal of the directory being observed.
+            timer:sleep(20),
+            remove_empty_directory(Path, TreeAttempt, AccessAttempt + 1);
+        {error, eexist} ->
+            timer:sleep(5),
+            remove_directory(Path, TreeAttempt + 1);
+        {error, enotempty} ->
+            timer:sleep(5),
+            remove_directory(Path, TreeAttempt + 1);
+        ok -> ok;
+        {error, Reason} -> {error, {Reason, Path}}
+    end.
+
+remove_file_entry(Path, Attempt) ->
+    case file:delete(Path) of
+        {error, Reason}
+          when (Reason =:= eperm orelse Reason =:= eacces), Attempt < 500 ->
+            timer:sleep(20),
+            remove_file_entry(Path, Attempt + 1);
+        ok -> ok;
+        {error, Reason} -> {error, {Reason, Path}}
+    end.
+
 remove_link(Path) ->
     %% On Windows, directory symlinks are removed with RemoveDirectoryW,
     %% exposed by file:del_dir/1. file:delete/1 maps to DeleteFileW and returns
     %% eperm for the same link. Never recurse here: the target is user source.
-    Result = case {os:type(), file:read_file_info(Path)} of
+    case {os:type(), file:read_file_info(Path)} of
         {{win32, _}, {ok, #file_info{type = directory}}} ->
-            file:del_dir(Path);
+            remove_directory_link(Path, 0);
         _ ->
-            file:delete(Path)
-    end,
-    case Result of
+            remove_file_entry(Path, 0)
+    end.
+
+remove_directory_link(Path, Attempt) ->
+    case file:del_dir(Path) of
+        {error, Reason}
+          when (Reason =:= eperm orelse Reason =:= eacces), Attempt < 500 ->
+            timer:sleep(20),
+            remove_directory_link(Path, Attempt + 1);
         ok -> ok;
         {error, Reason} -> {error, {Reason, Path}}
     end.
