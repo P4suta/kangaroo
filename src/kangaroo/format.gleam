@@ -71,6 +71,10 @@ pub fn location_line(location: Option(location.Location)) -> String {
       <> loc.file
       <> ":"
       <> int.to_string(loc.line)
+      <> case loc.column {
+        None -> ""
+        Some(column) -> ":" <> int.to_string(column)
+      }
       <> reset
   }
 }

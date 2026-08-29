@@ -93,6 +93,36 @@ pub fn to_be_some(expectation: Expectation(Option(a))) -> Nil {
   }
 }
 
+/// Asserts that the value is `Ok`, naming the error when it is not.
+pub fn to_be_ok(expectation: Expectation(Result(a, e))) -> Nil {
+  case expectation.actual {
+    Ok(_) -> Nil
+    Error(error) ->
+      fail(
+        AssertionFailed(
+          "expected Ok, got Error(" <> string.inspect(error) <> ")",
+          None,
+        ),
+        expectation.location,
+      )
+  }
+}
+
+/// Asserts that the value is `Error`, naming the value when it is not.
+pub fn to_be_error(expectation: Expectation(Result(a, e))) -> Nil {
+  case expectation.actual {
+    Error(_) -> Nil
+    Ok(value) ->
+      fail(
+        AssertionFailed(
+          "expected Error, got Ok(" <> string.inspect(value) <> ")",
+          None,
+        ),
+        expectation.location,
+      )
+  }
+}
+
 /// Asserts that the value is the empty list.
 pub fn to_be_empty(expectation: Expectation(List(a))) -> Nil {
   case expectation.actual {

@@ -66,7 +66,7 @@ pub fn suites() {
             <> "/home/u/proj/cli/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo@expect.erl:11\n"
             <> "test/foo_test.gleam:42"
           expect(from_erlang_stack(stack))
-          |> to_equal(Some(Location("test/foo_test.gleam", 42)))
+          |> to_equal(Some(Location("test/foo_test.gleam", 42, None)))
         },
       ),
       it("picks the first user frame from an erlang stack", fn() {
@@ -75,7 +75,7 @@ pub fn suites() {
           <> "src/kangaroo_isolate_ffi.erl:11\n"
           <> "test/foo_test.gleam:42"
         expect(from_erlang_stack(stack))
-        |> to_equal(Some(Location("test/foo_test.gleam", 42)))
+        |> to_equal(Some(Location("test/foo_test.gleam", 42, None)))
       }),
       it("returns none for an empty erlang stack", fn() {
         expect(from_erlang_stack("")) |> to_equal(None)
@@ -87,7 +87,7 @@ pub fn suites() {
       it("ignores lines without a line number", fn() {
         let stack = "not a location\n" <> "test/foo_test.gleam:7"
         expect(from_erlang_stack(stack))
-        |> to_equal(Some(Location("test/foo_test.gleam", 7)))
+        |> to_equal(Some(Location("test/foo_test.gleam", 7, None)))
       }),
       it("parses a v8 stack with file:// and columns", fn() {
         let stack =
@@ -99,6 +99,7 @@ pub fn suites() {
           Some(Location(
             "/home/u/proj/build/dev/javascript/kangaroo/runner_test.mjs",
             12,
+            Some(7),
           )),
         )
       }),
@@ -111,8 +112,15 @@ pub fn suites() {
           Some(Location(
             "/home/u/proj/build/dev/javascript/myapp/foo_test.mjs",
             3,
+            Some(1),
           )),
         )
+      }),
+      it("parses an erlang stack with a column", fn() {
+        let stack =
+          "src/kangaroo/expect.gleam:32:5\n" <> "test/foo_test.gleam:42:9"
+        expect(from_erlang_stack(stack))
+        |> to_equal(Some(Location("test/foo_test.gleam", 42, Some(9))))
       }),
       it("skips node internals in v8 stacks", fn() {
         let stack =
@@ -120,7 +128,7 @@ pub fn suites() {
         expect(from_js_stack(stack)) |> to_equal(None)
       }),
       it("attaches a location to an equality mismatch", fn() {
-        let location = Location("test/foo_test.gleam", 5)
+        let location = Location("test/foo_test.gleam", 5, None)
         case attach(EqualityMismatch("a", "b", None, None), location) {
           EqualityMismatch(_, _, _, Some(got)) -> {
             expect(got.file) |> to_equal("test/foo_test.gleam")
@@ -130,14 +138,14 @@ pub fn suites() {
         }
       }),
       it("attaches a location to an assertion failure", fn() {
-        let location = Location("test/foo_test.gleam", 5)
+        let location = Location("test/foo_test.gleam", 5, None)
         case attach(AssertionFailed("boom", None), location) {
           AssertionFailed(_, Some(got)) -> expect(got) |> to_equal(location)
           _ -> panic as "expected assertion failure with location"
         }
       }),
       it("attaches a location to an unexpected error", fn() {
-        let location = Location("test/foo_test.gleam", 5)
+        let location = Location("test/foo_test.gleam", 5, None)
         case attach(UnexpectedError("panic", "boom", None), location) {
           UnexpectedError(_, _, Some(got)) -> expect(got) |> to_equal(location)
           _ -> panic as "expected unexpected error with location"

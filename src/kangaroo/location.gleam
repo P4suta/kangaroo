@@ -4,9 +4,10 @@ import gleam/option.{type Option, None, Some}
 import gleam/string
 
 /// A source location inside a test or library module, derived from the
-/// stack of a failed case.
+/// stack of a failed case. `column` is present when the platform reports
+/// it (JavaScript does; Erlang stack traces carry only the line).
 pub type Location {
-  Location(file: String, line: Int)
+  Location(file: String, line: Int, column: Option(Int))
 }
 
 /// Captures the location of the caller at the moment of the call, if it can
@@ -85,7 +86,7 @@ fn first_user_frame(locations: List(Location)) -> Option(Location) {
 }
 
 /// Parses a line of the form `file:line:column` (or `file:line`) into a
-/// location. The trailing column, when present, is dropped.
+/// location. The trailing column is kept when present.
 fn parse_file_line(line: String) -> Result(Location, Nil) {
   let trimmed = string.trim(line)
   case string.split(trimmed, ":") {
@@ -93,12 +94,12 @@ fn parse_file_line(line: String) -> Result(Location, Nil) {
     [_] -> Error(Nil)
     parts ->
       case list.reverse(parts) {
-        [line_text, previous, ..rest] ->
-          case int.parse(line_text), int.parse(previous) {
+        [column_text, line_text, ..rest] ->
+          case int.parse(column_text), int.parse(line_text) {
             // A trailing column: the line number is the previous part.
-            Ok(_), Ok(line) -> {
+            Ok(column), Ok(line) -> {
               let file = list.reverse(rest) |> string.join(":") |> string.trim
-              valid_location(file, line)
+              valid_location(file, line, Some(column))
             }
             // A single trailing number is the line number itself.
             Ok(line), Error(_) -> {
@@ -107,9 +108,21 @@ fn parse_file_line(line: String) -> Result(Location, Nil) {
                 |> list.take(list.length(parts) - 1)
                 |> string.join(":")
                 |> string.trim
-              valid_location(file, line)
+              valid_location(file, line, None)
             }
             _, _ -> Error(Nil)
+          }
+        [line_text, ..rest] ->
+          case int.parse(line_text) {
+            Ok(line) -> {
+              let file =
+                parts
+                |> list.take(list.length(parts) - 1)
+                |> string.join(":")
+                |> string.trim
+              valid_location(file, line, None)
+            }
+            Error(_) -> Error(Nil)
           }
         _ -> Error(Nil)
       }
@@ -118,9 +131,13 @@ fn parse_file_line(line: String) -> Result(Location, Nil) {
 
 /// Builds a location, rejecting empty files and non-positive lines (some
 /// instrumentation reports line 0).
-fn valid_location(file: String, line: Int) -> Result(Location, Nil) {
+fn valid_location(
+  file: String,
+  line: Int,
+  column: Option(Int),
+) -> Result(Location, Nil) {
   case file != "" && line > 0 {
-    True -> Ok(Location(file, line))
+    True -> Ok(Location(file, line, column))
     False -> Error(Nil)
   }
 }

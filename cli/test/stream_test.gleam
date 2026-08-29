@@ -74,7 +74,7 @@ pub fn suites() {
               UnexpectedError(
                 "panic",
                 "boom",
-                Some(Location("test/foo_test.gleam", 7)),
+                Some(Location("test/foo_test.gleam", 7, None)),
               ),
             ]),
             0,

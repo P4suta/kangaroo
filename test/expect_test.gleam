@@ -3,10 +3,10 @@ import gleam/option.{None, Some}
 import gleam/string
 import kangaroo/event.{type Event}
 import kangaroo/expect.{
-  expect, to_be_close_to, to_be_empty, to_be_false, to_be_greater_than,
-  to_be_less_than, to_be_none, to_be_some, to_be_true, to_contain,
-  to_contain_key, to_contain_text, to_end_with, to_equal, to_have_length,
-  to_raise, to_raise_containing, to_start_with,
+  expect, to_be_close_to, to_be_empty, to_be_error, to_be_false,
+  to_be_greater_than, to_be_less_than, to_be_none, to_be_ok, to_be_some,
+  to_be_true, to_contain, to_contain_key, to_contain_text, to_end_with, to_equal,
+  to_have_length, to_raise, to_raise_containing, to_start_with,
 }
 import kangaroo/failure.{
   type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Passed,
@@ -88,6 +88,32 @@ pub fn suites() {
       it("passes when to_be_some holds", fn() {
         let outcome = outcome_of(fn() { expect(Some(1)) |> to_be_some() })
         expect(outcome) |> to_equal(Passed)
+      }),
+      it("passes when to_be_ok holds", fn() {
+        let outcome = outcome_of(fn() { expect(Ok(1)) |> to_be_ok() })
+        expect(outcome) |> to_equal(Passed)
+      }),
+      it("fails when to_be_ok does not hold, naming the error", fn() {
+        let outcome = outcome_of(fn() { expect(Error("oops")) |> to_be_ok() })
+        case failure_of(outcome) {
+          AssertionFailed(message, _) ->
+            expect(message)
+            |> to_equal("expected Ok, got Error(\"oops\")")
+          _ -> panic as "expected an assertion failure"
+        }
+      }),
+      it("passes when to_be_error holds", fn() {
+        let outcome =
+          outcome_of(fn() { expect(Error("oops")) |> to_be_error() })
+        expect(outcome) |> to_equal(Passed)
+      }),
+      it("fails when to_be_error does not hold, naming the value", fn() {
+        let outcome = outcome_of(fn() { expect(Ok(1)) |> to_be_error() })
+        case failure_of(outcome) {
+          AssertionFailed(message, _) ->
+            expect(message) |> to_equal("expected Error, got Ok(1)")
+          _ -> panic as "expected an assertion failure"
+        }
       }),
       it("passes when to_be_empty holds", fn() {
         let outcome = outcome_of(fn() { expect([]) |> to_be_empty() })

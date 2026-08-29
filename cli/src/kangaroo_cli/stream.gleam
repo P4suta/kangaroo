@@ -159,7 +159,12 @@ fn location_decoder() -> decode.Decoder(Option(Location)) {
   decode.optional(
     decode.field("file", decode.string, fn(file) {
       decode.field("line", decode.int, fn(line) {
-        decode.success(Location(file, line))
+        decode.optional_field(
+          "column",
+          None,
+          decode.optional(decode.int),
+          fn(column) { decode.success(Location(file, line, column)) },
+        )
       })
     }),
   )
