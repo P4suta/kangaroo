@@ -7,6 +7,7 @@ const {
   coverageArguments,
   LineDecoder,
   parseLcov,
+  projectTarget,
   RunState,
   daemonArguments,
   failuresFor,
@@ -17,10 +18,13 @@ const {
 } = require("../core");
 
 test("requests an LCOV report for exactly the selected stable ids", () => {
-  assert.deepEqual(coverageArguments([
-    "test/math.gleam::addition_test",
-  ]), [
+  assert.deepEqual(coverageArguments(
+    ["test/math.gleam::addition_test"],
+    "javascript",
+  ), [
     "run",
+    "--target",
+    "javascript",
     "-m",
     "kangaroo",
     "--",
@@ -71,6 +75,31 @@ test("starts the unified protocol-v1 daemon", () => {
     id: "req-1",
     command: "discover",
   });
+  assert.deepEqual(daemonArguments("javascript"), [
+    "run",
+    "--target",
+    "javascript",
+    "-m",
+    "kangaroo",
+    "--",
+    "daemon",
+  ]);
+});
+
+test("reads only the top-level Gleam project target", () => {
+  assert.equal(projectTarget([
+    'name = "demo"',
+    'target = "javascript" # run without Erlang',
+    "",
+    "[tools.kangaroo]",
+  ].join("\n")), "javascript");
+  assert.equal(projectTarget([
+    'name = "demo"',
+    "",
+    "[javascript]",
+    'target = "javascript"',
+  ].join("\n")), undefined);
+  assert.equal(projectTarget('name = "demo"\n'), undefined);
 });
 
 test("resolves the Gleam executable without overriding explicit settings", () => {

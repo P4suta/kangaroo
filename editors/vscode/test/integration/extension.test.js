@@ -20,6 +20,8 @@ suite("Kangaroo extension host", () => {
     const api = await extension.activate();
     assert.equal(api.sessions.size, 1);
     const session = Array.from(api.sessions.values())[0];
+    assert.equal(session.target, "javascript");
+    assert.equal(session.client.target, "javascript");
     const testId = "test/editor_test.gleam::editor_integration_test";
     let item;
     try {

@@ -2,8 +2,14 @@
 
 const PROTOCOL_VERSION = 1;
 
-function daemonArguments() {
-  return ["run", "-m", "kangaroo", "--", "daemon"];
+function targetArguments(target) {
+  return target === "erlang" || target === "javascript"
+    ? ["--target", target]
+    : [];
+}
+
+function daemonArguments(target) {
+  return ["run", ...targetArguments(target), "-m", "kangaroo", "--", "daemon"];
 }
 
 function resolveGleamExecutable(configured, environment = process.env) {
@@ -32,9 +38,10 @@ function subprocessEnvironment(
   return inherited;
 }
 
-function coverageArguments(selectors = []) {
+function coverageArguments(selectors = [], target) {
   return [
     "run",
+    ...targetArguments(target),
     "-m",
     "kangaroo",
     "--",
@@ -45,6 +52,19 @@ function coverageArguments(selectors = []) {
     "--coverage-reporter",
     "lcov",
   ];
+}
+
+function projectTarget(contents) {
+  for (const rawLine of String(contents).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line.startsWith("[")) break;
+    const match = line.match(
+      /^target\s*=\s*(["'])(erlang|javascript)\1(?:\s*#.*)?$/,
+    );
+    if (match) return match[2];
+  }
+  return undefined;
 }
 
 function parseLcov(contents) {
@@ -175,6 +195,7 @@ module.exports = {
   daemonArguments,
   failuresFor,
   parseLcov,
+  projectTarget,
   protocolRequest,
   resolveGleamExecutable,
   subprocessEnvironment,

@@ -2,6 +2,7 @@
 
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { readFileSync } = require("node:fs");
 const { readFile } = require("node:fs/promises");
 const {
   coverageArguments,
@@ -11,6 +12,7 @@ const {
   RunState,
   daemonArguments,
   failuresFor,
+  projectTarget,
   protocolRequest,
   resolveGleamExecutable,
   subprocessEnvironment,
@@ -31,6 +33,7 @@ class DaemonClient {
     cancelSchedule = clearTimeout,
     discoveryTimeoutMs = 60_000,
     terminateProcess = terminateProcessTree,
+    target,
   }) {
     this.cwd = cwd;
     this.executable = executable;
@@ -42,6 +45,7 @@ class DaemonClient {
     this.cancelSchedule = cancelSchedule;
     this.discoveryTimeoutMs = discoveryTimeoutMs;
     this.terminateProcess = terminateProcess;
+    this.target = target;
     this.logHistory = [];
     this.pendingDiscoveries = new Map();
     this.process = null;
@@ -54,7 +58,7 @@ class DaemonClient {
     this.stopping = false;
     let child;
     try {
-      child = this.spawnProcess(this.executable, daemonArguments(), {
+      child = this.spawnProcess(this.executable, daemonArguments(this.target), {
         cwd: this.cwd,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
@@ -204,6 +208,14 @@ class WorkspaceSession {
     this.diagnosticUris = new Set();
     this.coverageDetails = new WeakMap();
     this.coverageProcesses = new Set();
+    try {
+      this.target = projectTarget(readFileSync(
+        path.join(this.folder.uri.fsPath, "gleam.toml"),
+        "utf8",
+      ));
+    } catch {
+      this.target = undefined;
+    }
     const suffix = Buffer.from(folder.uri.toString()).toString("base64url");
     this.controller = vscode.tests.createTestController(
       `kangaroo-${suffix}`,
@@ -222,6 +234,7 @@ class WorkspaceSession {
     return new DaemonClient({
       cwd: this.folder.uri.fsPath,
       executable,
+      target: this.target,
       spawnProcess: this.spawnProcess,
       onMessage: (message) => this.handleMessage(message),
       onLog: (message) => this.shared.output.append(message),
@@ -348,13 +361,17 @@ class WorkspaceSession {
         return true;
       };
       try {
-        child = this.spawnProcess(executable, coverageArguments(selectors), {
-          cwd: this.folder.uri.fsPath,
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true,
-          detached: globalThis.process.platform !== "win32",
-          env: subprocessEnvironment(),
-        });
+        child = this.spawnProcess(
+          executable,
+          coverageArguments(selectors, this.target),
+          {
+            cwd: this.folder.uri.fsPath,
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+            detached: globalThis.process.platform !== "win32",
+            env: subprocessEnvironment(),
+          },
+        );
         this.coverageProcesses.add(child);
       } catch (error) {
         run.appendOutput(`could not start coverage: ${error.message}\r\n`);
