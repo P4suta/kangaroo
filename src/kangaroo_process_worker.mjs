@@ -1,5 +1,9 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { workerData } from "node:worker_threads";
+import {
+  freezeProcessTree,
+  terminateProcessTree,
+} from "./kangaroo_process_tree.mjs";
 
 const port = workerData.port;
 const startup = new Int32Array(workerData.startupBuffer);
@@ -34,116 +38,19 @@ function finish(message) {
   port.close();
 }
 
-function descendants(rootPid) {
-  if (
-    !Number.isInteger(rootPid) ||
-    rootPid <= 0 ||
-    globalThis.process.platform === "win32"
-  ) return [];
-  try {
-    const listing = spawnSync("ps", ["-eo", "pid=,ppid="], {
-      encoding: "utf8",
-      windowsHide: true,
-    });
-    // Node can report an EPERM diagnostic alongside a successful status and
-    // complete stdout in restricted process namespaces. The listing remains
-    // authoritative in that case; discard it only when ps itself failed.
-    if (listing.status !== 0 || !listing.stdout) return [];
-    const children = new Map();
-    for (const line of String(listing.stdout || "").split("\n")) {
-      const match = line.trim().match(/^(\d+)\s+(\d+)$/);
-      if (!match) continue;
-      const pid = Number(match[1]);
-      const parent = Number(match[2]);
-      const entries = children.get(parent) || [];
-      entries.push(pid);
-      children.set(parent, entries);
-    }
-    const found = [];
-    const pending = [...(children.get(rootPid) || [])];
-    while (pending.length > 0) {
-      const pid = pending.shift();
-      found.push(pid);
-      pending.push(...(children.get(pid) || []));
-    }
-    return found;
-  } catch {
-    return [];
-  }
-}
-
-function signalPidOrGroup(pid, signal) {
-  try {
-    globalThis.process.kill(-pid, signal);
-  } catch {
-    try {
-      globalThis.process.kill(pid, signal);
-    } catch {
-      // The process already exited.
-    }
-  }
-}
-
-function killTree(
-  child,
-  signal = "SIGTERM",
-  knownDescendants = [],
-  refreshDescendants = true,
-) {
-  if (!child || child.pid === undefined) return;
-  try {
-    if (globalThis.process.platform === "win32") {
-      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-        windowsHide: true,
-        stdio: "ignore",
-      });
-    } else {
-      const targets = [
-        ...new Set([
-          ...knownDescendants,
-          ...(refreshDescendants ? descendants(child.pid) : []),
-        ]),
-      ].reverse();
-      for (const pid of targets) signalPidOrGroup(pid, signal);
-      signalPidOrGroup(child.pid, signal);
-    }
-  } catch {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // The process already exited.
-    }
-  }
-}
-
 function terminateTree(message) {
   if (terminal || terminating) return;
   terminating = true;
-  terminationPids = freezeTree(child);
-  killTree(child, "SIGKILL", terminationPids, false);
+  terminationPids = freezeProcessTree(child?.pid);
+  terminateProcessTree(child?.pid, {
+    knownDescendants: terminationPids,
+    alreadyFrozen: true,
+  });
   // Signal delivery is asynchronous. Do not acknowledge cancellation while a
   // just-killed compiler can still finish a filesystem syscall in the
   // workspace that the caller is about to replace or remove.
   Atomics.wait(terminationPause, 0, 0, 10);
   finish(message);
-}
-
-function freezeTree(child) {
-  if (
-    !child ||
-    child.pid === undefined ||
-    globalThis.process.platform === "win32"
-  ) return descendants(child?.pid);
-  const rootPid = child.pid;
-  // The spawned root is a process-group leader. Stop the whole group before
-  // walking the process table so normal descendants cannot race the snapshot.
-  // A single walk is then sufficient to find children that deliberately
-  // detached into a different group, keeping cancellation within 250 ms even
-  // when a hosted macOS runner is under load.
-  signalPidOrGroup(rootPid, "SIGSTOP");
-  const known = descendants(rootPid);
-  for (const pid of known) signalPidOrGroup(pid, "SIGSTOP");
-  return known;
 }
 
 let child;

@@ -1,11 +1,12 @@
-import gleam/option.{type Option, None, Some}
+import gleam/option.{type Option, Some}
 import kangaroo/sys
 
 /// Colour is an output capability, not merely a reporter preference.
 pub fn color_enabled(no_color: Option(String), is_terminal: Bool) -> Bool {
   case no_color, is_terminal {
-    None, True -> True
-    Some(_), _ | _, False -> False
+    _, False -> False
+    Some(value), True if value != "" -> False
+    _, True -> True
   }
 }
 

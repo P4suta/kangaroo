@@ -62,8 +62,28 @@ pub fn roots(
   |> list.unique
 }
 
-pub fn compile_arguments(target: String) -> List(String) {
-  ["build", "--target", target]
+/// Compiles the project test entrypoint in a short-lived runtime. The
+/// `KANGAROO_COMPILE_ONLY` guard makes `kangaroo.main` exit before discovery
+/// or execution, while `gleam test` still asks the compiler to emit every
+/// module below `test/`.
+pub fn compile_arguments(target: String, runtime: String) -> List(String) {
+  case target {
+    "javascript" -> [
+      "test",
+      "--target",
+      target,
+      "--runtime",
+      case runtime {
+        "node" -> "nodejs"
+        value -> value
+      },
+    ]
+    _ -> ["test", "--target", target]
+  }
+}
+
+pub fn compile_environment() -> List(#(String, String)) {
+  [#("KANGAROO_COMPILE_ONLY", "1")]
 }
 
 /// Returns compiler products whose timestamp-only cache keys can be stale

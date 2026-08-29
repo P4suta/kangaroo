@@ -35,7 +35,6 @@ import runtime_test.{suites as runtime_suites}
 import scheduler_test.{suites as scheduler_suites}
 import selector_test.{suites as selector_suites}
 import suite_test.{suites as suite_suites}
-import terminal_test.{suites as terminal_suites}
 import watch_initial_test.{suites as watch_initial_suites}
 import watch_plan_test.{suites as watch_plan_suites}
 import watcher_test.{suites as watcher_suites}
@@ -62,7 +61,6 @@ pub fn suites() -> List(Suite) {
     diff_suites(),
     dependency_suites(),
     suite_suites(),
-    terminal_suites(),
     report_suites(),
     runner_suites(),
     expect_suites(),

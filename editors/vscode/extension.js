@@ -302,9 +302,8 @@ class WorkspaceSession {
     return Array.from(selectors);
   }
 
-  startOperation(command, request, token) {
-    const id = this.nextId(command);
-    const run = this.controller.createTestRun(request, `Kangaroo ${command}`);
+  prepareRun(request, label) {
+    const run = this.controller.createTestRun(request, label);
     const selectors = this.selectorsFor(request);
     const explicitSelection = (request.include?.length || 0) > 0 ||
       (request.exclude?.length || 0) > 0;
@@ -314,8 +313,18 @@ class WorkspaceSession {
     selected.forEach((item) => run.enqueued(item));
     if (selected.length === 0 && explicitSelection) {
       run.end();
-      return;
+      return { run, selectors, runnable: false };
     }
+    return { run, selectors, runnable: true };
+  }
+
+  startOperation(command, request, token) {
+    const id = this.nextId(command);
+    const { run, selectors, runnable } = this.prepareRun(
+      request,
+      `Kangaroo ${command}`,
+    );
+    if (!runnable) return;
     this.activeRuns.set(id, { run, command });
     const sent = this.client.send(protocolRequest(id, command, { selectors }));
     if (!sent) {
@@ -333,18 +342,11 @@ class WorkspaceSession {
   }
 
   runCoverage(request, token) {
-    const run = this.controller.createTestRun(request, "Kangaroo coverage");
-    const selectors = this.selectorsFor(request);
-    const explicitSelection = (request.include?.length || 0) > 0 ||
-      (request.exclude?.length || 0) > 0;
-    const selected = selectors.length === 0 && !explicitSelection
-      ? Array.from(this.items.values())
-      : selectors.map((selector) => this.items.get(selector)).filter(Boolean);
-    selected.forEach((item) => run.enqueued(item));
-    if (selected.length === 0 && explicitSelection) {
-      run.end();
-      return Promise.resolve();
-    }
+    const { run, selectors, runnable } = this.prepareRun(
+      request,
+      "Kangaroo coverage",
+    );
+    if (!runnable) return Promise.resolve();
     const configured = this.vscode.workspace
       .getConfiguration("kangaroo", this.folder.uri)
       .get("gleamPath", "gleam");

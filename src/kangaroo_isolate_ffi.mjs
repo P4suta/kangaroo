@@ -18,8 +18,8 @@ import { Location, from_js_stack } from "./kangaroo/location.mjs";
 import { collect, restore, save } from "./kangaroo_context_ffi.mjs";
 import { Worker } from "node:worker_threads";
 import { format as formatValue } from "node:util";
-import { execFileSync } from "node:child_process";
 import { toList } from "./gleam.mjs";
+import { terminateProcessTree } from "./kangaroo_process_tree.mjs";
 import {
   Option$None$const,
   Some,
@@ -241,96 +241,6 @@ function scanRegisteredChildren(registry) {
     const pid = Atomics.exchange(registry, index, 0);
     terminateProcessTree(pid);
   }
-}
-
-function terminateProcessTree(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return;
-  if (globalThis.process.platform === "win32") {
-    // Terminate the directly registered child through the native process API
-    // first. Starting taskkill can take long enough on a busy Windows host
-    // for a short-lived child to perform work before the tree walk begins.
-    try {
-      globalThis.process.kill(pid, "SIGKILL");
-    } catch {
-      // The process may already have exited.
-    }
-    try {
-      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
-        stdio: "ignore",
-      });
-    } catch {
-      // The process may already have exited.
-    }
-    return;
-  }
-  let descendants = [];
-  try {
-    try {
-      globalThis.process.kill(-pid, "SIGSTOP");
-    } catch {
-      globalThis.process.kill(pid, "SIGSTOP");
-    }
-    descendants = processDescendants(pid);
-  } catch {
-    // The process may already have exited.
-  }
-  for (const descendant of descendants.reverse()) {
-    try {
-      globalThis.process.kill(descendant, "SIGKILL");
-    } catch {
-      // The process may already have exited.
-    }
-  }
-  try {
-    try {
-      globalThis.process.kill(-pid, "SIGKILL");
-    } catch {
-      globalThis.process.kill(pid, "SIGKILL");
-    }
-  } catch {
-    // The process may already have exited.
-  }
-}
-
-function processDescendants(rootPid) {
-  let output;
-  try {
-    if (globalThis.process.platform === "win32") {
-      output = execFileSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-Command",
-          "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId)\" }",
-        ],
-        { encoding: "utf8", windowsHide: true },
-      );
-    } else {
-      output = execFileSync("ps", ["-eo", "pid=,ppid="], {
-        encoding: "utf8",
-      });
-    }
-  } catch {
-    return [];
-  }
-  const children = new Map();
-  for (const row of output.trim().split("\n")) {
-    const [pidText, parentText] = row.trim().split(/\s+/);
-    const pid = Number(pidText);
-    const parent = Number(parentText);
-    if (!children.has(parent)) children.set(parent, []);
-    children.get(parent).push(pid);
-  }
-  const found = [];
-  const pending = [rootPid];
-  while (pending.length > 0) {
-    const parent = pending.shift();
-    for (const child of children.get(parent) || []) {
-      found.push(child);
-      pending.push(child);
-    }
-  }
-  return found;
 }
 
 function sharedOutput(control, index, data) {

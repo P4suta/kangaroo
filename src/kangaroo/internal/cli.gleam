@@ -201,16 +201,14 @@ fn watch_tui_project(
   let ui = tui.initial() |> tui.with_status("running initial generation")
   let state = TuiWatchState(index_state, ui, NoTuiRequest)
   draw_tui(ui)
-  use initial <- result.try(continuous.run_until_change_controlled(
+  use state <- result.try(initial_tui_generation(
     project_dir,
     roots,
     snapshot,
-    command.run_arguments(child_options, options.selectors),
+    child_options,
+    options.selectors,
     state,
-    tui_stream_output,
-    tui_active_control,
   ))
-  let state = finish_controlled_tui_run(initial)
   draw_tui(state.ui)
   case state.request {
     QuitRequest -> Ok(0)
@@ -235,6 +233,59 @@ fn watch_tui_project(
         },
       )
       |> result.map(fn(_) { 0 })
+  }
+}
+
+fn initial_tui_generation(
+  project_dir: String,
+  roots: List(String),
+  snapshot: Dict(String, String),
+  options: command.RunOptions,
+  selectors: List(String),
+  state: TuiWatchState,
+) -> Result(TuiWatchState, String) {
+  use compiled <- result.try(continuous.compile_until_change_controlled(
+    project_dir,
+    roots,
+    snapshot,
+    state,
+    tui_active_control,
+  ))
+  case compiled {
+    continuous.ControlledCompileFailed(output, state) ->
+      Ok(TuiWatchState(..state, ui: tui.with_compile_error(state.ui, output)))
+    continuous.ControlledCompileSuperseded(state) ->
+      Ok(
+        TuiWatchState(
+          ..state,
+          ui: tui.with_status(state.ui, "generation superseded"),
+        ),
+      )
+    continuous.ControlledCompileCancelled(state) ->
+      Ok(
+        TuiWatchState(
+          ..state,
+          ui: tui.with_status(state.ui, case state.request {
+            QuitRequest -> "stopping"
+            FullRunRequest -> "rerun requested"
+            CoverageRequest -> "coverage requested"
+            BirdieRequest -> "Birdie review requested"
+            NoTuiRequest -> "generation cancelled"
+          }),
+        ),
+      )
+    continuous.ControlledCompiled(state) -> {
+      use initial <- result.try(continuous.run_until_change_controlled(
+        project_dir,
+        roots,
+        snapshot,
+        command.run_arguments(options, selectors),
+        state,
+        tui_stream_output,
+        tui_active_control,
+      ))
+      Ok(finish_controlled_tui_run(initial))
+    }
   }
 }
 
@@ -709,25 +760,16 @@ fn watch_plain_project(
     |> result.map_error(format_index_errors),
   )
   fs.write_stderr_line("kangaroo: watching " <> project_dir)
-  // The initial generation uses the same cancellable child-process boundary
-  // as every later generation. The original snapshot is then retained so a
-  // save that cancels this run is guaranteed to schedule its replacement.
-  use initial <- result.try(continuous.run_until_change_observed(
+  // Compile and execute the initial generation through the same cancellable
+  // process boundaries as later generations. The original snapshot is then
+  // retained so a save during either phase schedules its replacement.
+  use state <- result.try(initial_plain_generation(
     project_dir,
     roots,
     snapshot,
-    command.run_arguments(options, options.selectors),
-    fn() { Nil },
-    report_plain_changes,
+    options,
+    index_state,
   ))
-  let state = case initial {
-    continuous.ObservedChildCompleted(completed) -> {
-      fs.write_stdout(completed.output)
-      PlainWatchState(index_state, [])
-    }
-    continuous.ObservedChildSuperseded(changes, _) ->
-      PlainWatchState(index_state, change_paths(changes))
-  }
   continuous.forever_dynamic_observed_from_snapshot(
     project_dir,
     roots,
@@ -773,6 +815,47 @@ fn watch_plain_project(
     },
   )
   |> result.map(fn(_) { 0 })
+}
+
+fn initial_plain_generation(
+  project_dir: String,
+  roots: List(String),
+  snapshot: Dict(String, String),
+  options: command.RunOptions,
+  index_state: watch_plan.State,
+) -> Result(PlainWatchState, String) {
+  use compiled <- result.try(continuous.compile_until_change_observed(
+    project_dir,
+    roots,
+    snapshot,
+    report_plain_changes,
+  ))
+  case compiled {
+    continuous.ObservedCompileFailed(output) -> {
+      fs.write_stderr(output)
+      Ok(PlainWatchState(index_state, []))
+    }
+    continuous.ObservedCompileSuperseded(changes, _) ->
+      Ok(PlainWatchState(index_state, change_paths(changes)))
+    continuous.ObservedCompiled -> {
+      use initial <- result.try(continuous.run_until_change_observed(
+        project_dir,
+        roots,
+        snapshot,
+        command.run_arguments(options, options.selectors),
+        fn() { Nil },
+        report_plain_changes,
+      ))
+      Ok(case initial {
+        continuous.ObservedChildCompleted(completed) -> {
+          fs.write_stdout(completed.output)
+          PlainWatchState(index_state, [])
+        }
+        continuous.ObservedChildSuperseded(changes, _) ->
+          PlainWatchState(index_state, change_paths(changes))
+      })
+    }
+  }
 }
 
 fn compile_changed_until_change_observed(

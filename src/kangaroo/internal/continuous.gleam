@@ -86,8 +86,8 @@ pub fn compile(project_dir: String) -> Result(Nil, String) {
   use completed <- result.try(process.run(
     project_dir,
     "gleam",
-    watcher.compile_arguments(vm.target()),
-    [],
+    watcher.compile_arguments(vm.target(), vm.runtime_name()),
+    watcher.compile_environment(),
     compile_timeout_ms,
   ))
   case completed.exit_code {
@@ -125,8 +125,8 @@ pub fn compile_until_change_observed(
   use handle <- result.try(process.start(
     project_dir,
     "gleam",
-    watcher.compile_arguments(vm.target()),
-    [],
+    watcher.compile_arguments(vm.target(), vm.runtime_name()),
+    watcher.compile_environment(),
     compile_timeout_ms,
   ))
   poll_compile(project_dir, roots, baseline, handle, on_detect)
@@ -142,8 +142,8 @@ pub fn compile_until_change_controlled(
   use handle <- result.try(process.start(
     project_dir,
     "gleam",
-    watcher.compile_arguments(vm.target()),
-    [],
+    watcher.compile_arguments(vm.target(), vm.runtime_name()),
+    watcher.compile_environment(),
     compile_timeout_ms,
   ))
   poll_controlled_compile(
@@ -560,7 +560,7 @@ fn poll_run(project_dir, roots, baseline, handle, on_detect) {
 
 fn drain_cancellation(handle: Int, started: Int) -> Nil {
   case process.poll(handle) {
-    process.ProcessRunning ->
+    process.ProcessRunning | process.ProcessOutput(_) ->
       case sys.now_ms() - started < vm.process_cleanup_timeout_ms() {
         True -> {
           fs.sleep(5)
@@ -568,7 +568,6 @@ fn drain_cancellation(handle: Int, started: Int) -> Nil {
         }
         False -> Nil
       }
-    process.ProcessOutput(_) -> drain_cancellation(handle, started)
     _ -> Nil
   }
 }

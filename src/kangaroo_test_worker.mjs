@@ -3,11 +3,11 @@ import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
 import { format as formatValue } from "node:util";
 import { createRequire, syncBuiltinESMExports } from "node:module";
-import { execFileSync } from "node:child_process";
 import { inspect as inspectValue } from "../gleam_stdlib/gleam/string.mjs";
 import { collect as collectMatcherFailures } from "./kangaroo_context_ffi.mjs";
 import { flush as flushCoverage } from "./kangaroo_coverage_probe_ffi.mjs";
 import { diff_lines as diffLines } from "./kangaroo/diff.mjs";
+import { terminateProcessTree } from "./kangaroo_process_tree.mjs";
 
 const require = createRequire(import.meta.url);
 const childProcess = require("node:child_process");
@@ -328,11 +328,6 @@ function terminateChildProcesses() {
     // Killing the root first can reparent descendants and make them invisible
     // to the subsequent process-tree walk on Deno and other Unix runtimes.
     terminateProcessTree(child.pid);
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // The process may already have exited.
-    }
   }
   childProcesses.clear();
 }
@@ -348,76 +343,6 @@ parentPort?.on?.("message", (message) => {
   if (message?.type !== "cancel") return;
   acknowledgeCancellation();
 });
-
-function terminateProcessTree(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return;
-  if (globalThis.process.platform === "win32") {
-    try {
-      globalThis.process.kill(pid, "SIGKILL");
-    } catch {
-      // The process may already have exited.
-    }
-    try {
-      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
-        stdio: "ignore",
-      });
-    } catch {
-      // The process may already have exited.
-    }
-    return;
-  }
-  let descendants = [];
-  try {
-    try {
-      globalThis.process.kill(-pid, "SIGSTOP");
-    } catch {
-      globalThis.process.kill(pid, "SIGSTOP");
-    }
-    descendants = processDescendants(pid);
-  } catch {
-    // The process may already have exited.
-  }
-  for (const descendant of descendants.reverse()) {
-    try {
-      globalThis.process.kill(descendant, "SIGKILL");
-    } catch {
-      // The process may already have exited.
-    }
-  }
-  try {
-    try {
-      globalThis.process.kill(-pid, "SIGKILL");
-    } catch {
-      globalThis.process.kill(pid, "SIGKILL");
-    }
-  } catch {
-    // The process may already have exited.
-  }
-}
-
-function processDescendants(rootPid) {
-  const rows = execFileSync("ps", ["-eo", "pid=,ppid="], {
-    encoding: "utf8",
-  }).trim().split("\n");
-  const children = new Map();
-  for (const row of rows) {
-    const [pidText, parentText] = row.trim().split(/\s+/);
-    const pid = Number(pidText);
-    const parent = Number(parentText);
-    if (!children.has(parent)) children.set(parent, []);
-    children.get(parent).push(pid);
-  }
-  const found = [];
-  const pending = [rootPid];
-  while (pending.length > 0) {
-    const parent = pending.shift();
-    for (const child of children.get(parent) || []) {
-      found.push(child);
-      pending.push(child);
-    }
-  }
-  return found;
-}
 
 function signalStarted() {
   if (Atomics.compareExchange(control, 5, 0, 1) === 0) {

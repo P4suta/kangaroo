@@ -106,7 +106,9 @@ export function schedule_replace(path, expected, replacement, delay) {
       // `run` subcommand's --allow-read/--allow-write flags.
       ? ["eval", script]
       : ["-e", script];
-  spawn(sleeper_executable(), args, { stdio: "ignore" });
+  const child = spawn(sleeper_executable(), args, { stdio: "ignore" });
+  child.on("error", () => {});
+  child.unref?.();
 }
 
 export function kill_stderr_proxy() {}

@@ -124,6 +124,10 @@ class ConsumerContractTest(unittest.TestCase):
             "src/kangaroo_daemon_child.mjs",
             clean_install.REQUIRED_PACKAGE_FILES,
         )
+        self.assertIn(
+            "src/kangaroo_process_tree.mjs",
+            clean_install.REQUIRED_PACKAGE_FILES,
+        )
 
     def test_resolves_exactly_one_versioned_tarball_from_build_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

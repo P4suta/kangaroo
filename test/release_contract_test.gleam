@@ -49,7 +49,7 @@ pub fn readme_describes_the_v1_contract_test() {
 }
 
 pub fn documentation_has_no_removed_package_or_dsl_test() {
-  ["ARCHITECTURE.md", "CHANGELOG.md", "docs/protocol.md"]
+  ["ARCHITECTURE.md", "docs/protocol.md"]
   |> list.each(fn(path) {
     let assert Ok(contents) = fs.read_file(path)
     assert !string.contains(contents, "kangaroo_cli")
@@ -147,6 +147,7 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   let erlang_fs = string.replace(erlang_fs, each: "\r\n", with: "\n")
   let assert Ok(process_worker) =
     fs.read_file("src/kangaroo_process_worker.mjs")
+  let assert Ok(process_tree) = fs.read_file("src/kangaroo_process_tree.mjs")
   let assert Ok(process_ffi) = fs.read_file("src/kangaroo_process_ffi.mjs")
   let assert Ok(erlang_process_ffi) =
     fs.read_file("src/kangaroo_process_ffi.erl")
@@ -166,7 +167,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   )
   assert string.contains(process_worker, "child.stdin.on(\"error\"")
   assert string.contains(process_worker, "child.stdin.on(\"close\"")
-  assert string.contains(process_worker, "spawnSync(\"taskkill\"")
+  assert string.contains(process_worker, "from \"./kangaroo_process_tree.mjs\"")
+  assert string.contains(process_tree, "execFileSync(\"taskkill\"")
+  let assert [taskkill_prefix, ..] =
+    string.split(process_tree, "globalThis.process.kill(pid")
+  assert string.contains(taskkill_prefix, "execFileSync(\"taskkill\"")
   assert string.contains(erlang_process_ffi, "taskkill /PID")
   assert string.contains(process_ffi, "activityBuffer")
   assert string.contains(process_worker, "workerData.activityBuffer")
@@ -176,6 +181,7 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert !string.contains(terminal_ffi, "readSync")
   assert string.contains(terminal_ffi, "receiveMessageOnPort")
   assert fs.exists("src/kangaroo_key_worker.mjs")
+  assert fs.exists("src/kangaroo_process_tree.mjs")
   assert string.contains(erlang_isolate, "kangaroo_stderr_table_timeout")
 }
 

@@ -23,6 +23,7 @@ REQUIRED_PACKAGE_FILES = {
     "src/kangaroo_isolate_ffi.mjs",
     "src/kangaroo_daemon_child.mjs",
     "src/kangaroo_key_worker.mjs",
+    "src/kangaroo_process_tree.mjs",
 }
 FORBIDDEN_PACKAGE_PREFIXES = (
     ".git/",

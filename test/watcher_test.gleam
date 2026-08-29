@@ -3,6 +3,14 @@ import kangaroo/internal/legacy/expect.{expect, to_equal}
 import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/internal/watcher.{Added, Modified, Removed}
 
+pub fn compile_command_compiles_test_modules_without_running_them_test() {
+  assert watcher.compile_arguments("erlang", "erlang")
+    == ["test", "--target", "erlang"]
+  assert watcher.compile_arguments("javascript", "deno")
+    == ["test", "--target", "javascript", "--runtime", "deno"]
+  assert watcher.compile_environment() == [#("KANGAROO_COMPILE_ONLY", "1")]
+}
+
 pub fn suites() {
   [
     suite("watch snapshots", [
@@ -46,9 +54,17 @@ pub fn suites() {
         expect(watcher.roots(["test", "test\\integration"], ["priv", "test"]))
         |> to_equal(["src", "test", "test/integration", "priv"])
       }),
-      it("uses a compile-only target-specific build command", fn() {
-        expect(watcher.compile_arguments("javascript"))
-        |> to_equal(["build", "--target", "javascript"])
+      it("compiles test modules without executing their bodies", fn() {
+        expect(watcher.compile_arguments("javascript", "bun"))
+        |> to_equal([
+          "test",
+          "--target",
+          "javascript",
+          "--runtime",
+          "bun",
+        ])
+        expect(watcher.compile_environment())
+        |> to_equal([#("KANGAROO_COMPILE_ONLY", "1")])
       }),
       it("invalidates only stale compiler products for content changes", fn() {
         expect(

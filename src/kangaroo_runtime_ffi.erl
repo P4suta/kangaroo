@@ -11,13 +11,26 @@ reload_module_list([]) -> {ok, nil};
 reload_module_list([ModuleName | Rest]) ->
     Module = module_atom(ModuleName),
     _ = code:soft_purge(Module),
-    Loaded = case code:load_file(Module) of
-                 {module, Module} = Success -> Success;
-                 _ -> code:ensure_loaded(Module)
-    end,
+    Loaded = load_compiled_module(Module),
     case Loaded of
         {module, Module} -> reload_module_list(Rest);
-        _ -> {error, <<"module_not_loaded">>}
+        _ ->
+            {error,
+             iolist_to_binary(
+               io_lib:format("module_not_loaded: ~ts (~0p)",
+                             [ModuleName, Loaded]))}
+    end.
+
+load_compiled_module(Module) ->
+    Filename = atom_to_list(Module) ++ ".beam",
+    Pattern = filename:join(["build", "dev", "erlang", "*", "ebin", Filename]),
+    case filelib:wildcard(Pattern) of
+        [Path | _] -> code:load_abs(filename:rootname(Path));
+        [] ->
+            case code:load_file(Module) of
+                {module, Module} = Success -> Success;
+                _ -> code:ensure_loaded(Module)
+            end
     end.
 
 resolve_export(ModuleName, FunctionName) ->

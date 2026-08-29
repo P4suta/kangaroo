@@ -35,8 +35,8 @@ pub fn suites() {
             process.run(
               workspace,
               "gleam",
-              watcher.compile_arguments(vm.target()),
-              [],
+              watcher.compile_arguments(vm.target(), vm.runtime_name()),
+              watcher.compile_environment(),
               120_000,
             )
           case compiled.exit_code {
