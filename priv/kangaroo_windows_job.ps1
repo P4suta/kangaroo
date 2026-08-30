@@ -551,6 +551,13 @@ function Encode-Value([string] $value) {
     return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($value))
 }
 
+function Write-Ascii-Line([string] $value) {
+    $bytes = [Text.Encoding]::ASCII.GetBytes($value + "`r`n")
+    $stdout = [Console]::OpenStandardOutput()
+    $stdout.Write($bytes, 0, $bytes.Length)
+    $stdout.Flush()
+}
+
 function Get-Helper-Path {
     return [IO.Path]::Combine(
         [IO.Path]::GetTempPath(),
@@ -626,7 +633,7 @@ try {
     $helper = Ensure-Job-Executable
     if ($Prepare) {
         if ($PrintHelperPath) {
-            [Console]::Out.WriteLine(
+            Write-Ascii-Line (
                 "KANGAROO_HELPER_PATH_BASE64=" + (Encode-Value $helper))
         }
         [Environment]::Exit(0)
