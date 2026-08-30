@@ -555,6 +555,14 @@ function Get-Helper-Path {
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         return [IO.Path]::GetFullPath($OutputPath)
     }
+    # Preparation callers pin this directory before launch. The fixed basename
+    # avoids transporting a Windows path through OTP arguments, environment
+    # options, or redirected PowerShell output.
+    if ($Prepare) {
+        return [IO.Path]::Combine(
+            (Get-Location).ProviderPath,
+            $executableName)
+    }
     $tempRoot = [Environment]::GetEnvironmentVariable(
         "TEMP",
         [EnvironmentVariableTarget]::Process)

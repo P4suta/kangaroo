@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { delimiter, join, resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_";
@@ -49,6 +49,7 @@ export function ensureWindowsJobHelper() {
   if (globalThis.process.platform !== "win32") return;
   if (globalThis[preparedKey] === true && existsSync(cachedExecutable)) return;
   if (!existsSync(cachedExecutable)) {
+    mkdirSync(dirname(cachedExecutable), { recursive: true });
     prepareWindowsJob(
       findPowerShell(),
       [
@@ -56,6 +57,7 @@ export function ensureWindowsJobHelper() {
         "-Prepare",
       ],
       {
+        cwd: dirname(cachedExecutable),
         env: globalThis.process.env,
         stdio: "pipe",
         timeout: 60_000,

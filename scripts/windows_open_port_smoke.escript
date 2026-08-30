@@ -124,20 +124,27 @@ probe_helper_preparation() ->
     end.
 
 prepare_helper_path(PowerShell, Arguments, Helper, Timeout) ->
-    try open_port(
-          {spawn_executable, PowerShell},
-          [binary, use_stdio, stderr_to_stdout, exit_status,
-           {args, Arguments}]) of
-        Port ->
-            wait_for_helper_path(
-              Port, Helper, [],
-              erlang:monotonic_time(millisecond) + Timeout)
-    catch
-        Class:Reason:Stack ->
-            io:format(
-              "open_port helper preparation: ~tp:~tp ~tp~n",
-              [Class, Reason, Stack]),
-            error
+    case filelib:ensure_dir(Helper) of
+        {error, Reason} ->
+            io:format("open_port helper cache: ~tp~n", [Reason]),
+            error;
+        ok ->
+            try open_port(
+                  {spawn_executable, PowerShell},
+                  [binary, use_stdio, stderr_to_stdout, exit_status,
+                   {cd, filename:dirname(Helper)},
+                   {args, Arguments}]) of
+                Port ->
+                    wait_for_helper_path(
+                      Port, Helper, [],
+                      erlang:monotonic_time(millisecond) + Timeout)
+            catch
+                Class:Reason:Stack ->
+                    io:format(
+                      "open_port helper preparation: ~tp:~tp ~tp~n",
+                      [Class, Reason, Stack]),
+                    error
+            end
     end.
 
 wait_for_helper_path(Port, Helper, Output, Deadline) ->

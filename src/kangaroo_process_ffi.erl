@@ -316,16 +316,25 @@ prepare_windows_job_helper_worker() ->
                               "kangaroo_windows_job.ps1"),
                 "-Prepare"
             ],
-            try open_port(
-                  {spawn_executable, PowerShell},
-                  [binary, use_stdio, stderr_to_stdout, exit_status,
-                   {args, Arguments}]) of
-                Port -> collect_windows_job_preparation(
-                          Port, Helper, [],
-                          erlang:monotonic_time(millisecond) + 60000)
-            catch
-                Class:Reason:Stack ->
-                    {error, format_exception(Class, Reason, Stack)}
+            case filelib:ensure_dir(Helper) of
+                {error, Reason} ->
+                    {error, unicode:characters_to_binary(
+                              io_lib:format(
+                                "Windows process helper cache failed: ~tp",
+                                [Reason]))};
+                ok ->
+                    try open_port(
+                          {spawn_executable, PowerShell},
+                          [binary, use_stdio, stderr_to_stdout, exit_status,
+                           {cd, filename:dirname(Helper)},
+                           {args, Arguments}]) of
+                        Port -> collect_windows_job_preparation(
+                                  Port, Helper, [],
+                                  erlang:monotonic_time(millisecond) + 60000)
+                    catch
+                        Class:Reason:Stack ->
+                            {error, format_exception(Class, Reason, Stack)}
+                    end
             end
     end.
 

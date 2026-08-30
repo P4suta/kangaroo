@@ -347,6 +347,8 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
     string.split(preparation_body, "collect_windows_job_preparation(")
   assert string.contains(preparation_body, "\"-Prepare\"")
   assert !string.contains(preparation_body, "\"-OutputPath\"")
+  assert string.contains(preparation_body, "filelib:ensure_dir(Helper)")
+  assert string.contains(preparation_body, "{cd, filename:dirname(Helper)}")
   assert !string.contains(
     preparation_body,
     "windows_job_output_path_environment",
@@ -376,6 +378,9 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_job_bridge, "globalThis.process.env.TMPDIR")
   assert string.contains(windows_job_bridge, "String(value).trim() !== \"\"")
   assert !string.contains(windows_job_bridge, "tmpdir()")
+  assert string.contains(windows_job_bridge, "mkdirSync")
+  assert string.contains(windows_job_bridge, "dirname(cachedExecutable)")
+  assert string.contains(windows_job_bridge, "cwd: dirname(cachedExecutable)")
   assert string.contains(windows_job, "RemoveInternalVariables")
   assert string.contains(windows_job, "OrdinalIgnoreCase")
   assert string.contains(windows_job, "EnvironmentVariableTarget.Process")
@@ -415,7 +420,13 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
     windows_open_port_smoke,
     "windows_job_output_path_environment(Helper)",
   )
+  assert string.contains(
+    windows_open_port_smoke,
+    "{cd, filename:dirname(Helper)}",
+  )
   assert !string.contains(windows_job, "GetTempPath")
+  assert string.contains(windows_job, "if ($Prepare)")
+  assert string.contains(windows_job, "(Get-Location).ProviderPath")
   assert string.contains(windows_job, "DuplicateHandle")
   assert string.contains(process_ffi, "activityBuffer")
   assert string.contains(process_worker, "workerData.activityBuffer")
