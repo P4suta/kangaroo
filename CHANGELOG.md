@@ -109,9 +109,9 @@ versioning.
   that object to drain before reporting completion, so successful, cancelled,
   and timed-out work cannot leave descendants behind.
 - Compiled the Windows Job Object launcher once and executed it directly from
-  JavaScript runtimes; Erlang loads the same assembly in a short-lived
-  PowerShell compatibility host, preserving redirected stdin/stdout and child
-  exit status across OTP's Windows port boundary.
+  every runtime, preserving redirected stdin/stdout and child exit status.
+  Erlang transports Unicode environment overrides as private base64 metadata
+  for the helper to restore without exposing them to OTP's port options.
 - Made daemon output draining fair to stdin across both large chunks and line
   bursts, retained unterminated output as linear-time fragments, and bounded
   Erlang request allocation while discarding an overlong line; both stdin

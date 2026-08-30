@@ -1,6 +1,5 @@
 param(
     [switch] $Prepare,
-    [switch] $Run,
     [switch] $SmokeTest,
     [switch] $CheckSource,
     [string] $HelperPath
@@ -8,12 +7,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# PowerShell compiles an immutable launcher. JavaScript runtimes execute it
-# directly; Erlang loads the same assembly through `-Run` because OTP's Windows
-# port driver rejects managed executables as a spawn_executable target. In both
-# paths user arguments stay in process-scoped environment variables and are
-# never reparsed by PowerShell. The launcher starts the command suspended,
-# assigns it to a kill-on-close Job Object, and only then lets user code run.
+# PowerShell compiles an immutable launcher which every runtime executes
+# directly. User arguments and environment overrides stay in process-scoped,
+# base64-encoded metadata and are never reparsed by PowerShell. The launcher
+# starts the command suspended, assigns it to a kill-on-close Job Object, and
+# only then lets user code run.
 $source = @'
 using System;
 using System.Collections;
@@ -62,7 +60,34 @@ public static class KangarooWindowsJob
                 arguments[index] = DecodeValue(
                     "ARGUMENT_" + index.ToString("D6"));
             }
+            string environmentCountText = DecodeValue("ENVIRONMENT_COUNT");
+            int environmentCount;
+            if (!Int32.TryParse(
+                    environmentCountText,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out environmentCount) ||
+                environmentCount < 0 || environmentCount > 65535)
+                throw new InvalidOperationException(
+                    "invalid internal environment count");
+            string[] environmentNames = new string[environmentCount];
+            string[] environmentValues = new string[environmentCount];
+            for (int index = 0; index < environmentCount; index++)
+            {
+                string suffix = index.ToString("D6");
+                environmentNames[index] = DecodeValue(
+                    "ENVIRONMENT_NAME_" + suffix);
+                environmentValues[index] = DecodeValue(
+                    "ENVIRONMENT_VALUE_" + suffix);
+            }
             RemoveInternalVariables();
+            for (int index = 0; index < environmentCount; index++)
+            {
+                Environment.SetEnvironmentVariable(
+                    environmentNames[index],
+                    environmentValues[index],
+                    EnvironmentVariableTarget.Process);
+            }
             return Run(executable, directory, argv0, arguments);
         }
         catch (Exception error)
@@ -518,7 +543,7 @@ public static class KangarooWindowsJob
 '@
 
 $prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_"
-$executableName = "windows-job-v3-20260831.exe"
+$executableName = "windows-job-v4-20260831.exe"
 
 function Decode-Value([string] $name) {
     $encoded = [Environment]::GetEnvironmentVariable(
@@ -537,6 +562,13 @@ function Encode-Value([string] $value) {
 function Get-Helper-Path {
     if (-not [string]::IsNullOrWhiteSpace($HelperPath)) {
         return $HelperPath
+    }
+    $encoded = [Environment]::GetEnvironmentVariable(
+        $prefix + "HELPER_PATH",
+        [EnvironmentVariableTarget]::Process)
+    if ($null -ne $encoded) {
+        return [Text.Encoding]::UTF8.GetString(
+            [Convert]::FromBase64String($encoded))
     }
     return [IO.Path]::Combine(
         [IO.Path]::GetTempPath(),
@@ -590,6 +622,7 @@ function Set-Smoke-Launch(
         "ARGV0" = $executable
         "ARGUMENT_COUNT" = $arguments.Length.ToString(
             [Globalization.CultureInfo]::InvariantCulture)
+        "ENVIRONMENT_COUNT" = "0"
     }
     for ($index = 0; $index -lt $arguments.Length; $index++) {
         $values["ARGUMENT_{0:D6}" -f $index] = $arguments[$index]
@@ -613,16 +646,8 @@ try {
         [Environment]::Exit(0)
     }
 
-    if ($Run) {
-        # Windows PowerShell 5's Add-Type rejects a ConsoleApplication .exe,
-        # while the CLR can load the same managed assembly directly.
-        [Reflection.Assembly]::LoadFrom($helper) | Out-Null
-        $exitCode = [KangarooWindowsJob]::Main()
-        [Environment]::Exit($exitCode)
-    }
-
     if (-not $SmokeTest) {
-        throw "specify -Prepare, -Run, or -SmokeTest"
+        throw "specify -Prepare or -SmokeTest"
     }
 
     $find = (Get-Command "findstr.exe" -ErrorAction Stop).Source
@@ -634,22 +659,6 @@ try {
     }
     if (($output -join "`n").Trim() -ne "kangaroo") {
         throw "Windows process helper did not preserve redirected stdio"
-    }
-
-    # Exercise the exact compatibility entry point used by Erlang ports. Run
-    # it in a child PowerShell so its Environment.Exit cannot stop this smoke
-    # test and its inherited handles remain observable here.
-    $hostExecutable = (Get-Process -Id $PID).Path
-    Set-Smoke-Launch $find @("kangaroo")
-    $output = "kangaroo" | & $hostExecutable `
-        -NoLogo -NoProfile -NonInteractive `
-        -ExecutionPolicy Bypass -File $PSCommandPath -Run
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) {
-        throw "Windows process compatibility entry point exited $exitCode"
-    }
-    if (($output -join "`n").Trim() -ne "kangaroo") {
-        throw "Windows process compatibility entry point lost redirected stdio"
     }
 
     Set-Smoke-Launch $find @("not-present")
