@@ -261,17 +261,23 @@ ensure_windows_job_helper() ->
             case windows_command_processor() of
                 {error, _} = Error -> Error;
                 {ok, _} ->
-                    Key = {?MODULE, windows_job_helper_prepared},
-                    case persistent_term:get(Key, false) of
-                        true -> ok;
-                        false ->
-                            case prepare_windows_job_helper() of
-                                ok -> persistent_term:put(Key, true), ok;
-                                {error, _} = Error -> Error
-                            end
+                    Key = {?MODULE, windows_job_helper_path},
+                    case persistent_term:get(Key, undefined) of
+                        Path when Path =/= undefined ->
+                            case filelib:is_regular(Path) of
+                                true -> ok;
+                                false -> prepare_and_store_windows_helper(Key)
+                            end;
+                        undefined -> prepare_and_store_windows_helper(Key)
                     end
             end;
         _ -> ok
+    end.
+
+prepare_and_store_windows_helper(Key) ->
+    case prepare_windows_job_helper() of
+        {ok, Helper} -> persistent_term:put(Key, Helper), ok;
+        {error, _} = Error -> Error
     end.
 
 prepare_windows_job_helper() ->
@@ -302,28 +308,26 @@ prepare_windows_job_helper_worker() ->
             {error, <<"could not find executable: pwsh.exe or "
                       "powershell.exe">>};
         PowerShell ->
-            Helper = windows_job_executable(),
             Arguments = [
                 "-NoLogo", "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-File",
                 filename:join(windows_priv_directory(),
                               "kangaroo_windows_job.ps1"),
-                "-Prepare"
+                "-Prepare", "-PrintHelperPath"
             ],
             try open_port(
                   {spawn_executable, PowerShell},
                   [binary, use_stdio, stderr_to_stdout, exit_status,
                    {args, Arguments}]) of
                 Port -> collect_windows_job_preparation(
-                          Port, [], erlang:monotonic_time(millisecond) + 60000,
-                          Helper)
+                          Port, [], erlang:monotonic_time(millisecond) + 60000)
             catch
                 Class:Reason:Stack ->
                     {error, format_exception(Class, Reason, Stack)}
             end
     end.
 
-collect_windows_job_preparation(Port, Output, Deadline, Helper) ->
+collect_windows_job_preparation(Port, Output, Deadline) ->
     Remaining = erlang:max(
         0, Deadline - erlang:monotonic_time(millisecond)),
     receive
@@ -335,14 +339,17 @@ collect_windows_job_preparation(Port, Output, Deadline, Helper) ->
                     {error, <<"Windows process isolation preparation output "
                               "exceeded 1048576 bytes">>};
                 false ->
-                    collect_windows_job_preparation(
-                      Port, Next, Deadline, Helper)
+                    collect_windows_job_preparation(Port, Next, Deadline)
             end;
         {Port, {exit_status, 0}} ->
-            case filelib:is_regular(Helper) of
-                true -> ok;
-                false ->
-                    {error, <<"Windows process helper was not created">>}
+            case windows_helper_path(Output) of
+                {ok, Prepared} ->
+                    case filelib:is_regular(Prepared) of
+                        true -> {ok, Prepared};
+                        false ->
+                            {error, <<"Windows process helper was not created">>}
+                    end;
+                {error, _} = Error -> Error
             end;
         {Port, {exit_status, Code}} ->
             Message = iolist_to_binary(lists:reverse(Output)),
@@ -358,7 +365,33 @@ collect_windows_job_preparation(Port, Output, Deadline, Helper) ->
         {error, <<"Windows process isolation preparation timed out">>}
     end.
 
+windows_helper_path(Output) ->
+    Prefix = <<"KANGAROO_HELPER_PATH_BASE64=">>,
+    Lines = binary:split(
+              iolist_to_binary(lists:reverse(Output)), <<"\n">>, [global]),
+    case lists:filtermap(fun(Line) ->
+        Clean = binary:replace(Line, <<"\r">>, <<>>, [global]),
+        case binary:split(Clean, Prefix) of
+            [<<>>, Encoded] when Encoded =/= <<>> -> {true, Encoded};
+            _ -> false
+        end
+    end, Lines) of
+        [Encoded | _] ->
+            try unicode:characters_to_binary(base64:decode(Encoded)) of
+                Path when is_binary(Path), Path =/= <<>> -> {ok, Path};
+                _ -> {error, <<"Windows process helper returned an invalid path">>}
+            catch
+                _:_ -> {error, <<"Windows process helper returned an invalid path">>}
+            end;
+        [] ->
+            {error, <<"Windows process helper did not report its cache path">>}
+    end.
+
 windows_job_executable() ->
+    persistent_term:get(
+      {?MODULE, windows_job_helper_path}, default_windows_job_executable()).
+
+default_windows_job_executable() ->
     Temp = case os:getenv("TEMP") of
         false ->
             case os:getenv("TMP") of

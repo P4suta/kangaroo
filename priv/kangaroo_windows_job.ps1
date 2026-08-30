@@ -1,5 +1,6 @@
 param(
     [switch] $Prepare,
+    [switch] $PrintHelperPath,
     [switch] $SmokeTest,
     [switch] $CheckSource
 )
@@ -624,6 +625,10 @@ try {
 
     $helper = Ensure-Job-Executable
     if ($Prepare) {
+        if ($PrintHelperPath) {
+            [Console]::Out.WriteLine(
+                "KANGAROO_HELPER_PATH_BASE64=" + (Encode-Value $helper))
+        }
         [Environment]::Exit(0)
     }
 

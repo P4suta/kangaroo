@@ -90,22 +90,17 @@ wait_for_exit(Label, Port, Deadline) ->
 probe_helper_preparation() ->
     PowerShell = require_powershell(),
     Script = filename:absname("priv/kangaroo_windows_job.ps1"),
-    Helper = filename:join(
-      [temporary_directory(), "kangaroo", "windows-job-v6-20260831.exe"]),
     Arguments = [
         "-NoLogo", "-NoProfile", "-NonInteractive",
-        "-ExecutionPolicy", "Bypass", "-File", Script, "-Prepare"
+        "-ExecutionPolicy", "Bypass", "-File", Script,
+        "-Prepare", "-PrintHelperPath"
     ],
-    safe_delete(Helper),
-    try
-        case probe(
-               "production helper preparation", PowerShell,
-               [binary, use_stdio, stderr_to_stdout, exit_status,
-                {args, Arguments}],
-               60000) of
-            ok ->
+    case prepare_helper_path(PowerShell, Arguments, 60000) of
+        {ok, Helper} ->
+            try
                 case filelib:is_regular(Helper) of
                     true ->
+                        io:format("open_port helper preparation: ok~n"),
                         io:format("open_port helper artifact: ok~n"),
                         probe(
                           "production helper execution",
@@ -120,22 +115,79 @@ probe_helper_preparation() ->
                     false ->
                         io:format("open_port helper artifact: missing~n"),
                         error
-                end;
-            error -> error
-        end
-    after
-        safe_delete(Helper)
+                end
+            after
+                safe_delete(Helper)
+            end;
+        error -> error
     end.
 
-temporary_directory() ->
-    case os:getenv("TEMP") of
-        false ->
-            case os:getenv("TMP") of
-                false -> ".";
-                Value -> Value
-            end;
-        Value -> Value
+prepare_helper_path(PowerShell, Arguments, Timeout) ->
+    try open_port(
+          {spawn_executable, PowerShell},
+          [binary, use_stdio, stderr_to_stdout, exit_status,
+           {args, Arguments}]) of
+        Port ->
+            wait_for_helper_path(
+              Port, [], erlang:monotonic_time(millisecond) + Timeout)
+    catch
+        Class:Reason:Stack ->
+            io:format(
+              "open_port helper preparation: ~tp:~tp ~tp~n",
+              [Class, Reason, Stack]),
+            error
     end.
+
+wait_for_helper_path(Port, Output, Deadline) ->
+    Remaining = erlang:max(
+      0, Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {Port, {data, Data}} ->
+            Next = [Data | Output],
+            case iolist_size(Next) > 1048576 of
+                true ->
+                    safe_close(Port),
+                    io:format("open_port helper preparation: output limit~n"),
+                    error;
+                false -> wait_for_helper_path(Port, Next, Deadline)
+            end;
+        {Port, {exit_status, 0}} -> decode_helper_path(Output);
+        {Port, {exit_status, Code}} ->
+            io:format(
+              "open_port helper preparation: exit ~B ~ts~n",
+              [Code, iolist_to_binary(lists:reverse(Output))]),
+            error
+    after Remaining ->
+        safe_close(Port),
+        io:format("open_port helper preparation: timeout~n"),
+        error
+    end.
+
+decode_helper_path(Output) ->
+    Prefix = <<"KANGAROO_HELPER_PATH_BASE64=">>,
+    Lines = binary:split(
+      iolist_to_binary(lists:reverse(Output)), <<"\n">>, [global]),
+    Encoded = lists:filtermap(fun(Line) ->
+        Clean = binary:replace(Line, <<"\r">>, <<>>, [global]),
+        case binary:split(Clean, Prefix) of
+            [<<>>, Value] when Value =/= <<>> -> {true, Value};
+            _ -> false
+        end
+    end, Lines),
+    case Encoded of
+        [Value | _] ->
+            try unicode:characters_to_list(base64:decode(Value)) of
+                Path when is_list(Path), Path =/= [] -> {ok, Path};
+                _ -> invalid_helper_path()
+            catch
+                _:_ -> invalid_helper_path()
+            end;
+        [] -> invalid_helper_path()
+    end.
+
+invalid_helper_path() ->
+    io:format("open_port helper preparation: invalid reported path~n"),
+    error.
 
 require_powershell() ->
     case os:find_executable("powershell.exe") of

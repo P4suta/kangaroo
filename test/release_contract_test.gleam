@@ -344,8 +344,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   let assert [preparation_body, ..] =
     string.split(preparation_body, "collect_windows_job_preparation(")
   assert string.contains(preparation_body, "\"-Prepare\"")
-  assert !string.contains(preparation_body, "HelperPath")
+  assert string.contains(preparation_body, "\"-PrintHelperPath\"")
+  assert !string.contains(preparation_body, "\"-HelperPath")
   assert !string.contains(preparation_body, "HELPER_PATH")
+  assert string.contains(erlang_process_ffi, "windows_helper_path(Output)")
+  assert string.contains(erlang_process_ffi, "KANGAROO_HELPER_PATH_BASE64=")
   assert string.contains(erlang_process_ffi, "find_windows_powershell")
   assert string.contains(
     erlang_process_ffi,
@@ -374,6 +377,7 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_job_bridge, "pwsh.exe")
   assert !string.contains(windows_job_bridge, "HelperPath")
   assert !string.contains(windows_job, "$HelperPath")
+  assert string.contains(windows_job, "[switch] $PrintHelperPath")
   assert string.contains(windows_job, "ConsoleApplication")
   assert string.contains(workflow, "kangaroo_windows_job.ps1 -SmokeTest")
   assert string.contains(workflow, "windows_open_port_smoke.escript")

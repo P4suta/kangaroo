@@ -49,9 +49,9 @@ versioning.
   complete live tree instead of discarding the write error and waiting for the
   command timeout.
 - Made Windows helper preparation prefer the native Windows PowerShell
-  compiler host, derive its cache path locally on both sides of the OTP port
-  boundary, invalidate changed helper binaries, and terminate remaining Job
-  Object descendants without racing the enclosing test timeout.
+  compiler host, return its locally derived cache path to OTP as base64 ASCII,
+  invalidate changed helper binaries, and terminate remaining Job Object
+  descendants without racing the enclosing test timeout.
 - Preserved UTF-8 command arguments, environment values, executables, and
   working directories at the Erlang port boundary instead of double-encoding
   non-ASCII text.
