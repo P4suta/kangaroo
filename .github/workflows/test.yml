@@ -73,6 +73,9 @@ jobs:
       - name: Download daemon fixture dependencies
         working-directory: fixtures/coverage_project
         run: gleam deps download
+      - name: Validate Windows OTP port options
+        if: runner.os == 'Windows'
+        run: escript scripts/windows_open_port_smoke.escript
       - run: gleam test --target erlang
 
   windows-process-wrapper:

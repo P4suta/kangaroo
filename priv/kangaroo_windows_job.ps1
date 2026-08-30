@@ -672,11 +672,11 @@ function Set-Smoke-Launch(
     }
 }
 
-function Invoke-Smoke-Launcher([string] $input) {
+function Invoke-Smoke-Launcher([string] $stdinText) {
     $commandProcessor = (Get-Command "cmd.exe" -ErrorAction Stop).Source
     Push-Location ([IO.Path]::GetDirectoryName($launcher))
     try {
-        $output = $input | & $commandProcessor /D /Q /C $launcherName
+        $output = $stdinText | & $commandProcessor /D /Q /C $launcherName
         return @{
             "Output" = $output
             "ExitCode" = $LASTEXITCODE
