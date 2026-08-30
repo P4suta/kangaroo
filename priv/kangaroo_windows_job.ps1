@@ -8,11 +8,12 @@ param(
 $ErrorActionPreference = "Stop"
 
 # PowerShell compiles an immutable launcher. JavaScript runtimes execute it
-# directly; OTP uses a fixed batch trampoline because its Windows port driver
-# rejects managed ConsoleApplication images. User arguments and environment
-# overrides stay in process-scoped, base64-encoded metadata and never enter
-# that batch command. The launcher starts the command suspended, assigns it to
-# a kill-on-close Job Object, and only then lets user code run.
+# directly; OTP opens native cmd.exe in the trampoline cache directory because
+# its Windows port driver rejects managed ConsoleApplication images and batch
+# files. User arguments and environment overrides stay in process-scoped,
+# base64-encoded metadata and never enter that fixed command. The launcher
+# starts the command suspended, assigns it to a kill-on-close Job Object, and
+# only then lets user code run.
 $source = @'
 using System;
 using System.Collections;
@@ -671,6 +672,21 @@ function Set-Smoke-Launch(
     }
 }
 
+function Invoke-Smoke-Launcher([string] $input) {
+    $commandProcessor = (Get-Command "cmd.exe" -ErrorAction Stop).Source
+    Push-Location ([IO.Path]::GetDirectoryName($launcher))
+    try {
+        $output = $input | & $commandProcessor /D /Q /C $launcherName
+        return @{
+            "Output" = $output
+            "ExitCode" = $LASTEXITCODE
+        }
+    }
+    finally {
+        Pop-Location
+    }
+}
+
 try {
     if ($CheckSource) {
         Add-Type -TypeDefinition $source -Language CSharp
@@ -699,8 +715,9 @@ try {
     }
 
     Set-Smoke-Launch $find @("kangaroo")
-    $output = "kangaroo" | & $launcher
-    $exitCode = $LASTEXITCODE
+    $result = Invoke-Smoke-Launcher "kangaroo"
+    $output = $result.Output
+    $exitCode = $result.ExitCode
     if ($exitCode -ne 0) {
         throw "Windows process launcher smoke test exited $exitCode"
     }
@@ -714,8 +731,8 @@ try {
         throw "Windows process helper did not preserve the child exit code"
     }
     Set-Smoke-Launch $find @("not-present")
-    $null = "kangaroo" | & $launcher
-    if ($LASTEXITCODE -ne 1) {
+    $result = Invoke-Smoke-Launcher "kangaroo"
+    if ($result.ExitCode -ne 1) {
         throw "Windows process launcher did not preserve the child exit code"
     }
     [Environment]::Exit(0)

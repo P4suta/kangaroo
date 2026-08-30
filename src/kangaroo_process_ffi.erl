@@ -146,7 +146,7 @@ async_run_port(Parent, Id, Port, TimeoutMs) ->
     end.
 
 open_process_port(Directory, Path, Arguments, Environment, Mode) ->
-    {LaunchPath, LaunchArguments, LaunchEnvironment} =
+    {LaunchDirectory, LaunchPath, LaunchArguments, LaunchEnvironment} =
         process_launch(Directory, Path, Arguments, Environment),
     Stdio = case Mode of
         captured -> [binary, use_stdio, stderr_to_stdout];
@@ -155,7 +155,7 @@ open_process_port(Directory, Path, Arguments, Environment, Mode) ->
     open_port(
       {spawn_executable, LaunchPath},
       Stdio ++ [exit_status,
-                {cd, to_list(Directory)},
+                {cd, to_list(LaunchDirectory)},
                 {args, [to_list(Argument)
                         || Argument <- LaunchArguments]},
                 {env, [port_environment_pair(Pair)
@@ -168,11 +168,12 @@ process_launch(Directory, Path, Arguments, Environment) ->
     case os:type() of
         {win32, _} ->
             windows_job_launch(Directory, Path, Arguments, Environment);
-        _ -> {Path, Arguments, Environment}
+        _ -> {Directory, Path, Arguments, Environment}
     end.
 
 windows_job_launch(Directory, Path, Arguments, Environment) ->
     Launcher = windows_job_launcher(),
+    {ok, CommandProcessor} = windows_command_processor(),
     WorkingDirectory = filename:absname(to_list(Directory)),
     CleanEnvironment = [
         {Key, Value} || {Key, Value} <- Environment,
@@ -203,7 +204,19 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
          encode_windows_job_value(integer_to_list(length(CleanEnvironment)))}
         | ArgumentEnvironment ++ EnvironmentEnvironment
     ],
-    {Launcher, [], InternalEnvironment}.
+    %% spawn_executable accepts cmd.exe but rejects both the managed helper
+    %% image and .cmd files on supported Windows OTP releases. Keep cmd's
+    %% command string to an immutable basename in its own working directory;
+    %% no user-controlled value is ever parsed by the command processor.
+    {filename:dirname(Launcher), CommandProcessor,
+     ["/D", "/Q", "/C", filename:basename(Launcher)],
+     InternalEnvironment}.
+
+windows_command_processor() ->
+    case os:find_executable("cmd.exe") of
+        false -> {error, <<"could not find executable: cmd.exe">>};
+        Path -> {ok, Path}
+    end.
 
 internal_windows_job_name(Name) ->
     lists:prefix(
@@ -224,13 +237,17 @@ encode_windows_job_value(Value) ->
 ensure_windows_job_helper() ->
     case os:type() of
         {win32, _} ->
-            Key = {?MODULE, windows_job_helper_prepared},
-            case persistent_term:get(Key, false) of
-                true -> ok;
-                false ->
-                    case prepare_windows_job_helper() of
-                        ok -> persistent_term:put(Key, true), ok;
-                        {error, _} = Error -> Error
+            case windows_command_processor() of
+                {error, _} = Error -> Error;
+                {ok, _} ->
+                    Key = {?MODULE, windows_job_helper_prepared},
+                    case persistent_term:get(Key, false) of
+                        true -> ok;
+                        false ->
+                            case prepare_windows_job_helper() of
+                                ok -> persistent_term:put(Key, true), ok;
+                                {error, _} = Error -> Error
+                            end
                     end
             end;
         _ -> ok

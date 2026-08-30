@@ -112,9 +112,11 @@ versioning.
   that object to drain before reporting completion, so successful, cancelled,
   and timed-out work cannot leave descendants behind.
 - Compiled the Windows Job Object launcher once and executed it directly from
-  JavaScript runtimes. Erlang uses a fixed, argument-free batch trampoline for
+  JavaScript runtimes. Erlang opens native `cmd.exe` with AutoRun disabled and
+  runs a fixed, argument-free batch trampoline from its own directory for
   OTP's managed-executable boundary while still preserving redirected
-  stdin/stdout and child exit status. Unicode environment overrides travel as
+  stdin/stdout and child exit status. The command processor sees only the
+  immutable trampoline basename. Unicode environment overrides travel as
   private base64 metadata for the helper to restore without exposing them to
   OTP's port options or the command interpreter.
 - Made daemon output draining fair to stdin across both large chunks and line
