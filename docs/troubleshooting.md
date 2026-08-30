@@ -50,6 +50,8 @@ generated/config files outside those roots are listed in
 On Windows, allow the terminal/editor to terminate child process trees. A
 security product that blocks descendant termination can make cancellation
 exceed the 2 second Windows performance budget. The Unix budget is 250 ms.
+Kangaroo reports a JavaScript hard-cleanup deadline as an infrastructure error
+instead of treating it as a completed cancellation.
 
 ## Deno permission denied
 

@@ -14,9 +14,9 @@ const port = workerData.port;
 const startup = new Int32Array(workerData.startupBuffer);
 const activity = new Int32Array(workerData.activityBuffer);
 let terminal = false;
-let cancelled = false;
 let timeout;
 let terminating = false;
+let pendingTermination = null;
 let stdinClosed = false;
 let inputRequested = false;
 let terminationPids = [];
@@ -110,6 +110,18 @@ function fail(error) {
   }
 }
 
+function finishTermination() {
+  if (terminal || !terminating || pendingTermination === null) return;
+  // A ChildProcess close (or Bun's equivalent exited-and-drained promise)
+  // proves that the root has exited and its stdio handles are closed. Keep the
+  // existing bounded settle period after that proof so a caller never starts
+  // a replacement while the killed group is still releasing OS resources.
+  Atomics.wait(terminationPause, 0, 0, 10);
+  const message = pendingTermination;
+  pendingTermination = null;
+  finish(message);
+}
+
 globalThis.process?.on?.("uncaughtException", fail);
 globalThis.process?.on?.("unhandledRejection", fail);
 
@@ -162,16 +174,12 @@ function writeBunInput(value) {
 function terminateTree(message) {
   if (terminal || terminating) return;
   terminating = true;
+  pendingTermination = message;
   terminationPids = freezeProcessTree(child?.pid);
   terminateProcessTree(child?.pid, {
     knownDescendants: terminationPids,
     alreadyFrozen: true,
   });
-  // Signal delivery is asynchronous. Do not acknowledge cancellation while a
-  // just-killed compiler can still finish a filesystem syscall in the
-  // workspace that the caller is about to replace or remove.
-  Atomics.wait(terminationPause, 0, 0, 10);
-  finish(message);
 }
 
 let child;
@@ -203,9 +211,9 @@ try {
     const stderr = inherited ? Promise.resolve() : pump(child.stderr);
     void Promise.all([stdout, stderr, child.exited])
       .then(([, , exitCode]) => {
-        if (cancelled) {
-          terminateTree({ type: "cancelled" });
-        } else if (!terminating) {
+        if (terminating) {
+          finishTermination();
+        } else {
           finishCompleted(exitCode);
         }
       })
@@ -254,9 +262,9 @@ try {
       }
     });
     child.on("close", (exitCode) => {
-      if (cancelled) {
-        terminateTree({ type: "cancelled" });
-      } else if (!terminating) {
+      if (terminating) {
+        finishTermination();
+      } else {
         finishCompleted(exitCode);
       }
     });
@@ -291,7 +299,6 @@ port.on("message", (message) => {
     return;
   }
   if (message && message.type === "cancel" && !terminal) {
-    cancelled = true;
     terminateTree({ type: "cancelled" });
   }
 });

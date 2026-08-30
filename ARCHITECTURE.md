@@ -93,6 +93,10 @@ latest generation may publish completion; both compile and run re-read the
 source snapshot after their child reaches a terminal state to close the final
 poll-to-publication race. The previous dependency graph is
 retained long enough to calculate dependants of a deleted module.
+JavaScript cancellation becomes terminal only after the child close event (or
+Bun's exited-and-drained equivalent); an unresponsive cleanup crosses the hard
+deadline as an infrastructure failure instead of permitting an overlapping
+replacement.
 
 ## Coverage
 

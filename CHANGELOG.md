@@ -50,6 +50,9 @@ versioning.
   non-ASCII text.
 - Made cancellation fail closed, terminate Unix process groups, and retain
   daemon operation ownership until cancellation reaches a terminal state.
+- Delayed JavaScript cancellation acknowledgement until the killed child had
+  closed and its streams had drained, and reported hard cleanup deadlines as
+  failures instead of allowing a replacement process to overlap.
 - Tracked test-owned Node, Bun, and Deno subprocesses across completion and
   timeout, bounded safe Node.js synchronous calls on Unix, and rejected Bun,
   Deno, and Windows sync boundaries that cannot expose a live tree before

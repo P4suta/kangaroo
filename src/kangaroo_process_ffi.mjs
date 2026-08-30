@@ -194,8 +194,11 @@ export function poll(id) {
     active.cancellationStarted > 0 &&
     Date.now() - active.cancellationStarted >= hardCancellationDelayMs()
   ) {
+    const delay = hardCancellationDelayMs();
     forceCancel(id, active);
-    return new ProcessCancelled();
+    return new ProcessFailed(
+      `process cancellation did not settle within ${delay} ms`,
+    );
   }
   while (true) {
     const received = receiveMessageOnPort(active.port);

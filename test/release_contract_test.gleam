@@ -280,6 +280,17 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(process_worker, "globalThis.Bun.spawn")
   assert string.contains(process_worker, "new TextDecoder()")
   assert string.contains(process_worker, "from \"./kangaroo_process_tree.mjs\"")
+  assert string.contains(process_worker, "pendingTermination")
+  assert string.contains(process_worker, "finishTermination")
+  let assert [_, termination_body] =
+    string.split(process_worker, "function terminateTree(message)")
+  let assert [termination_body, ..] =
+    string.split(termination_body, "let child")
+  assert !string.contains(termination_body, "finish(message)")
+  assert string.contains(
+    process_ffi,
+    "process cancellation did not settle within",
+  )
   assert string.contains(process_tree, "processTreeExecFileSync(\"taskkill\"")
   let assert [taskkill_prefix, ..] =
     string.split(process_tree, "globalThis.process.kill(pid")
