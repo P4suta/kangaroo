@@ -303,19 +303,13 @@ prepare_windows_job_helper() ->
 
 prepare_windows_job_helper_worker() ->
     process_flag(trap_exit, true),
-    case find_windows_powershell() of
-        false ->
+    case {find_windows_powershell(), windows_command_processor()} of
+        {false, _} ->
             {error, <<"could not find executable: pwsh.exe or "
                       "powershell.exe">>};
-        PowerShell ->
+        {_, {error, _} = Error} -> Error;
+        {PowerShell, {ok, CommandProcessor}} ->
             Helper = default_windows_job_executable(),
-            Arguments = [
-                "-NoLogo", "-NoProfile", "-NonInteractive",
-                "-ExecutionPolicy", "Bypass", "-File",
-                filename:join(windows_priv_directory(),
-                              "kangaroo_windows_job.ps1"),
-                "-Prepare"
-            ],
             case filelib:ensure_dir(Helper) of
                 {error, Reason} ->
                     {error, unicode:characters_to_binary(
@@ -323,19 +317,51 @@ prepare_windows_job_helper_worker() ->
                                 "Windows process helper cache failed: ~tp",
                                 [Reason]))};
                 ok ->
-                    try open_port(
-                          {spawn_executable, PowerShell},
-                          [binary, use_stdio, stderr_to_stdout, exit_status,
-                           {cd, filename:dirname(Helper)},
-                           {args, Arguments}]) of
-                        Port -> collect_windows_job_preparation(
-                                  Port, Helper, [],
-                                  erlang:monotonic_time(millisecond) + 60000)
-                    catch
-                        Class:Reason:Stack ->
-                            {error, format_exception(Class, Reason, Stack)}
+                    case stage_windows_job_preparation(Helper) of
+                        {error, _} = Error -> Error;
+                        {ok, Preparation} ->
+                            Arguments = [
+                                "/D", "/Q", "/C",
+                                filename:basename(PowerShell),
+                                "-NoLogo", "-NoProfile", "-NonInteractive",
+                                "-ExecutionPolicy", "Bypass", "-File",
+                                filename:basename(Preparation), "-Prepare"
+                            ],
+                            try open_port(
+                                  {spawn_executable, CommandProcessor},
+                                  [binary, use_stdio, stderr_to_stdout,
+                                   exit_status,
+                                   {cd, filename:dirname(Helper)},
+                                   {args, Arguments}]) of
+                                Port -> collect_windows_job_preparation(
+                                          Port, Helper, [],
+                                          erlang:monotonic_time(millisecond) +
+                                          60000)
+                            catch
+                                Class:Reason:Stack ->
+                                    {error,
+                                     format_exception(Class, Reason, Stack)}
+                            after
+                                _ = file:delete(Preparation)
+                            end
                     end
             end
+    end.
+
+stage_windows_job_preparation(Helper) ->
+    Unique = integer_to_list(erlang:unique_integer([positive, monotonic])),
+    Filename = "windows-job-prepare-v6-20260831-" ++ os:getpid() ++
+               "-" ++ Unique ++ ".ps1",
+    Preparation = filename:join(filename:dirname(Helper), Filename),
+    Source = filename:join(
+      windows_priv_directory(), "kangaroo_windows_job.ps1"),
+    case file:copy(Source, Preparation) of
+        {ok, _Bytes} -> {ok, Preparation};
+        {error, Reason} ->
+            {error, unicode:characters_to_binary(
+                      io_lib:format(
+                        "Windows process helper staging failed: ~tp",
+                        [Reason]))}
     end.
 
 collect_windows_job_preparation(Port, Helper, Output, Deadline) ->

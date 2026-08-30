@@ -348,6 +348,17 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(preparation_body, "\"-Prepare\"")
   assert !string.contains(preparation_body, "\"-OutputPath\"")
   assert string.contains(preparation_body, "filelib:ensure_dir(Helper)")
+  assert string.contains(
+    preparation_body,
+    "stage_windows_job_preparation(Helper)",
+  )
+  assert string.contains(preparation_body, "{ok, CommandProcessor}")
+  assert string.contains(
+    preparation_body,
+    "{spawn_executable, CommandProcessor}",
+  )
+  assert string.contains(preparation_body, "filename:basename(PowerShell)")
+  assert !string.contains(preparation_body, "{spawn_executable, PowerShell}")
   assert string.contains(preparation_body, "{cd, filename:dirname(Helper)}")
   assert !string.contains(
     preparation_body,
@@ -416,6 +427,19 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_job, "ConsoleApplication")
   assert string.contains(workflow, "kangaroo_windows_job.ps1 -SmokeTest")
   assert string.contains(workflow, "windows_open_port_smoke.escript")
+  assert string.contains(erlang_process_ffi, "windows-job-prepare-v6-20260831-")
+  assert string.contains(
+    windows_open_port_smoke,
+    "require_executable(\"cmd.exe\")",
+  )
+  assert string.contains(
+    windows_open_port_smoke,
+    "{spawn_executable, CommandProcessor}",
+  )
+  assert !string.contains(
+    windows_open_port_smoke,
+    "{spawn_executable, PowerShell}",
+  )
   assert !string.contains(
     windows_open_port_smoke,
     "windows_job_output_path_environment(Helper)",

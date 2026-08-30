@@ -54,10 +54,11 @@ versioning.
   complete live tree instead of discarding the write error and waiting for the
   command timeout.
 - Made Windows helper preparation prefer the native Windows PowerShell
-  compiler host, pin the caller-created cache directory as its working
-  directory without passing fragile OTP port arguments or parsing redirected
-  PowerShell output, invalidate changed helper binaries, and terminate remaining
-  Job Object descendants without racing the enclosing test timeout.
+  compiler host, stage its trusted script under a process-owned cache basename,
+  and route fixed preparation arguments through native `cmd.exe` where Windows
+  OTP preserves them. Preparation does not pass a cache path or parse redirected
+  PowerShell output; changed helper binaries are invalidated, and remaining Job
+  Object descendants terminate without racing the enclosing test timeout.
 - Made `doctor` reject Erlang/OTP outside the documented 27–29 range instead
   of reporting untested future major releases as supported.
 - Distinguished synchronous coverage preparation from the cancellable child
@@ -169,9 +170,10 @@ versioning.
   private base64 metadata for the helper to restore without exposing them to
   OTP's port options or the command interpreter.
 - Pinned the helper cache directory as the preparation process working
-  directory and smoke-tested exact first-launch compilation plus fixed
-  `cmd.exe` execution on Windows OTP 27 through 29, without relying on OTP's
-  script-argument, environment-option, or redirected-output encoding.
+  directory, staged the trusted preparation script under a process-owned
+  basename, and smoke-tested exact first-launch compilation plus fixed
+  `cmd.exe` execution on Windows OTP 27 through 29, without relying on direct
+  PowerShell argument, environment-option, or redirected-output encoding.
 - Required the path-bound ownership marker even when a coverage clone fails
   partway through copying, preventing failure cleanup from following a replaced
   workspace path and retaining both the primary and cleanup diagnostics.

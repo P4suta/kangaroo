@@ -1,7 +1,6 @@
 param(
     [switch] $Prepare,
     [string] $OutputPath = "",
-    [switch] $ProbePreparation,
     [switch] $SmokeTest,
     [switch] $CheckSource
 )
@@ -652,18 +651,6 @@ try {
     }
 
     $helper = Ensure-Job-Executable
-    if ($ProbePreparation) {
-        $probe = [string]::Join(" | ", @(
-            "prepare=" + $Prepare.IsPresent,
-            "helper=" + $helper,
-            "process=" + [Environment]::CurrentDirectory,
-            "runspace=" + (Get-Location).ProviderPath))
-        [IO.File]::WriteAllText(
-            [IO.Path]::Combine(
-                $PSScriptRoot,
-                "kangaroo_windows_prepare_probe.txt"),
-            $probe)
-    }
     if ($Prepare) {
         [Environment]::Exit(0)
     }

@@ -89,63 +89,76 @@ wait_for_exit(Label, Port, Deadline) ->
 
 probe_helper_preparation() ->
     PowerShell = require_powershell(),
+    CommandProcessor = require_executable("cmd.exe"),
     Script = filename:absname("priv/kangaroo_windows_job.ps1"),
     Helper = default_helper_path(),
-    Probe = filename:join(
-      filename:dirname(Script), "kangaroo_windows_prepare_probe.txt"),
-    _ = safe_delete(Probe),
-    Arguments = [
-        "-NoLogo", "-NoProfile", "-NonInteractive",
-        "-ExecutionPolicy", "Bypass", "-File", Script,
-        "-Prepare", "-ProbePreparation"
-    ],
-    Result = prepare_helper_path(PowerShell, Arguments, Helper, 60000),
-    report_preparation_probe(Probe),
-    _ = safe_delete(Probe),
-    case Result of
-        ok ->
-            try
-                case filelib:is_regular(Helper) of
-                    true ->
-                        io:format("open_port helper preparation: ok~n"),
-                        io:format("open_port helper artifact: ok~n"),
-                        probe(
-                          "production helper execution",
-                          require_executable("cmd.exe"),
-                          [binary, use_stdio, stderr_to_stdout, exit_status,
-                           {cd, filename:dirname(Helper)},
-                           {args, ["/D", "/Q", "/C",
-                                   filename:basename(Helper),
-                                   "--kangaroo-job-helper"]},
-                           {env, internal_environment(filename:absname("."))}],
-                          5000);
-                    false ->
-                        io:format("open_port helper artifact: missing~n"),
-                        error
-                end
-            after
-                safe_delete(Helper)
-            end;
-        error -> error
-    end.
-
-report_preparation_probe(Probe) ->
-    case file:read_file(Probe) of
-        {ok, Contents} ->
-            io:format("open_port helper preparation probe: ~ts~n", [Contents]);
+    Unique = integer_to_list(erlang:unique_integer([positive, monotonic])),
+    Preparation = filename:join(
+      filename:dirname(Helper),
+      "windows-job-prepare-v6-20260831-" ++ os:getpid() ++
+      "-" ++ Unique ++ ".ps1"),
+    case filelib:ensure_dir(Helper) of
         {error, Reason} ->
-            io:format("open_port helper preparation probe: missing (~tp)~n",
-                      [Reason])
+            io:format("open_port helper cache: ~tp~n", [Reason]),
+            error;
+        ok ->
+            case file:copy(Script, Preparation) of
+                {error, Reason} ->
+                    io:format("open_port helper staging: ~tp~n", [Reason]),
+                    error;
+                {ok, _Bytes} -> try
+                    Arguments = [
+                        "/D", "/Q", "/C", filename:basename(PowerShell),
+                        "-NoLogo", "-NoProfile", "-NonInteractive",
+                        "-ExecutionPolicy", "Bypass", "-File",
+                        filename:basename(Preparation), "-Prepare"
+                    ],
+                    Result = prepare_helper_path(
+                      CommandProcessor, Arguments, Helper, 60000),
+                    case Result of
+                        error -> error;
+                        ok ->
+                            case filelib:is_regular(Helper) of
+                                true ->
+                                    io:format(
+                                      "open_port helper preparation: ok~n"),
+                                    io:format(
+                                      "open_port helper artifact: ok~n"),
+                                    probe(
+                                      "production helper execution",
+                                      CommandProcessor,
+                                      [binary, use_stdio, stderr_to_stdout,
+                                       exit_status,
+                                       {cd, filename:dirname(Helper)},
+                                       {args, [
+                                         "/D", "/Q", "/C",
+                                         filename:basename(Helper),
+                                         "--kangaroo-job-helper"
+                                       ]},
+                                       {env, internal_environment(
+                                         filename:absname("."))}],
+                                      5000);
+                                false ->
+                                    io:format(
+                                      "open_port helper artifact: missing~n"),
+                                    error
+                            end
+                    end
+                after
+                    _ = safe_delete(Preparation),
+                    _ = safe_delete(Helper)
+                end
+            end
     end.
 
-prepare_helper_path(PowerShell, Arguments, Helper, Timeout) ->
+prepare_helper_path(CommandProcessor, Arguments, Helper, Timeout) ->
     case filelib:ensure_dir(Helper) of
         {error, Reason} ->
             io:format("open_port helper cache: ~tp~n", [Reason]),
             error;
         ok ->
             try open_port(
-                  {spawn_executable, PowerShell},
+                  {spawn_executable, CommandProcessor},
                   [binary, use_stdio, stderr_to_stdout, exit_status,
                    {cd, filename:dirname(Helper)},
                    {args, Arguments}]) of
