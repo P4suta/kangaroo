@@ -119,12 +119,34 @@ pub fn package_name(source: String) -> Result(String, String) {
     }),
   )
   case tom.get_string(document, ["name"]) {
-    Ok(name) if name != "" -> Ok(name)
-    _ -> Error("gleam.toml must contain a package name")
+    Ok(name) ->
+      case valid_package_name(name) {
+        True -> Ok(name)
+        False ->
+          Error(
+            "gleam.toml package name must contain only lowercase ASCII letters, numbers, and underscores",
+          )
+      }
+    Error(_) -> Error("gleam.toml must contain a package name")
+  }
+}
+
+/// Package names become both module and build-directory components. Enforce
+/// Gleam's portable spelling before any caller joins the value to a path.
+pub fn valid_package_name(name: String) -> Bool {
+  case name {
+    "" -> False
+    name ->
+      name
+      |> string.to_graphemes
+      |> list.all(fn(character) {
+        string.contains("abcdefghijklmnopqrstuvwxyz0123456789_", character)
+      })
   }
 }
 
 fn decode(document: Dict(String, Toml)) -> Result(Config, String) {
+  use _ <- result.try(validate_config_keys(document))
   let defaults = defaults()
   use test_paths <- result.try(optional_strings(
     document,
@@ -203,6 +225,29 @@ fn decode(document: Dict(String, Toml)) -> Result(Config, String) {
     test_paths,
     "tools.kangaroo.test_paths must contain at least one path",
   ))
+  use _ <- result.try(validate_paths(test_paths, "tools.kangaroo.test_paths"))
+  use _ <- result.try(validate_test_paths(test_paths))
+  use _ <- result.try(validate_paths(exclude, "tools.kangaroo.exclude"))
+  use _ <- result.try(validate_paths(
+    extra_paths,
+    "tools.kangaroo.watch.extra_paths",
+  ))
+  use _ <- result.try(validate_paths(
+    coverage_include,
+    "tools.kangaroo.coverage.include",
+  ))
+  use _ <- result.try(validate_paths(
+    coverage_exclude,
+    "tools.kangaroo.coverage.exclude",
+  ))
+  use _ <- result.try(validate_values(
+    ignored_tags,
+    "tools.kangaroo.ignored_tags must not contain empty values",
+  ))
+  use _ <- result.try(validate_values(
+    serial_tags,
+    "tools.kangaroo.serial_tags must not contain empty values",
+  ))
   use _ <- result.try(validate_positive(
     timeout_ms,
     "tools.kangaroo.timeout_ms must be a positive integer",
@@ -244,6 +289,63 @@ fn decode(document: Dict(String, Toml)) -> Result(Config, String) {
       reporters:,
     ),
   ))
+}
+
+fn validate_config_keys(document: Dict(String, Toml)) -> Result(Nil, String) {
+  use _ <- result.try(
+    validate_table_keys(document, ["tools", "kangaroo"], [
+      "test_paths",
+      "exclude",
+      "workers",
+      "timeout_ms",
+      "ignored_tags",
+      "serial_tags",
+      "retry",
+      "shuffle",
+      "show_output",
+      "watch",
+      "coverage",
+    ]),
+  )
+  use _ <- result.try(
+    validate_table_keys(document, ["tools", "kangaroo", "watch"], [
+      "extra_paths",
+      "debounce_ms",
+    ]),
+  )
+  validate_table_keys(document, ["tools", "kangaroo", "coverage"], [
+    "include",
+    "exclude",
+    "minimum",
+    "minimum_per_file",
+    "reporters",
+  ])
+}
+
+fn validate_table_keys(
+  document: Dict(String, Toml),
+  path: List(String),
+  allowed: List(String),
+) -> Result(Nil, String) {
+  case tom.get_table(document, path) {
+    Error(tom.NotFound(_)) -> Ok(Nil)
+    Error(_) -> Error(key_name(path) <> " must be a table")
+    Ok(table) ->
+      case
+        table
+        |> dict.keys
+        |> list.filter(fn(key) { !list.contains(allowed, key) })
+        |> list.sort(string.compare)
+      {
+        [] -> Ok(Nil)
+        [unknown, ..] ->
+          Error(
+            "unknown configuration key `"
+            <> key_name(list.append(path, [unknown]))
+            <> "`",
+          )
+      }
+  }
 }
 
 fn optional_int(
@@ -313,6 +415,75 @@ fn validate_non_empty(values: List(a), message: String) -> Result(Nil, String) {
   case values {
     [] -> Error(message)
     _ -> Ok(Nil)
+  }
+}
+
+fn validate_paths(values: List(String), key: String) -> Result(Nil, String) {
+  case
+    list.any(values, fn(value) { string.trim(value) == "" }),
+    list.any(values, unsafe_project_path)
+  {
+    True, _ -> Error(key <> " must not contain empty paths")
+    _, True ->
+      Error(key <> " paths must be project-relative and must not contain `..`")
+    False, False -> Ok(Nil)
+  }
+}
+
+fn validate_test_paths(values: List(String)) -> Result(Nil, String) {
+  case list.all(values, supported_test_path) {
+    True -> Ok(Nil)
+    False ->
+      Error(
+        "tools.kangaroo.test_paths must be within Gleam's src, dev, or test source directories",
+      )
+  }
+}
+
+fn supported_test_path(value: String) -> Bool {
+  let path =
+    value
+    |> string.replace(each: "\\", with: "/")
+    |> drop_leading_dot
+    |> trim_path_slashes
+  list.any(["src", "dev", "test"], fn(root) {
+    path == root || string.starts_with(path, root <> "/")
+  })
+}
+
+fn drop_leading_dot(path: String) -> String {
+  case string.starts_with(path, "./") {
+    True -> drop_leading_dot(string.drop_start(path, 2))
+    False -> path
+  }
+}
+
+fn trim_path_slashes(path: String) -> String {
+  case string.ends_with(path, "/") {
+    True -> trim_path_slashes(string.drop_end(path, 1))
+    False -> path
+  }
+}
+
+fn unsafe_project_path(value: String) -> Bool {
+  let path = string.replace(value, each: "\\", with: "/")
+  let components = string.split(path, "/")
+  let drive_absolute = case components {
+    [drive, ..] -> string.ends_with(drive, ":")
+    [] -> False
+  }
+  string.starts_with(path, "/")
+  || drive_absolute
+  || list.contains(components, "..")
+}
+
+fn validate_values(
+  values: List(String),
+  message: String,
+) -> Result(Nil, String) {
+  case list.any(values, fn(value) { string.trim(value) == "" }) {
+    True -> Error(message)
+    False -> Ok(Nil)
   }
 }
 

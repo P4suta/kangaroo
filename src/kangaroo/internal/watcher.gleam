@@ -53,11 +53,15 @@ pub fn is_watched(path: String) -> Bool {
 }
 
 pub fn roots(
-  test_paths: List(String),
+  _test_paths: List(String),
   extra_paths: List(String),
 ) -> List(String) {
-  ["src", ..list.append(test_paths, extra_paths)]
-  |> list.map(normalise_path)
+  // `gleam test` compiles every module below all three standard development
+  // roots, even when Kangaroo discovery is narrowed to (for example)
+  // `test/unit`. Tests can import helpers from any of them, so a watch that
+  // omitted one could publish a stale result after that helper changed.
+  ["src", "dev", "test", ..extra_paths]
+  |> list.map(fn(path) { path |> normalise_path |> trim_trailing_slashes })
   |> list.filter(fn(path) { path != "" })
   |> list.unique
 }
@@ -83,7 +87,14 @@ pub fn compile_arguments(target: String, runtime: String) -> List(String) {
 }
 
 pub fn compile_environment() -> List(#(String, String)) {
-  [#("KANGAROO_COMPILE_ONLY", "1")]
+  [#("KANGAROO_COMPILE_ONLY", "kangaroo-watch-compile-v1")]
+}
+
+/// Prevents an inherited or user-defined environment variable from turning an
+/// ordinary `gleam test` into a false exit-zero result. Only watch's private
+/// compile generation token may bypass execution.
+pub fn compile_only_requested(value: Option(String)) -> Bool {
+  value == Some("kangaroo-watch-compile-v1")
 }
 
 /// Returns compiler products whose timestamp-only cache keys can be stale
@@ -96,12 +107,18 @@ pub fn stale_build_files(
   target: String,
   changes: List(Change),
 ) -> List(String) {
-  let package = join(project_dir, "build/dev/" <> target <> "/" <> package_name)
-  changes
-  |> list.flat_map(fn(change) {
-    stale_files_for_change(package, target, change)
-  })
-  |> list.unique
+  case config.valid_package_name(package_name) {
+    False -> []
+    True -> {
+      let package =
+        join(project_dir, "build/dev/" <> target <> "/" <> package_name)
+      changes
+      |> list.flat_map(fn(change) {
+        stale_files_for_change(package, target, change)
+      })
+      |> list.unique
+    }
+  }
 }
 
 /// Invalidates the narrow compiler cache boundary before a settled watch
@@ -137,8 +154,10 @@ fn stale_files_for_change(
 
 fn source_relative(path: String) -> Option(String) {
   case path {
-    "src/" <> relative | "test/" <> relative ->
-      case string.ends_with(relative, ".gleam") {
+    "src/" <> relative | "test/" <> relative | "dev/" <> relative ->
+      case
+        string.ends_with(relative, ".gleam") && safe_artifact_relative(relative)
+      {
         True -> Some(relative)
         False -> None
       }
@@ -148,26 +167,40 @@ fn source_relative(path: String) -> Option(String) {
 
 fn native_relative(path: String, target: String) -> Option(String) {
   let relative = case path {
-    "src/" <> relative | "test/" <> relative -> Some(relative)
+    "src/" <> relative | "test/" <> relative | "dev/" <> relative ->
+      Some(relative)
     _ -> None
   }
-  case relative, target {
-    Some(relative), "javascript" ->
-      case
-        string.ends_with(relative, ".mjs")
-        || string.ends_with(relative, ".js")
-        || string.ends_with(relative, ".ts")
-      {
-        True -> Some(relative)
-        False -> None
+  case relative {
+    Some(relative) ->
+      case safe_artifact_relative(relative), target {
+        True, "javascript" ->
+          case
+            string.ends_with(relative, ".mjs")
+            || string.ends_with(relative, ".js")
+            || string.ends_with(relative, ".ts")
+          {
+            True -> Some(relative)
+            False -> None
+          }
+        True, "erlang" ->
+          case string.ends_with(relative, ".erl") {
+            True -> Some(relative)
+            False -> None
+          }
+        _, _ -> None
       }
-    Some(relative), "erlang" ->
-      case string.ends_with(relative, ".erl") {
-        True -> Some(relative)
-        False -> None
-      }
-    _, _ -> None
+    None -> None
   }
+}
+
+fn safe_artifact_relative(path: String) -> Bool {
+  path
+  |> normalise_path
+  |> string.split("/")
+  |> list.all(fn(component) {
+    component != "" && component != "." && component != ".."
+  })
 }
 
 fn module_metadata(package: String, relative: String) -> String {
@@ -297,7 +330,10 @@ pub fn snapshot_project(
       let absolute = join(project_dir, root)
       case fs.is_directory(absolute), fs.exists(absolute) {
         True, _ ->
-          fs.list_files_recursive(absolute)
+          case normalise_path(root) {
+            "." -> fs.list_workspace_files_recursive(absolute)
+            _ -> fs.list_source_files_recursive(absolute)
+          }
           |> result.map(fn(found) { list.append(files, found) })
         False, True -> Ok(list.append(files, [absolute]))
         False, False -> Ok(files)

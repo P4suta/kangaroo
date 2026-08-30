@@ -53,3 +53,22 @@ pub fn event_codec_rejects_non_event_ndjson_test() {
     == Error("invalid kangaroo event")
   assert encode.decode("not json") == Error("invalid kangaroo event")
 }
+
+pub fn event_codec_rejects_values_outside_the_protocol_schema_test() {
+  let invalid = [
+    "{\"type\":\"run_started\",\"run_id\":1,\"case_count\":-1}",
+    "{\"type\":\"run_started\",\"run_id\":1,\"case_count\":1,\"extra\":true}",
+    "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"case\",\"outcome\":{\"kind\":\"passed\"},\"duration_ms\":-1}",
+    "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"case\",\"outcome\":{\"kind\":\"flaky\",\"attempts\":1,\"failures\":[]},\"duration_ms\":0}",
+    "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"case\",\"outcome\":{\"kind\":\"skipped\",\"reason\":null},\"duration_ms\":0}",
+    "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"case\",\"outcome\":{\"kind\":\"passed\",\"extra\":true},\"duration_ms\":0}",
+    "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"case\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"assertion_failed\",\"message\":\"bad\",\"location\":null,\"extra\":true}]},\"duration_ms\":0}",
+    "{\"type\":\"run_finished\",\"run_id\":1,\"summary\":{\"passed\":-1,\"failed\":0,\"skipped\":0,\"duration_ms\":0}}",
+    "{\"type\":\"run_finished\",\"run_id\":1,\"summary\":{\"passed\":1,\"failed\":0,\"skipped\":0,\"duration_ms\":0,\"extra\":true}}",
+    "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"case\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"assertion_failed\",\"message\":\"bad\",\"location\":{\"file\":\"test/math.gleam\",\"line\":0,\"column\":null}}]},\"duration_ms\":0}",
+    "{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"case\",\"outcome\":{\"kind\":\"failed\",\"failures\":[{\"kind\":\"assertion_failed\",\"message\":\"bad\",\"location\":{\"file\":\"test/math.gleam\",\"line\":1,\"column\":null,\"extra\":true}}]},\"duration_ms\":0}",
+  ]
+  assert list.all(invalid, fn(source) {
+    encode.decode(source) == Error("invalid kangaroo event")
+  })
+}

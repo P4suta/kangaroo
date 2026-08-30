@@ -12,7 +12,7 @@ pub type Discovery {
   Discovery(modules: List(IndexedModule), tests: List(IndexedTest))
 }
 
-/// A content-addressed index retained for the lifetime of a watcher or daemon.
+/// An exact-source index retained for the lifetime of a watcher or daemon.
 pub type Cache {
   Cache(index: IndexCache)
 }
@@ -72,8 +72,8 @@ pub fn from_sources_with_excludes(
   }
 }
 
-/// Builds a discovery generation while reusing ASTs whose content hash is
-/// unchanged. Parse failures do not return a replacement cache, so callers
+/// Builds a discovery generation while reusing ASTs whose source bytes and
+/// root configuration are unchanged. Parse failures do not return a replacement cache, so callers
 /// retain the last complete generation.
 pub fn from_sources_cached(
   cache: Cache,
@@ -134,10 +134,19 @@ fn read_sources(
   project_dir: String,
   test_paths: List(String),
 ) -> Result(List(#(String, String)), List(IndexError)) {
+  let roots =
+    test_paths
+    |> list.map(fn(root) {
+      case normalise_root(root) {
+        "" -> "."
+        root -> root
+      }
+    })
+    |> list.unique
   use nested_files <- result.try(
-    list.try_map(test_paths, fn(root) {
+    list.try_map(roots, fn(root) {
       let directory = join(project_dir, root)
-      fs.list_files_recursive(directory)
+      fs.list_source_files_recursive(directory)
       |> result.map_error(fn(message) {
         [index.ParseError(normalise(root), 1, message)]
       })
@@ -147,6 +156,7 @@ fn read_sources(
     nested_files
     |> list.flatten
     |> list.filter(fn(path) { string.ends_with(path, ".gleam") })
+    |> list.unique
     |> list.sort(string.compare)
 
   use sources <- result.try(
@@ -164,8 +174,8 @@ fn read_sources(
 fn in_test_paths(path: String, test_paths: List(String)) -> Bool {
   let path = normalise(path)
   list.any(test_paths, fn(root) {
-    let root = normalise(root)
-    path == root || string.starts_with(path, root <> "/")
+    let root = normalise_root(root)
+    root == "" || path == root || string.starts_with(path, root <> "/")
   })
 }
 
@@ -186,5 +196,36 @@ fn join(left: String, right: String) -> String {
 }
 
 fn normalise(path: String) -> String {
-  string.replace(path, each: "\\", with: "/")
+  path
+  |> string.replace(each: "\\", with: "/")
+  |> drop_dot_slash
+  |> collapse_slashes
+}
+
+fn normalise_root(path: String) -> String {
+  case normalise(path) {
+    "." -> ""
+    path -> trim_trailing_slashes(path)
+  }
+}
+
+fn drop_dot_slash(path: String) -> String {
+  case string.starts_with(path, "./") {
+    True -> drop_dot_slash(string.drop_start(path, 2))
+    False -> path
+  }
+}
+
+fn collapse_slashes(path: String) -> String {
+  case string.contains(path, "//") {
+    True -> collapse_slashes(string.replace(path, each: "//", with: "/"))
+    False -> path
+  }
+}
+
+fn trim_trailing_slashes(path: String) -> String {
+  case string.ends_with(path, "/") {
+    True -> trim_trailing_slashes(string.drop_end(path, 1))
+    False -> path
+  }
 }

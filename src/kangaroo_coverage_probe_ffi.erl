@@ -18,13 +18,19 @@ ensure_started() ->
 
 flush() ->
     case whereis(?WRITER) of
-        undefined -> nil;
+        undefined ->
+            case os:getenv("KANGAROO_COVERAGE_FILE") of
+                false -> nil;
+                _ -> {error, <<"coverage probe writer is unavailable">>}
+            end;
         Writer ->
             Reference = make_ref(),
             Writer ! {flush, self(), Reference},
             receive
-                {Reference, flushed} -> nil
-            after 1000 -> nil
+                {Reference, flushed} -> nil;
+                {Reference, {failed, Message}} -> {error, Message}
+            after 1000 ->
+                {error, <<"coverage probe flush timed out after 1000 ms">>}
             end
     end.
 
@@ -47,11 +53,12 @@ initialise_writer(Parent) ->
     try register(?WRITER, self()) of
         true ->
             Device = case os:getenv("KANGAROO_COVERAGE_FILE") of
-                false -> undefined;
+                false -> disabled;
                 File ->
                     case file:open(File, [append, raw, binary]) of
-                        {ok, Opened} -> Opened;
-                        {error, _} -> undefined
+                        {ok, Opened} -> {open, Opened};
+                        {error, Reason} ->
+                            {failed, persistence_error("open", Reason)}
                     end
             end,
             Parent ! {self(), ready},
@@ -64,18 +71,33 @@ initialise_writer(Parent) ->
 writer_loop(Device, Records, Count) ->
     receive
         {hit, Record} when Count + 1 >= ?BATCH_SIZE ->
-            write_records(Device, lists:reverse([Record | Records])),
-            writer_loop(Device, [], 0);
+            NextDevice =
+                write_records(Device, lists:reverse([Record | Records])),
+            writer_loop(NextDevice, [], 0);
         {hit, Record} ->
             writer_loop(Device, [Record | Records], Count + 1);
         {flush, From, Reference} ->
-            write_records(Device, lists:reverse(Records)),
-            From ! {Reference, flushed},
-            writer_loop(Device, [], 0)
+            NextDevice = write_records(Device, lists:reverse(Records)),
+            Reply = case NextDevice of
+                {failed, Message} -> {failed, Message};
+                _ -> flushed
+            end,
+            From ! {Reference, Reply},
+            writer_loop(NextDevice, [], 0)
     end.
 
-write_records(undefined, _Records) -> ok;
-write_records(_Device, []) -> ok;
-write_records(Device, Records) ->
-    _ = file:write(Device, Records),
-    ok.
+write_records(disabled, _Records) -> disabled;
+write_records({failed, _} = Failed, _Records) -> Failed;
+write_records(Device, []) -> Device;
+write_records({open, Device} = Open, Records) ->
+    case file:write(Device, Records) of
+        ok -> Open;
+        {error, Reason} ->
+            _ = file:close(Device),
+            {failed, persistence_error("write", Reason)}
+    end.
+
+persistence_error(Action, Reason) ->
+    unicode:characters_to_binary(
+      io_lib:format("could not ~s coverage probe file: ~tp",
+                    [Action, Reason])).

@@ -64,6 +64,18 @@ pub fn dependency_selection_limits_changed_test_module_test() {
     == ["test/other_test.gleam::other_test"]
 }
 
+pub fn dependency_selection_tracks_dev_source_modules_test() {
+  let modules = [
+    module("dev/support.gleam", "support", [], []),
+    module("test/support_test.gleam", "support_test", ["support"], [
+      "support_test",
+    ]),
+  ]
+  let assert Selected([selected]) =
+    dependencies.affected(modules, ["dev/support.gleam"])
+  assert selected.id == "test/support_test.gleam::support_test"
+}
+
 pub fn dependency_selection_falls_back_for_ffi_config_and_unknown_changes_test() {
   assert dependencies.affected(graph(), ["src/app_ffi.erl"]) == All
   assert dependencies.affected(graph(), ["gleam.toml"]) == All

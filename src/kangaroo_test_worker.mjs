@@ -7,12 +7,53 @@ import { inspect as inspectValue } from "../gleam_stdlib/gleam/string.mjs";
 import { flush as flushCoverage } from "./kangaroo_coverage_probe_ffi.mjs";
 import { diff_lines as diffLines } from "./kangaroo/diff.mjs";
 import { terminateProcessTree } from "./kangaroo_process_tree.mjs";
+import {
+  windowsJobLaunch,
+  windowsJobSpawnOptions,
+} from "./kangaroo_windows_job.mjs";
 
 const require = createRequire(import.meta.url);
 const childProcess = require("node:child_process");
 const childProcesses = new Set();
 const childPids = new Int32Array(workerData.childPidBuffer);
-let nextChildPidIndex = 1;
+const control = new Int32Array(workerData.controlBuffer);
+const data = new Uint8Array(workerData.dataBuffer);
+const stdoutData = new Uint8Array(workerData.stdoutBuffer);
+const stderrData = new Uint8Array(workerData.stderrBuffer);
+const synchronousCleanupMarginMs = 25;
+let testDeadline = Number.POSITIVE_INFINITY;
+let finishing = false;
+
+globalThis.process?.once?.("exit", (code) => {
+  if (Atomics.load(control, 0) !== 0) return;
+  const encoded = new TextEncoder().encode(JSON.stringify({
+    name: "infrastructure",
+    message: `JavaScript test worker exited with code ${Number(code)}` +
+      " before publishing a result",
+    stack: "",
+  }));
+  data.set(encoded);
+  Atomics.store(control, 1, 3);
+  Atomics.store(control, 2, encoded.length);
+  Atomics.store(control, 0, 1);
+  Atomics.notify(control, 0, 1);
+});
+
+function claimPidSlot(pid) {
+  for (let index = 1; index < childPids.length; index += 1) {
+    if (Atomics.compareExchange(childPids, index, 0, pid) !== 0) continue;
+    let highWater = Atomics.load(childPids, 0);
+    while (
+      highWater < index &&
+      Atomics.compareExchange(childPids, 0, highWater, index) !== highWater
+    ) {
+      highWater = Atomics.load(childPids, 0);
+    }
+    Atomics.notify(childPids, 0, 1);
+    return index;
+  }
+  return 0;
+}
 
 function registerChild(child) {
   if (!child || childProcesses.has(child)) {
@@ -25,22 +66,20 @@ function registerChild(child) {
   const registerPid = () => {
     if (registeredPid || typeof child.pid !== "number") return;
     registeredPid = true;
-    const index = nextChildPidIndex;
-    nextChildPidIndex += 1;
-    if (index < childPids.length) {
-      pidIndex = index;
-      pidValue = child.pid;
-      // Publish the PID before the high-water mark. The parent scans one slot
-      // beyond that mark, so timeout cannot observe a count whose slot is
-      // still empty.
-      Atomics.store(childPids, index, pidValue);
-      Atomics.store(childPids, 0, index);
+    pidValue = child.pid;
+    pidIndex = claimPidSlot(pidValue);
+    if (pidIndex === 0) {
+      childProcesses.delete(child);
+      terminateProcessTree(pidValue);
+      throw new Error(
+        `test exceeded the ${childPids.length - 1} concurrent child process limit`,
+      );
     }
     // A short test timeout can expire while a runtime's spawn() call is still
     // blocked. Observe the shared cancellation flag before returning to test
     // code so a newly published process group is stopped immediately instead
     // of waiting for the Worker's event loop to run its cancellation handler.
-    if (Atomics.load(control, 6) === 1) {
+    if (Atomics.load(control, 6) === 1 || finishing) {
       terminateProcessTree(pidValue);
     }
   };
@@ -49,14 +88,153 @@ function registerChild(child) {
   // after spawn() returns. Keep the child tracked immediately and publish its
   // pid as soon as the runtime reports that the process started.
   child.once?.("spawn", registerPid);
-  child.once?.("exit", () => {
+  const unregister = () => {
     childProcesses.delete(child);
+    if (pidIndex > 0 && globalThis.process.platform === "win32") {
+      // The ChildProcess still owns its native handle while the exit callback
+      // runs. Terminate any recorded descendants now; retaining the numeric
+      // PID until test completion would risk acting on a reused PID later.
+      terminateProcessTree(pidValue);
+      Atomics.compareExchange(childPids, pidIndex, pidValue, 0);
+      return;
+    }
+    // The group leader can exit after starting a grandchild. Keep its process
+    // group id and shared registry slot until test cleanup; Unix may reparent
+    // the survivor before the test function itself returns.
+    if (
+      pidIndex > 0 &&
+      persistentProcessGroup(pidValue)
+    ) {
+      childProcesses.add({ pid: pidValue });
+      return;
+    }
     if (pidIndex > 0) {
       Atomics.compareExchange(childPids, pidIndex, pidValue, 0);
     }
-  });
+  };
+  if (typeof child.once === "function") {
+    child.once("exit", unregister);
+  } else if (child.exited && typeof child.exited.then === "function") {
+    void child.exited.then(unregister, unregister);
+  } else if (child.status && typeof child.status.then === "function") {
+    void child.status.then(unregister, unregister);
+  }
   return child;
 }
+
+function synchronousIsolationError(api) {
+  return new Error(
+    `${api} cannot be safely isolated on ${globalThis.process.platform}` +
+      "; use an asynchronous subprocess API",
+  );
+}
+
+function isolatedAsynchronousOptions(options = {}) {
+  return globalThis.process.platform === "win32"
+    ? options
+    : { ...options, detached: true };
+}
+
+function boundedSynchronousOptions(options = {}) {
+  const remaining = Math.max(
+    1,
+    Math.floor(testDeadline - Date.now() - synchronousCleanupMarginMs),
+  );
+  const requested = Number(options.timeout);
+  const requestedTimeout = Number.isFinite(requested) && requested > 0
+    ? requested
+    : Number.POSITIVE_INFINITY;
+  const deadlineLimited = remaining <= requestedTimeout;
+  return {
+    options: {
+      ...options,
+      detached: globalThis.process.platform !== "win32",
+      timeout: Math.min(remaining, requestedTimeout),
+      ...(deadlineLimited ? { killSignal: "SIGKILL" } : {}),
+    },
+    deadlineLimited,
+  };
+}
+
+function persistentProcessGroup(pid) {
+  if (!Number.isInteger(pid) || pid <= 0 || globalThis.process.platform === "win32") {
+    return false;
+  }
+  try {
+    globalThis.process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function trackSynchronousGroup(pid) {
+  if (persistentProcessGroup(pid)) registerChild({ pid });
+}
+
+const originalNodeSpawnSync = childProcess.spawnSync;
+
+function trackedNodeSpawnSync(command, arguments_ = [], options = {}) {
+  if (
+    globalThis.process.platform === "win32" ||
+    typeof globalThis.Deno !== "undefined"
+  ) {
+    throw synchronousIsolationError("node:child_process synchronous APIs");
+  }
+  const bounded = boundedSynchronousOptions(options);
+  const result = originalNodeSpawnSync(command, arguments_, bounded.options);
+  trackSynchronousGroup(result?.pid);
+  if (bounded.deadlineLimited && result?.error?.code === "ETIMEDOUT") {
+    const timeout = new Error(
+      `Test case timed out after ${Math.max(1, Number(workerData.timeoutMs || 1))} ms`,
+    );
+    timeout.name = "timeout";
+    throw timeout;
+  }
+  return result;
+}
+
+function normaliseNodeSpawnSyncArguments(values) {
+  if (Array.isArray(values[1])) {
+    return [values[0], values[1], values[2] || {}];
+  }
+  return [values[0], [], values[1] || {}];
+}
+
+function execResult(result, command) {
+  if (result.error) {
+    Object.assign(result.error, result);
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    const error = new Error(`Command failed: ${command}`);
+    Object.assign(error, result);
+    throw error;
+  }
+  return result.stdout;
+}
+
+childProcess.spawnSync = function trackedSpawnSync(...values) {
+  return trackedNodeSpawnSync(...normaliseNodeSpawnSyncArguments(values));
+};
+
+childProcess.execFileSync = function trackedExecFileSync(
+  file,
+  argumentsOrOptions,
+  maybeOptions,
+) {
+  const arguments_ = Array.isArray(argumentsOrOptions) ? argumentsOrOptions : [];
+  const options = Array.isArray(argumentsOrOptions)
+    ? maybeOptions || {}
+    : argumentsOrOptions || {};
+  const result = trackedNodeSpawnSync(file, arguments_, options);
+  return execResult(result, [file, ...arguments_].join(" "));
+};
+
+childProcess.execSync = function trackedExecSync(command, options = {}) {
+  const result = trackedNodeSpawnSync(command, [], { ...options, shell: true });
+  return execResult(result, command);
+};
 
 // Patching ChildProcess.prototype also covers runtimes such as Bun which do
 // not mirror syncBuiltinESMExports() changes into an already-created named
@@ -65,15 +243,13 @@ const childProcessPrototype = childProcess.ChildProcess?.prototype;
 if (childProcessPrototype?.spawn) {
   const originalPrototypeSpawn = childProcessPrototype.spawn;
   childProcessPrototype.spawn = function trackedPrototypeSpawn(...arguments_) {
-    if (
-      globalThis.process.platform !== "win32" &&
-      arguments_[0] &&
-      typeof arguments_[0] === "object"
-    ) {
+    if (arguments_[0] && typeof arguments_[0] === "object") {
       // Give every test-owned subprocess its own process group. Timeout and
       // cancellation can then freeze the complete group before a slower OS
       // process-tree snapshot lets a descendant perform late work.
-      arguments_[0] = { ...arguments_[0], detached: true };
+      arguments_[0] = globalThis.process.platform === "win32"
+        ? windowsJobSpawnOptions(arguments_[0])
+        : { ...arguments_[0], detached: true };
     }
     const result = originalPrototypeSpawn.apply(this, arguments_);
     registerChild(this);
@@ -88,12 +264,169 @@ for (const name of ["spawn", "exec", "execFile", "fork"]) {
     return registerChild(child);
   };
 }
-syncBuiltinESMExports();
 
-const control = new Int32Array(workerData.controlBuffer);
-const data = new Uint8Array(workerData.dataBuffer);
-const stdoutData = new Uint8Array(workerData.stdoutBuffer);
-const stderrData = new Uint8Array(workerData.stderrBuffer);
+if (typeof globalThis.Bun?.spawn === "function") {
+  const originalBunSpawn = globalThis.Bun.spawn.bind(globalThis.Bun);
+  globalThis.Bun.spawn = (commandOrOptions, maybeOptions) => {
+    const objectForm = !Array.isArray(commandOrOptions);
+    const command = objectForm ? commandOrOptions?.cmd : commandOrOptions;
+    const options = objectForm ? commandOrOptions : maybeOptions || {};
+    let child;
+    if (
+      globalThis.process.platform === "win32" &&
+      Array.isArray(command) &&
+      command.length > 0
+    ) {
+      const baseEnvironment = options.env ?? globalThis.process.env;
+      const launch = windowsJobLaunch(
+        command[0],
+        command.slice(1),
+        options.cwd ?? globalThis.process.cwd(),
+        baseEnvironment,
+        options.argv0 ?? command[0],
+      );
+      const wrappedCommand = [launch.executable, ...launch.arguments];
+      child = objectForm
+        ? originalBunSpawn({
+          ...options,
+          cmd: wrappedCommand,
+          env: launch.environment,
+        })
+        : originalBunSpawn(wrappedCommand, {
+          ...options,
+          env: launch.environment,
+        });
+    } else {
+      child = objectForm
+        ? originalBunSpawn(isolatedAsynchronousOptions(commandOrOptions))
+        : originalBunSpawn(
+          commandOrOptions,
+          isolatedAsynchronousOptions(options),
+        );
+    }
+    return registerChild(child);
+  };
+
+  globalThis.Bun.spawnSync = (commandOrOptions, maybeOptions = {}) => {
+    if (globalThis.process.platform === "win32") {
+      throw synchronousIsolationError("Bun.spawnSync");
+    }
+    const objectForm = !Array.isArray(commandOrOptions);
+    const command = objectForm ? commandOrOptions?.cmd : commandOrOptions;
+    const options = objectForm
+      ? { ...commandOrOptions, cmd: undefined }
+      : maybeOptions;
+    if (!Array.isArray(command) || command.length === 0) {
+      throw new TypeError("Bun.spawnSync requires a non-empty command array");
+    }
+    const stdio = options.stdio || [options.stdin, options.stdout, options.stderr];
+    const normaliseStdio = (value, fallback) => {
+      if (value === undefined) return fallback;
+      if (["pipe", "inherit", "ignore"].includes(value) || value === null) {
+        return value === null ? "ignore" : value;
+      }
+      if (typeof value === "number") return value;
+      throw synchronousIsolationError("Bun.spawnSync custom stdio");
+    };
+    const result = trackedNodeSpawnSync(command[0], command.slice(1), {
+      cwd: options.cwd,
+      env: options.env,
+      uid: options.uid,
+      gid: options.gid,
+      argv0: options.argv0,
+      windowsHide: options.windowsHide,
+      windowsVerbatimArguments: options.windowsVerbatimArguments,
+      timeout: options.timeout,
+      killSignal: options.killSignal,
+      maxBuffer: options.maxBuffer,
+      stdio: [
+        normaliseStdio(stdio[0], "pipe"),
+        normaliseStdio(stdio[1], "pipe"),
+        normaliseStdio(stdio[2], "pipe"),
+      ],
+    });
+    return {
+      stdout: result.stdout ?? undefined,
+      stderr: result.stderr ?? undefined,
+      exitCode: result.status ?? 1,
+      success: result.status === 0,
+      resourceUsage: globalThis.process.resourceUsage?.(),
+      signalCode: result.signal ?? undefined,
+      pid: result.pid,
+      ...(result.error?.code === "ETIMEDOUT" ? { exitedDueToTimeout: true } : {}),
+    };
+  };
+}
+
+if (typeof globalThis.Deno?.Command === "function") {
+  const OriginalDenoCommand = globalThis.Deno.Command;
+  const commandState = new WeakMap();
+  globalThis.Deno.Command = class TrackedDenoCommand extends OriginalDenoCommand {
+    constructor(command, options = {}) {
+      const isolatedOptions = isolatedAsynchronousOptions(options);
+      if (globalThis.process.platform === "win32") {
+        const baseEnvironment = options.clearEnv
+          ? { ...(options.env || {}) }
+          : { ...globalThis.process.env, ...(options.env || {}) };
+        const launch = windowsJobLaunch(
+          command,
+          options.args || [],
+          options.cwd ?? globalThis.process.cwd(),
+          baseEnvironment,
+        );
+        const wrappedOptions = {
+          ...isolatedOptions,
+          args: launch.arguments,
+          env: launch.environment,
+          clearEnv: true,
+        };
+        super(launch.executable, wrappedOptions);
+        commandState.set(this, {
+          command: launch.executable,
+          options: wrappedOptions,
+        });
+      } else {
+        super(command, isolatedOptions);
+        commandState.set(this, { command, options: isolatedOptions });
+      }
+    }
+
+    spawn() {
+      return registerChild(super.spawn());
+    }
+
+    async output() {
+      const { command, options } = commandState.get(this);
+      if (options.stdin === "piped") {
+        throw new TypeError("Deno.Command.output() does not support piped stdin");
+      }
+      const stdoutMode = options.stdout ?? "piped";
+      const stderrMode = options.stderr ?? "piped";
+      const child = registerChild(
+        new OriginalDenoCommand(command, {
+          ...options,
+          stdout: stdoutMode,
+          stderr: stderrMode,
+        }).spawn(),
+      );
+      const empty = () => new Uint8Array();
+      const read = (stream) => new Response(stream)
+        .arrayBuffer()
+        .then((value) => new Uint8Array(value));
+      const [status, stdout, stderr] = await Promise.all([
+        child.status,
+        stdoutMode === "piped" ? read(child.stdout) : Promise.resolve(empty()),
+        stderrMode === "piped" ? read(child.stderr) : Promise.resolve(empty()),
+      ]);
+      return { ...status, stdout, stderr };
+    }
+
+    outputSync() {
+      throw synchronousIsolationError("Deno.Command.outputSync");
+    }
+  };
+}
+syncBuiltinESMExports();
 const cancellationPoll = setInterval(() => {
   if (Atomics.load(control, 6) === 1) acknowledgeCancellation();
 }, 1);
@@ -258,10 +591,29 @@ function valueDiff(expected, actual) {
 }
 
 function finish(status, payload) {
+  finishing = true;
   signalStarted();
   clearInterval(cancellationPoll);
   terminateChildProcesses();
-  flushCoverage();
+  const coverageFailure = flushCoverage();
+  if (coverageFailure) {
+    status = 3;
+    payload = {
+      name: "infrastructure",
+      message: `coverage persistence failed: ${coverageFailure}`,
+      stack: "",
+    };
+  }
+  if (Atomics.load(control, 7) === 1) {
+    status = 3;
+    payload = {
+      name: "infrastructure",
+      message: `test output exceeded ${workerData.maxCapturedOutputBytes} bytes`,
+      stack: "",
+    };
+    Atomics.store(control, 3, 0);
+    Atomics.store(control, 4, 0);
+  }
   let encoded = new TextEncoder().encode(JSON.stringify(payload));
   if (encoded.length > data.length) {
     encoded = new TextEncoder().encode(
@@ -291,6 +643,16 @@ function terminateChildProcesses() {
     terminateProcessTree(child.pid);
   }
   childProcesses.clear();
+  // The owning Worker has synchronously signalled every registered tree. Do
+  // not leave positive PIDs for the parent to act on after a normal result,
+  // when the OS may already have reused a former group leader's number.
+  const highWater = Math.min(
+    Atomics.load(childPids, 0),
+    childPids.length - 1,
+  );
+  for (let index = 1; index <= highWater; index += 1) {
+    Atomics.store(childPids, index, 0);
+  }
 }
 
 function acknowledgeCancellation() {
@@ -307,17 +669,26 @@ parentPort?.on?.("message", (message) => {
 
 function signalStarted() {
   if (Atomics.compareExchange(control, 5, 0, 1) === 0) {
+    testDeadline = Date.now() + Math.max(1, Number(workerData.timeoutMs || 1));
     Atomics.notify(control, 5, 1);
   }
 }
 
 function writeOutput(target, lengthIndex, value) {
+  if (Atomics.load(control, 7) === 1) return;
   const encoded = new TextEncoder().encode(value);
   const start = Atomics.load(control, lengthIndex);
-  const length = Math.max(0, Math.min(encoded.length, target.length - start));
-  if (length === 0) return;
-  target.set(encoded.subarray(0, length), start);
-  Atomics.store(control, lengthIndex, start + length);
+  const otherLength = Atomics.load(control, lengthIndex === 3 ? 4 : 3);
+  if (
+    encoded.length > target.length - start ||
+    encoded.length > workerData.maxCapturedOutputBytes - start - otherLength
+  ) {
+    Atomics.store(control, 7, 1);
+    return;
+  }
+  if (encoded.length === 0) return;
+  target.set(encoded, start);
+  Atomics.store(control, lengthIndex, start + encoded.length);
 }
 
 function chunkText(chunk) {

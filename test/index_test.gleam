@@ -1,3 +1,4 @@
+import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import kangaroo/internal/index.{IndexedModule, IndexedTest}
@@ -100,6 +101,30 @@ pub fn dynamic_metadata_is_rejected_test() {
     ))
 }
 
+pub fn empty_metadata_tags_are_rejected_test() {
+  let empty_tag = "import kangaroo\npub fn bad_test() { kangaroo.tag(\"\") }"
+  let empty_tags =
+    "import kangaroo\npub fn bad_test() { kangaroo.tags([\"unit\", \"\"]) }"
+
+  assert index.index("test/bad.gleam", empty_tag, ["test"])
+    == Error(index.InvalidMetadata(
+      id: "test/bad.gleam::bad_test",
+      line: 2,
+      message: "tag must be a non-empty string literal",
+    ))
+  assert index.index("test/bad.gleam", empty_tags, ["test"])
+    == Error(index.InvalidMetadata(
+      id: "test/bad.gleam::bad_test",
+      line: 2,
+      message: "tags must contain non-empty string literals",
+    ))
+
+  let blank_tag = "import kangaroo\npub fn bad_test() { kangaroo.tag(\"  \") }"
+  let assert Error(index.InvalidMetadata(message: message, ..)) =
+    index.index("test/bad.gleam", blank_tag, ["test"])
+  assert message == "tag must be a non-empty string literal"
+}
+
 pub fn windows_paths_use_the_longest_test_root_test() {
   let source = "pub fn path_test() { Nil }"
   let assert Ok(IndexedModule(path: path, module: module, ..)) =
@@ -109,6 +134,39 @@ pub fn windows_paths_use_the_longest_test_root_test() {
     ])
   assert path == "spec/integration/path_test.gleam"
   assert module == "path_test"
+}
+
+pub fn custom_test_roots_ignore_dot_and_trailing_slashes_test() {
+  let source = "pub fn path_test() { Nil }"
+  ["spec/", "./spec", "./spec/"]
+  |> list.each(fn(root) {
+    let assert Ok(IndexedModule(module: module, ..)) =
+      index.index("spec/path_test.gleam", source, [root])
+    assert module == "path_test"
+  })
+}
+
+pub fn narrow_dev_roots_keep_the_compiler_module_name_test() {
+  let source = "pub fn path_test() { Nil }"
+  let assert Ok(IndexedModule(module: module, ..)) =
+    index.index("dev/integration/path_test.gleam", source, [
+      "dev/integration",
+    ])
+  assert module == "integration/path_test"
+}
+
+pub fn modules_outside_configured_test_roots_keep_imports_but_not_tests_test() {
+  let source =
+    "import app/support\n\npub fn outside_test() { support.value() }\n"
+  let assert Ok(IndexedModule(
+    module: module,
+    imports: imports,
+    tests: tests,
+    ..,
+  )) = index.index("test/integration/outside_test.gleam", source, ["test/unit"])
+  assert module == "integration/outside_test"
+  assert imports == ["app/support"]
+  assert tests == []
 }
 
 pub fn content_hash_is_stable_and_changes_with_content_test() {

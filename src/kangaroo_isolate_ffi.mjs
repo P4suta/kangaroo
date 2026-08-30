@@ -10,18 +10,46 @@ import { from_js_stack } from "./kangaroo/location.mjs";
 import { Worker } from "node:worker_threads";
 import { format as formatValue } from "node:util";
 import { terminateProcessTree } from "./kangaroo_process_tree.mjs";
+import { ensureWindowsJobHelper } from "./kangaroo_windows_job.mjs";
 import {
   Option$None$const,
   Some,
 } from "../gleam_stdlib/gleam/option.mjs";
 
 const workerUrl = new URL("./kangaroo_test_worker.mjs", import.meta.url);
-const workerBufferBytes = 1024 * 1024;
+const workerMessageBytes = 1024 * 1024;
+const defaultCapturedOutputBytes = 16 * 1024 * 1024;
 const childPidCapacity = 4096;
 
 export function isolate_captured(body, timeout_ms) {
+  return isolateCaptured(body, timeout_ms, defaultCapturedOutputBytes);
+}
+
+export function isolate_captured_with_limit(body, timeout_ms, outputLimit) {
+  return isolateCaptured(body, timeout_ms, Math.max(1, Number(outputLimit)));
+}
+
+function isolateCaptured(body, timeout_ms, outputLimit) {
   if (body && body.kangarooModulePath && body.kangarooFunctionName) {
-    return isolateWorker(body, timeout_ms);
+    try {
+      ensureWindowsJobHelper();
+    } catch (error) {
+      return new CapturedIsolation(
+        new Crashed(
+          new CaughtError(
+            "infrastructure",
+            `could not prepare Windows process isolation: ${errorMessage(error)}`,
+            from_js_stack(""),
+            Option$None$const,
+            Option$None$const,
+            Option$None$const,
+          ),
+        ),
+        "",
+        "",
+      );
+    }
+    return isolateWorker(body, timeout_ms, outputLimit);
   }
   const output = captureOutput();
   let result;
@@ -58,15 +86,19 @@ export function isolate_captured(body, timeout_ms) {
   return new CapturedIsolation(result, output.stdout(), output.stderr());
 }
 
-function isolateWorker(body, timeoutOption) {
+function errorMessage(error) {
+  return String(error && error.message ? error.message : error);
+}
+
+function isolateWorker(body, timeoutOption, outputLimit) {
   const timeoutMs =
     timeoutOption && typeof timeoutOption[0] === "number"
       ? timeoutOption[0]
       : 30_000;
-  const controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 7);
-  const dataBuffer = new SharedArrayBuffer(workerBufferBytes);
-  const stdoutBuffer = new SharedArrayBuffer(workerBufferBytes);
-  const stderrBuffer = new SharedArrayBuffer(workerBufferBytes);
+  const controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 8);
+  const dataBuffer = new SharedArrayBuffer(workerMessageBytes);
+  const stdoutBuffer = new SharedArrayBuffer(outputLimit);
+  const stderrBuffer = new SharedArrayBuffer(outputLimit);
   const childPidBuffer = new SharedArrayBuffer(
     Int32Array.BYTES_PER_ELEMENT * (childPidCapacity + 1),
   );
@@ -84,6 +116,8 @@ function isolateWorker(body, timeoutOption) {
       stdoutBuffer,
       stderrBuffer,
       childPidBuffer,
+      maxCapturedOutputBytes: outputLimit,
+      timeoutMs,
     },
   });
 
@@ -110,13 +144,15 @@ function isolateWorker(body, timeoutOption) {
     ? "ok"
     : Atomics.wait(control, 0, 0, timeoutMs);
   if (wait === "timed-out") {
-    const stdout = sharedOutput(control, 3, stdoutData);
-    const stderr = sharedOutput(control, 4, stderrData);
+    const outputExceeded = Atomics.load(control, 7) === 1;
+    const stdout = outputExceeded ? "" : sharedOutput(control, 3, stdoutData);
+    const stderr = outputExceeded ? "" : sharedOutput(control, 4, stderrData);
     requestWorkerCancellation(worker, control, () => {
       terminateRegisteredChildren(childPids);
     });
     terminateRegisteredChildren(childPids, true);
     void worker.terminate();
+    if (outputExceeded) return outputLimitIsolation(outputLimit);
     return new CapturedIsolation(
       new Crashed(
         new CaughtError(
@@ -162,6 +198,23 @@ function isolateWorker(body, timeoutOption) {
     result,
     sharedOutput(control, 3, stdoutData),
     sharedOutput(control, 4, stderrData),
+  );
+}
+
+function outputLimitIsolation(outputLimit) {
+  return new CapturedIsolation(
+    new Crashed(
+      new CaughtError(
+        "infrastructure",
+        `test output exceeded ${outputLimit} bytes`,
+        from_js_stack(""),
+        Option$None$const,
+        Option$None$const,
+        Option$None$const,
+      ),
+    ),
+    "",
+    "",
   );
 }
 

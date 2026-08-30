@@ -3,7 +3,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import kangaroo/event.{type Event, CaseOutput}
-import kangaroo/failure.{Failed, Flaky}
+import kangaroo/failure.{Failed, Flaky, UnexpectedError}
 import kangaroo/internal/config.{
   type Config, type ShowOutput, Always, Auto, Failures, Fixed, Never,
 }
@@ -230,11 +230,7 @@ fn run_discovery(discovered: Discovery, sink: fn(Event) -> Nil) -> Exit {
         )
       {
         Error(message) -> InfrastructureFailure(message)
-        Ok(report) ->
-          case report.has_failures(report) {
-            True -> TestFailure
-            False -> Success
-          }
+        Ok(report) -> exit_from_report(report)
       }
   }
 }
@@ -279,11 +275,34 @@ pub fn run_indexed(
         )
       {
         Error(message) -> InfrastructureFailure(message)
-        Ok(report) ->
-          case report.has_failures(report) {
-            True -> TestFailure
-            False -> Success
-          }
+        Ok(report) -> exit_from_report(report)
+      }
+  }
+}
+
+/// Maps runner-owned failures to infrastructure exit status before ordinary
+/// assertion failures are classified. Infrastructure failures are retained in
+/// the event stream for reporters, but must never be mistaken for exit 1.
+pub fn exit_from_report(completed: report.Report) -> Exit {
+  case
+    list.find_map(completed.cases, fn(case_result) {
+      let failures = case case_result.outcome {
+        Failed(failures) | Flaky(failures, _) -> failures
+        _ -> []
+      }
+      list.find_map(failures, fn(failure) {
+        case failure {
+          UnexpectedError("infrastructure", message, _) -> Ok(message)
+          _ -> Error(Nil)
+        }
+      })
+    })
+  {
+    Ok(message) -> InfrastructureFailure(message)
+    Error(_) ->
+      case report.has_failures(completed) {
+        True -> TestFailure
+        False -> Success
       }
   }
 }

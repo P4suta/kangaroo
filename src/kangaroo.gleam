@@ -1,7 +1,7 @@
-import gleam/option.{None, Some}
 import kangaroo/internal/cli
 import kangaroo/internal/command
 import kangaroo/internal/fs
+import kangaroo/internal/watcher
 import kangaroo/sys
 
 /// Discovers and runs every public, zero-argument function ending in `_test`
@@ -25,9 +25,9 @@ import kangaroo/sys
 /// commands are selected from this same module with
 /// `gleam run -m kangaroo -- <command>`.
 pub fn main() -> Nil {
-  case sys.env("KANGAROO_COMPILE_ONLY") {
-    Some(_) -> fs.halt(0)
-    None -> dispatch(fs.args())
+  case watcher.compile_only_requested(sys.env("KANGAROO_COMPILE_ONLY")) {
+    True -> fs.halt(0)
+    False -> dispatch(fs.args())
   }
 }
 
@@ -89,7 +89,7 @@ pub fn skip_if(condition: Bool, reason: String) -> Nil {
 @external(erlang, "kangaroo_helper_ffi", "fixture")
 @external(javascript, "./kangaroo_helper_ffi.mjs", "fixture")
 pub fn fixture(
-  setup: fn() -> resource,
-  teardown: fn(resource) -> Nil,
-  body: fn(resource) -> result,
+  setup setup: fn() -> resource,
+  teardown teardown: fn(resource) -> Nil,
+  body body: fn(resource) -> result,
 ) -> result

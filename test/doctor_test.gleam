@@ -12,6 +12,7 @@ pub fn doctor_compares_prefixed_semantic_versions_test() {
 
 pub fn doctor_requires_node_with_synchronous_esm_loading_test() {
   assert doctor.minimum_runtime_version("node") == "22.12.0"
+  assert doctor.minimum_runtime_version("bun") == "1.4.0"
 }
 
 pub fn doctor_renders_fixes_and_returns_exit_two_test() {

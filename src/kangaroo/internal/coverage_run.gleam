@@ -58,6 +58,23 @@ pub fn final_exit_code(test_exit_code: Int, violations: List(String)) -> Int {
   }
 }
 
+/// Preserves the primary coverage failure while also making a leaked
+/// disposable workspace visible. Cleanup must never be silently discarded
+/// merely because collection or instrumentation already failed.
+pub fn combine_cleanup(
+  primary: Result(value, String),
+  cleanup: Result(Nil, String),
+) -> Result(value, String) {
+  case primary, cleanup {
+    Error(message), Error(cleanup) ->
+      Error(message <> "\ncould not remove coverage workspace: " <> cleanup)
+    Error(message), _ -> Error(message)
+    _, Error(message) ->
+      Error("could not remove coverage workspace: " <> message)
+    Ok(value), Ok(_) -> Ok(value)
+  }
+}
+
 /// Clones a project and instruments only the selected Gleam sources in that
 /// clone. The source inventory is complete before any tests run, which keeps
 /// unexecuted files in the final report at zero percent.
@@ -72,16 +89,11 @@ pub fn prepare(
       let hit_file = workspace <> "/.kangaroo-coverage-hits"
       case fs.write_exclusive(hit_file, "") {
         Ok(_) -> Ok(Prepared(workspace:, hit_file:, files:))
-        Error(message) -> {
-          let _ = fs.remove_tree(workspace)
-          Error(message)
-        }
+        Error(message) ->
+          combine_cleanup(Error(message), fs.remove_tree(workspace))
       }
     }
-    Error(message) -> {
-      let _ = fs.remove_tree(workspace)
-      Error(message)
-    }
+    Error(message) -> combine_cleanup(Error(message), fs.remove_tree(workspace))
   }
 }
 
@@ -124,6 +136,33 @@ pub fn collect(
     [#("KANGAROO_COVERAGE_FILE", prepared.hit_file)],
     run_timeout_ms,
   ))
+  finish(prepared, completed)
+}
+
+/// Starts the instrumented test process without blocking the coordinator.
+/// The TUI uses this boundary so quit and replacement actions can cancel
+/// coverage while still guaranteeing workspace cleanup in the parent.
+pub fn start(
+  prepared: Prepared,
+  target: String,
+  runtime: String,
+  arguments: List(String),
+) -> Result(Int, String) {
+  process.start(
+    prepared.workspace,
+    "gleam",
+    watcher.run_arguments_for(target, runtime, arguments),
+    [#("KANGAROO_COVERAGE_FILE", prepared.hit_file)],
+    run_timeout_ms,
+  )
+}
+
+/// Completes a previously started coverage process by reading its probe file.
+/// The caller still owns `cleanup`, including on cancellation and errors.
+pub fn finish(
+  prepared: Prepared,
+  completed: process.ProcessResult,
+) -> Result(Collected, String) {
   use raw_hits <- result.try(fs.read_file(prepared.hit_file))
   use hits <- result.try(coverage.parse_hits(raw_hits))
   Ok(Collected(

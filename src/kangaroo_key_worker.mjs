@@ -17,7 +17,7 @@ function send(message) {
 
 function acceptChunk(chunk) {
   const value = String(chunk);
-  if (value.length > 0) send({ type: "key", value });
+  for (const key of value) send({ type: "key", value: key });
 }
 
 function stdinStream() {

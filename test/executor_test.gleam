@@ -1,7 +1,9 @@
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
-import kangaroo/event.{type Event, CaseOutput, RunFinished, RunStarted}
+import kangaroo/event.{
+  type Event, CaseOutput, RunFinished, RunStarted, SuiteFinished,
+}
 import kangaroo/failure.{
   EqualityMismatch, Failed, Flaky, Passed, Skipped, SkippedWithReason,
   UnexpectedError,
@@ -62,6 +64,21 @@ pub fn native_panics_use_the_common_failure_model_test() {
   assert string.contains(message, "fixture exploded")
 }
 
+pub fn suite_finished_reflects_the_module_outcome_test() {
+  event_buffer.take()
+  let assert Ok(_) =
+    executor.run([fixture("panic_fixture")], event_buffer.append, 30_000, False)
+  let outcomes =
+    event_buffer.take()
+    |> list.filter_map(fn(event) {
+      case event {
+        SuiteFinished("runtime_fixture", outcome) -> Ok(outcome)
+        _ -> Error(Nil)
+      }
+    })
+  let assert [Failed(_)] = outcomes
+}
+
 pub fn equality_asserts_include_both_operands_test() {
   let assert Ok(result) =
     executor.run([fixture("equality_assert_fixture")], discard, 30_000, False)
@@ -69,7 +86,7 @@ pub fn equality_asserts_include_both_operands_test() {
   let assert Failed([EqualityMismatch("2", "1", _, Some(location))]) =
     case_result.outcome
   assert location.file == "test/runtime_fixture.gleam"
-  assert location.line == 41
+  assert location.line == 47
 }
 
 pub fn multiline_string_assert_has_a_useful_diff_test() {
@@ -184,6 +201,27 @@ pub fn exhausted_retries_retain_every_failure_test() {
   let assert [case_result] = result.cases
   let assert Failed(failures) = case_result.outcome
   assert list.length(failures) == 2
+}
+
+pub fn a_skip_after_a_failed_attempt_cannot_turn_the_run_green_test() {
+  reset_flaky()
+  let assert Ok(result) =
+    executor.run_with_options(
+      [fixture("fail_then_skip_fixture")],
+      discard,
+      30_000,
+      False,
+      1,
+    )
+  let assert [case_result] = result.cases
+  let assert Failed([_]) = case_result.outcome
+  assert report.has_failures(result)
+}
+
+pub fn retry_output_budget_is_combined_across_streams_and_attempts_test() {
+  assert executor.append_captured_output("123", "45", "6", "7", 6)
+    == Error("test output exceeded 6 bytes")
+  assert executor.append_captured_output("🦘", "", "a", "", 5) == Ok(#("🦘a", ""))
 }
 
 pub fn captured_output_is_emitted_with_the_case_outcome_test() {

@@ -1,13 +1,16 @@
 -module(kangaroo_fs_ffi).
 -export([list_files_recursive/1, list_workspace_files_recursive/1,
+         list_source_files_recursive/1,
          read_file/1, current_dir/0, args/0, halt/1,
          read_line/0, exists/1, write_exclusive/2, replace_if_unchanged/3,
          is_directory/1, sleep/1, remove_file/1, read_line_timeout/1,
          close_input/0, write_stdout/1, write_stdout_line/1,
          write_stderr/1, write_stderr_line/1,
          copy_to_temporary_workspace/1, workspace_entry_excluded/1,
-         remove_tree/1, write_file/2]).
+         remove_tree/1, write_file/2, project_file_path/2,
+         input_line_until/3]).
 -include_lib("kernel/include/file.hrl").
+-define(MAX_DAEMON_LINE_BYTES, 1048576).
 
 write_stdout_line(Line) ->
     io:put_chars(standard_io, [Line, <<"\n">>]),
@@ -36,37 +39,89 @@ list_files_recursive(Directory) ->
     end.
 
 list_workspace_files_recursive(Directory) ->
+    list_workspace_files_recursive(Directory, true).
+
+list_workspace_files_recursive(Directory, WorkspaceRoot) ->
     case file:list_dir(Directory) of
         {ok, Entries} ->
-            case collect_workspace(Directory, Entries, []) of
+            PackageRoot = WorkspaceRoot orelse package_root(Directory),
+            case collect_workspace(Directory, Entries, [], PackageRoot) of
                 {ok, Files} -> {ok, lists:sort(Files)};
                 Error -> Error
             end;
         {error, Reason} -> {error, format_error(Reason)}
     end.
 
-collect_workspace(_Directory, [], Files) ->
+list_source_files_recursive(Directory) ->
+    case file:list_dir(Directory) of
+        {ok, Entries} ->
+            case collect_source(Directory, Entries, [],
+                                package_root(Directory)) of
+                {ok, Files} -> {ok, lists:sort(Files)};
+                Error -> Error
+            end;
+        {error, Reason} -> {error, format_error(Reason)}
+    end.
+
+collect_workspace(_Directory, [], Files, _PackageRoot) ->
     {ok, Files};
-collect_workspace(Directory, [Entry | Rest], Files) ->
-    case workspace_entry_excluded(Entry) of
-        true -> collect_workspace(Directory, Rest, Files);
+collect_workspace(Directory, [Entry | Rest], Files, PackageRoot) ->
+    case workspace_entry_excluded_at(Entry, PackageRoot) of
+        true -> collect_workspace(Directory, Rest, Files, PackageRoot);
         false ->
             Path = filename:join(Directory, Entry),
             case file:read_link_info(Path) of
                 {ok, #file_info{type = directory}} ->
-                    case list_workspace_files_recursive(Path) of
+                    case list_workspace_files_recursive(Path, false) of
                         {ok, Children} ->
                             collect_workspace(Directory, Rest,
-                                              Children ++ Files);
+                                              Children ++ Files,
+                                              PackageRoot);
                         Error -> Error
                     end;
                 {ok, #file_info{type = regular}} ->
                     collect_workspace(
                       Directory, Rest,
-                      [unicode:characters_to_binary(Path) | Files]);
+                      [unicode:characters_to_binary(Path) | Files],
+                      PackageRoot);
                 {ok, #file_info{type = symlink}} ->
-                    collect_workspace(Directory, Rest, Files);
-                {ok, _Other} -> collect_workspace(Directory, Rest, Files);
+                    collect_workspace(Directory, Rest, Files, PackageRoot);
+                {ok, _Other} ->
+                    collect_workspace(Directory, Rest, Files, PackageRoot);
+                {error, Reason} -> {error, format_error(Reason)}
+            end
+    end.
+
+collect_source(_Directory, [], Files, _PackageRoot) ->
+    {ok, Files};
+collect_source(Directory, [Entry | Rest], Files, PackageRoot) ->
+    case workspace_entry_excluded_at(Entry, PackageRoot) of
+        true -> collect_source(Directory, Rest, Files, PackageRoot);
+        false ->
+            Path = filename:join(Directory, Entry),
+            case file:read_link_info(Path) of
+                {ok, #file_info{type = directory}} ->
+                    case file:list_dir(Path) of
+                        {ok, Children} ->
+                            case collect_source(Path, Children, [],
+                                                package_root(Path)) of
+                                {ok, Found} ->
+                                    collect_source(Directory, Rest,
+                                                   Found ++ Files,
+                                                   PackageRoot);
+                                Error -> Error
+                            end;
+                        {error, Reason} -> {error, format_error(Reason)}
+                    end;
+                {ok, #file_info{type = regular}} ->
+                    collect_source(
+                      Directory, Rest,
+                      [unicode:characters_to_binary(Path) | Files],
+                      PackageRoot);
+                {ok, #file_info{type = symlink}} ->
+                    collect_source(Directory, Rest, Files, PackageRoot);
+                {ok, _Other} ->
+                    collect_source(Directory, Rest, Files, PackageRoot);
                 {error, Reason} -> {error, format_error(Reason)}
             end
     end.
@@ -152,33 +207,59 @@ make_workspace(Parent, Attempt) ->
     Id = integer_to_list(erlang:unique_integer([positive, monotonic])),
     Destination = filename:join(Parent, ".kangaroo-coverage-" ++ Id),
     case file:make_dir(Destination) of
-        ok -> {ok, Destination};
+        ok ->
+            case write_workspace_owner(Destination) of
+                ok -> {ok, Destination};
+                Error ->
+                    _ = remove_directory(Destination),
+                    Error
+            end;
         {error, eexist} -> make_workspace(Parent, Attempt + 1);
         Error -> Error
     end.
 
+write_workspace_owner(Destination) ->
+    Marker = filename:join(Destination, ".kangaroo-coverage-owner"),
+    file:write_file(
+      Marker,
+      unicode:characters_to_binary(normalise_absolute(Destination)),
+      [binary, exclusive]).
+
 copy_workspace_directory(Source, Destination) ->
     case file:list_dir(Source) of
-        {ok, Entries} -> copy_entries(Source, Destination, Entries, true);
+        {ok, Entries} ->
+            copy_entries(Source, Destination, Entries, true, true);
         Error -> Error
     end.
 
-copy_directory(Source, Destination) ->
+copy_directory(Source, Destination, IncludeDependencyCache) ->
     case file:list_dir(Source) of
-        {ok, Entries} -> copy_entries(Source, Destination, Entries, false);
+        {ok, Entries} ->
+            copy_entries(Source, Destination, Entries,
+                         IncludeDependencyCache, package_root(Source));
         Error -> Error
     end.
 
-copy_entries(_Source, _Destination, [], _IncludeDependencyCache) -> ok;
-copy_entries(Source, Destination, ["build" | Rest], true) ->
-    case copy_dependency_cache(Source, Destination) of
-        ok -> copy_entries(Source, Destination, Rest, true);
-        Error -> Error
-    end;
-copy_entries(Source, Destination, [Name | Rest], IncludeDependencyCache) ->
-    case workspace_entry_excluded(Name) of
+copy_entries(_Source, _Destination, [], _IncludeDependencyCache,
+             _PackageRoot) -> ok;
+copy_entries(Source, Destination, [Name | Rest], IncludeDependencyCache,
+             PackageRoot) ->
+    case {Name, IncludeDependencyCache, PackageRoot} of
+        {"build", true, true} ->
+            case copy_dependency_cache(Source, Destination) of
+                ok -> copy_entries(Source, Destination, Rest, true,
+                                   PackageRoot);
+                Error -> Error
+            end;
+        _ -> copy_entry(Source, Destination, Name, Rest,
+                        IncludeDependencyCache, PackageRoot)
+    end.
+
+copy_entry(Source, Destination, Name, Rest, IncludeDependencyCache,
+           PackageRoot) ->
+    case workspace_entry_excluded_at(Name, PackageRoot) of
         true -> copy_entries(Source, Destination, Rest,
-                             IncludeDependencyCache);
+                             IncludeDependencyCache, PackageRoot);
         false ->
             From = filename:join(Source, Name),
             To = filename:join(Destination, Name),
@@ -187,9 +268,11 @@ copy_entries(Source, Destination, [Name | Rest], IncludeDependencyCache) ->
                     case file:make_dir(To) of
                         ok ->
                             _ = file:change_mode(To, Mode),
-                            case copy_directory(From, To) of
+                            case copy_directory(From, To,
+                                                IncludeDependencyCache) of
                                 ok -> copy_entries(Source, Destination, Rest,
-                                                   IncludeDependencyCache);
+                                                   IncludeDependencyCache,
+                                                   PackageRoot);
                                 Error -> Error
                             end;
                         Error -> Error
@@ -199,7 +282,8 @@ copy_entries(Source, Destination, [Name | Rest], IncludeDependencyCache) ->
                         {ok, _} ->
                             _ = file:change_mode(To, Mode),
                             copy_entries(Source, Destination, Rest,
-                                         IncludeDependencyCache);
+                                         IncludeDependencyCache,
+                                         PackageRoot);
                         Error -> Error
                     end;
                 {ok, #file_info{type = symlink}} ->
@@ -207,9 +291,10 @@ copy_entries(Source, Destination, [Name | Rest], IncludeDependencyCache) ->
                     %% tree symlink. The normal discovery walker has the same
                     %% rule.
                     copy_entries(Source, Destination, Rest,
-                                 IncludeDependencyCache);
+                                 IncludeDependencyCache, PackageRoot);
                 {ok, _Other} -> copy_entries(Source, Destination, Rest,
-                                             IncludeDependencyCache);
+                                             IncludeDependencyCache,
+                                             PackageRoot);
                 Error -> Error
             end
     end.
@@ -227,7 +312,7 @@ copy_dependency_cache(Source, Destination) ->
                     case file:make_dir(ToPackages) of
                         ok ->
                             _ = file:change_mode(ToPackages, PackagesMode),
-                            copy_directory(FromPackages, ToPackages);
+                            copy_directory(FromPackages, ToPackages, false);
                         Error -> Error
                     end;
                 Error -> Error
@@ -244,23 +329,59 @@ copy_mode(From, To) ->
     end.
 
 workspace_entry_excluded(Name) ->
+    workspace_entry_excluded_at(Name, true).
+
+workspace_entry_excluded_at(Name, PackageRoot) ->
     Value = path_to_list(Name),
-    lists:member(Value, [".git", "build", ".kangaroo", ".vscode-test",
-                         "coverage", "node_modules"])
+    lists:member(Value, [".git", ".kangaroo", ".vscode-test",
+                         "node_modules"])
+        orelse (PackageRoot
+                andalso lists:member(Value, ["build", "coverage"]))
         orelse lists:prefix(".kangaroo-coverage-", Value).
+
+package_root(Directory) ->
+    case file:read_link_info(filename:join(Directory, "gleam.toml")) of
+        {ok, #file_info{type = regular}} -> true;
+        _ -> false
+    end.
 
 remove_tree(Path) ->
     Value = normalise_absolute(path_to_list(Path)),
     case lists:prefix(".kangaroo-coverage-", filename:basename(Value)) of
         false -> {error, <<"refusing to remove a non-coverage workspace">>};
         true ->
-            case remove_directory(Value) of
-                ok -> {ok, nil};
-                {error, {enoent, _FailedPath}} -> {ok, nil};
-                {error, {Reason, FailedPath}} ->
-                    {error, format_remove_error(Reason, FailedPath)}
+            case validate_workspace_owner(Value) of
+                missing -> {ok, nil};
+                {error, Message} -> {error, Message};
+                ok ->
+                    case remove_directory(Value) of
+                        ok -> {ok, nil};
+                        {error, {enoent, _FailedPath}} -> {ok, nil};
+                        {error, {Reason, FailedPath}} ->
+                            {error, format_remove_error(Reason, FailedPath)}
+                    end
             end
     end.
+
+validate_workspace_owner(Path) ->
+    Marker = filename:join(Path, ".kangaroo-coverage-owner"),
+    case file:read_link_info(Path) of
+        {error, enoent} -> missing;
+        {ok, #file_info{type = directory}} ->
+            case {file:read_link_info(Marker), file:read_file(Marker)} of
+                {{ok, #file_info{type = regular}}, {ok, Owner}} ->
+                    Expected = unicode:characters_to_binary(Path),
+                    case Owner =:= Expected of
+                        true -> ok;
+                        false -> invalid_workspace_owner()
+                    end;
+                _ -> invalid_workspace_owner()
+            end;
+        _ -> invalid_workspace_owner()
+    end.
+
+invalid_workspace_owner() ->
+    {error, <<"refusing to remove a coverage workspace without its ownership marker">>}.
 
 remove_directory(Path) ->
     remove_directory(Path, 0).
@@ -374,6 +495,66 @@ write_file(Path, Contents) ->
         {error, Reason} -> {error, format_error(Reason)}
     end.
 
+project_file_path(ProjectDir, RelativePath) ->
+    Root = normalise_absolute(path_to_list(ProjectDir)),
+    Relative = lists:flatten(
+      string:replace(path_to_list(RelativePath), "\\", "/", all)),
+    Components = string:split(Relative, "/", all),
+    case safe_project_components(Relative, Components) of
+        false -> {error, <<"project output path must be a safe relative path">>};
+        true ->
+            Candidate = normalise_absolute(filename:join([Root | Components])),
+            case path_below_root(Root, Candidate) of
+                false -> {error, <<"project output path escapes the project directory">>};
+                true ->
+                    case no_symlink_components(Root, Components) of
+                        ok -> {ok, unicode:characters_to_binary(Candidate)};
+                        {error, Reason} when is_binary(Reason) -> {error, Reason};
+                        {error, Reason} -> {error, format_error(Reason)}
+                    end
+            end
+    end.
+
+safe_project_components(Relative, Components) ->
+    Relative =/= []
+        andalso filename:pathtype(Relative) =:= relative
+        andalso re:run(Relative, "^[A-Za-z]:", [{capture, none}]) =:= nomatch
+        andalso lists:all(
+          fun(Component) ->
+              Component =/= []
+                  andalso Component =/= "."
+                  andalso Component =/= ".."
+          end,
+          Components).
+
+path_below_root(Root, Candidate) ->
+    RootParts = filename:split(Root),
+    CandidateParts = filename:split(Candidate),
+    lists:prefix(RootParts, CandidateParts) andalso RootParts =/= CandidateParts.
+
+no_symlink_components(Root, Components) ->
+    case file:read_link_info(Root) of
+        {ok, #file_info{type = directory}} ->
+            no_symlink_components_from(Root, Components);
+        {ok, _} -> {error, <<"project directory must be a real directory">>};
+        Error -> Error
+    end.
+
+no_symlink_components_from(_Current, []) -> ok;
+no_symlink_components_from(Current, [Component | Rest]) ->
+    Path = filename:join(Current, Component),
+    case file:read_link_info(Path) of
+        {error, enoent} -> ok;
+        {ok, #file_info{type = symlink}} ->
+            {error, <<"refusing to write through a symbolic link">>};
+        {ok, #file_info{type = directory}} ->
+            no_symlink_components_from(Path, Rest);
+        {ok, #file_info{type = regular}} when Rest =:= [] -> ok;
+        {ok, _} when Rest =:= [] -> ok;
+        {ok, _} -> {error, <<"project output parent is not a directory">>};
+        Error -> Error
+    end.
+
 replace_if_unchanged(Path, Expected, Contents) ->
     case file:read_file(Path) of
         {ok, Expected} ->
@@ -417,7 +598,11 @@ read_line_timeout(Milliseconds) ->
     ensure_input_reader(),
     receive
         {kangaroo_input, {line, Line}} ->
+            acknowledge_input_reader(),
             {input_line, Line};
+        {kangaroo_input, {error, Message}} ->
+            acknowledge_input_reader(),
+            {input_error, Message};
         {kangaroo_input, eof} ->
             erase(kangaroo_input_reader),
             input_end;
@@ -430,6 +615,13 @@ read_line_timeout(Milliseconds) ->
             end
     after erlang:max(0, Milliseconds) ->
         input_pending
+    end.
+
+acknowledge_input_reader() ->
+    case get(kangaroo_input_reader) of
+        {Reader, _Ref} when is_pid(Reader) ->
+            Reader ! {kangaroo_input_continue, self()};
+        _ -> ok
     end.
 
 close_input() ->
@@ -452,15 +644,75 @@ ensure_input_reader() ->
     end.
 
 input_reader(Parent) ->
-    case io:get_line(standard_io, "") of
+    Request = {get_until, unicode, "", ?MODULE, input_line_until,
+               [?MAX_DAEMON_LINE_BYTES]},
+    case io:request(standard_io, Request) of
         eof -> Parent ! {kangaroo_input, eof};
-        {error, _} -> Parent ! {kangaroo_input, eof};
-        Line ->
-            Value = string:trim(Line, trailing, "\r\n"),
-            Parent ! {kangaroo_input,
-                      {line, unicode:characters_to_binary(Value)}},
-            input_reader(Parent)
+        {kangaroo_input_error, Message} ->
+            Parent ! {kangaroo_input, {error, Message}},
+            await_input_continue(Parent),
+            input_reader(Parent);
+        {kangaroo_input_line, Line} ->
+            Parent ! {kangaroo_input, {line, Line}},
+            await_input_continue(Parent),
+            input_reader(Parent);
+        {error, Reason} ->
+            Parent ! {kangaroo_input, {error, format_error(Reason)}}
     end.
+
+await_input_continue(Parent) ->
+    receive
+        {kangaroo_input_continue, Parent} -> ok
+    end.
+
+%% get_until callbacks receive bounded chunks from the IO server. Stop
+%% retaining characters as soon as the UTF-8 byte limit is crossed, discard
+%% through the terminating newline, and leave any following request in the IO
+%% server's buffer. This applies the daemon boundary while data is read rather
+%% than after io:get_line/2 has allocated an arbitrarily large line.
+input_line_until([], eof, _Limit) ->
+    {done, eof, []};
+input_line_until({collect, Characters, _Bytes}, eof, _Limit) ->
+    {done, {kangaroo_input_line, encode_input_line(Characters)}, []};
+input_line_until(discard, eof, _Limit) ->
+    {done, overlong_input_error(), []};
+input_line_until([], Characters, Limit) ->
+    consume_input_characters({collect, [], 0}, Characters, Limit);
+input_line_until(State, Characters, Limit) ->
+    consume_input_characters(State, Characters, Limit).
+
+consume_input_characters(State, [], _Limit) ->
+    {more, State};
+consume_input_characters(discard, [$\n | Rest], _Limit) ->
+    {done, overlong_input_error(), Rest};
+consume_input_characters(discard, [_Character | Rest], Limit) ->
+    consume_input_characters(discard, Rest, Limit);
+consume_input_characters({collect, Characters, _Bytes}, [$\n | Rest],
+                         _Limit) ->
+    {done, {kangaroo_input_line, encode_input_line(Characters)}, Rest};
+consume_input_characters({collect, Characters, Bytes}, [Character | Rest],
+                         Limit) ->
+    NextBytes = Bytes + utf8_character_bytes(Character),
+    case NextBytes > Limit of
+        true -> consume_input_characters(discard, Rest, Limit);
+        false ->
+            consume_input_characters(
+              {collect, [Character | Characters], NextBytes}, Rest, Limit)
+    end.
+
+encode_input_line([$\r | Reversed]) ->
+    unicode:characters_to_binary(lists:reverse(Reversed));
+encode_input_line(Reversed) ->
+    unicode:characters_to_binary(lists:reverse(Reversed)).
+
+utf8_character_bytes(Character) when Character =< 16#7F -> 1;
+utf8_character_bytes(Character) when Character =< 16#7FF -> 2;
+utf8_character_bytes(Character) when Character =< 16#FFFF -> 3;
+utf8_character_bytes(_Character) -> 4.
+
+overlong_input_error() ->
+    {kangaroo_input_error,
+     <<"daemon request line exceeded 1048576 bytes">>}.
 
 halt(Code) -> erlang:halt(Code).
 

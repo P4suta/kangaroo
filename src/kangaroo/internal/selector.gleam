@@ -13,14 +13,22 @@ pub type Selector {
 /// Parses the stable selector syntax accepted by the CLI and daemon.
 pub fn parse(value: String) -> Result(Selector, String) {
   let value = normalise(value)
-  case value {
-    "" -> Error("selector cannot be empty")
-    "tag:" -> Error("tag selector cannot be empty")
-    "tag:" <> name -> Ok(Tag(name))
-    _ ->
-      case string.contains(value, "::") {
-        True -> Ok(Id(value))
-        False -> parse_path_or_location(value)
+  case string.trim(value) == "" {
+    True -> Error("selector cannot be empty")
+    False ->
+      case string.starts_with(value, "-"), value {
+        True, _ -> Error("selector cannot start with '-'")
+        _, "tag:" -> Error("tag selector cannot be empty")
+        _, "tag:" <> name ->
+          case string.trim(name) == "" {
+            True -> Error("tag selector cannot be empty")
+            False -> Ok(Tag(name))
+          }
+        _, _ ->
+          case string.contains(value, "::") {
+            True -> Ok(Id(value))
+            False -> parse_path_or_location(value)
+          }
       }
   }
 }

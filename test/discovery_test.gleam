@@ -20,6 +20,16 @@ pub fn discovery_orders_by_normalised_path_then_source_order_test() {
     ]
 }
 
+pub fn discovery_normalises_common_test_root_spellings_test() {
+  let sources = [#("test/example.gleam", "pub fn example_test() { Nil }")]
+  ["test/", "./test", "./test/", "."]
+  |> list.each(fn(root) {
+    let assert Ok(Discovery(tests: [indexed], ..)) =
+      discovery.from_sources(sources, [root])
+    assert indexed.id == "test/example.gleam::example_test"
+  })
+}
+
 pub fn discovery_returns_all_parse_errors_without_partial_index_test() {
   let result =
     discovery.from_sources(
@@ -51,4 +61,21 @@ pub fn discovery_reads_repository_tree_through_filesystem_port_test() {
   assert list.any(found.tests, fn(indexed) {
     indexed.id == "test/runtime_fixture.gleam::passing_test"
   })
+}
+
+pub fn discovery_does_not_prune_valid_build_or_coverage_modules_test() {
+  let assert Ok(found) = discovery.discover("fixtures/source_names", ["test"])
+  assert list.map(found.tests, fn(indexed) { indexed.id })
+    == [
+      "test/build/legitimate.gleam::build_directory_test",
+      "test/coverage/legitimate.gleam::coverage_directory_test",
+    ]
+}
+
+pub fn overlapping_test_roots_do_not_duplicate_stable_ids_test() {
+  let assert Ok(found) = discovery.discover(".", ["test", "test/"])
+  assert list.count(found.tests, fn(indexed) {
+      indexed.id == "test/runtime_fixture.gleam::passing_test"
+    })
+    == 1
 }

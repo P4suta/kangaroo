@@ -2,9 +2,11 @@
 %% stray processes cannot take down the runner. The source location of a
 %% crash is derived from its stack by the pure `kangaroo@location` module.
 -module(kangaroo_isolate_ffi).
--export([isolate/2, isolate_captured/2]).
+-export([isolate/2, isolate_captured/2, isolate_captured_with_limit/3]).
 
 -define(DEFAULT_TIMEOUT_MS, 30000).
+-define(MAX_CAPTURED_OUTPUT_BYTES, 16777216).
+-define(DESCENDANT_CLEANUP_TIMEOUT_MS, 1000).
 
 isolate(Body, Timeout) ->
     {captured_isolation, Result, _Stdout, _Stderr} =
@@ -12,13 +14,18 @@ isolate(Body, Timeout) ->
     Result.
 
 isolate_captured(Body, Timeout) ->
+    isolate_captured_with_limit(Body, Timeout, ?MAX_CAPTURED_OUTPUT_BYTES).
+
+isolate_captured_with_limit(Body, Timeout, OutputLimit) ->
     TimeoutMs = case Timeout of
                     {some, Ms} -> Ms;
                     none -> ?DEFAULT_TIMEOUT_MS
                 end,
     ensure_stderr_proxy(),
     kangaroo_coverage_probe_ffi:ensure_started(),
-    Collector = spawn(fun() -> output_collector([], []) end),
+    Collector = spawn(fun() ->
+        output_collector([], [], 0, false, OutputLimit)
+    end),
     true = ets:insert(kangaroo_output_collectors, {Collector}),
     Parent = self(),
     Pid = spawn(fun() ->
@@ -27,53 +34,240 @@ isolate_captured(Body, Timeout) ->
                                 group_leader(Collector, self()),
                                 try
                                     Body(),
-                                    Parent ! kangaroo_done
+                                    notify_after_coverage(Parent,
+                                                          kangaroo_done)
                                 catch
                                     error:#{kangaroo_error := skip,
                                             reason := SkipReason}:_Stack ->
-                                        Parent ! {kangaroo_skipped, SkipReason};
+                                        notify_after_coverage(
+                                          Parent,
+                                          {kangaroo_skipped, SkipReason});
                                     Class:Reason:Stack ->
-                                        Parent ! {kangaroo_crashed, Class,
-                                                  Reason, Stack}
+                                        notify_after_coverage(
+                                          Parent,
+                                          {kangaroo_crashed, Class,
+                                           Reason, Stack})
                                 end
                         end
                 end),
+    OwnerMonitor = erlang:monitor(process, Pid),
     disable_trace(Pid),
-    1 = erlang:trace(Pid, true, [procs, set_on_spawn]),
+    %% Track both BEAM descendants and executable ports opened by any traced
+    %% descendant. Closing only the owner process can leave an external port
+    %% program alive long enough to escape and mutate the workspace later.
+    1 = erlang:trace(Pid, true, [procs, ports, set_on_spawn]),
     Pid ! kangaroo_start,
     receive
         kangaroo_done ->
-            cleanup_descendants(Pid),
-            finish_capture(Collector, completed);
+            finish_isolation(
+              Collector, Pid, OwnerMonitor, completed, OutputLimit);
         {kangaroo_crashed, _Class, Reason, Stack} ->
-            cleanup_descendants(Pid),
             {Expected, Actual, Diff} = assertion_fields(Reason),
-            finish_capture(
-              Collector,
+            Result =
               {crashed, {caught_error, panic_name(Reason),
                          error_message(Reason, Stack),
                          error_location(Reason, Stack),
-                         Expected, Actual, Diff}});
+                         Expected, Actual, Diff}},
+            finish_isolation(
+              Collector, Pid, OwnerMonitor, Result, OutputLimit);
         {kangaroo_skipped, Reason} ->
-            cleanup_descendants(Pid),
-            finish_capture(Collector, {skipped_isolation, Reason})
+            finish_isolation(
+              Collector, Pid, OwnerMonitor,
+              {skipped_isolation, Reason}, OutputLimit);
+        {kangaroo_coverage_failed, Message} ->
+            finish_isolation(
+              Collector, Pid, OwnerMonitor,
+              coverage_failure_result(Message), OutputLimit);
+        {'DOWN', OwnerMonitor, process, Pid, Reason} ->
+            finish_isolation(
+              Collector, Pid, OwnerMonitor,
+              owner_terminated_result(Reason), OutputLimit)
     after TimeoutMs ->
         exit(Pid, kill),
-        cleanup_descendants(Pid),
-        finish_capture(
-          Collector,
+        Result =
           {crashed, {caught_error, <<"timeout">>,
                      <<"Test case timed out after ",
                        (integer_to_binary(TimeoutMs))/binary, " ms">>,
-                     none, none, none, none}})
+                     none, none, none, none}},
+        finish_isolation(
+          Collector, Pid, OwnerMonitor, Result, OutputLimit)
+    end.
+
+finish_isolation(Collector, Pid, OwnerMonitor, Result, OutputLimit) ->
+    Cleanup = cleanup_descendants(Pid),
+    erlang:demonitor(OwnerMonitor, [flush]),
+    finish_capture(
+      Collector, cleanup_result(Cleanup, Result), OutputLimit).
+
+owner_terminated_result(Reason) ->
+    Message = unicode:characters_to_binary(
+      io_lib:format("Test process exited before publishing a result: ~tp",
+                    [Reason])),
+    {crashed,
+     {caught_error, <<"exit">>, Message,
+      none, none, none, none}}.
+
+%% Hits and this flush originate from the same isolated process, so Erlang's
+%% signal ordering guarantees that the writer persists every preceding hit
+%% before the parent is allowed to publish the test result. Flushing from the
+%% parent alone would use a different sender and could overtake hit messages.
+notify_after_coverage(Parent, Message) ->
+    Notification = case kangaroo_coverage_probe_ffi:flush() of
+        nil -> Message;
+        {error, Failure} -> {kangaroo_coverage_failed, Failure}
+    end,
+    Parent ! Notification,
+    %% Keep the owner alive until its tracer has consumed every port-open and
+    %% spawn event preceding the result. The parent normally kills this process
+    %% during cleanup; the timeout is only a bounded fallback if the parent dies.
+    receive
+        kangaroo_cleanup -> ok
+    after ?DESCENDANT_CLEANUP_TIMEOUT_MS * 5 ->
+        ok
     end.
 
 cleanup_descendants(Root) ->
-    disable_trace(Root),
-    Descendants = collect_descendants(Root, []),
-    lists:foreach(fun(Pid) -> exit(Pid, kill) end,
-                  lists:usort(Descendants)),
-    ok.
+    Deadline = erlang:monotonic_time(millisecond) +
+        ?DESCENDANT_CLEANUP_TIMEOUT_MS,
+    {InitialPending, InitialSeen} =
+        await_initial_trace_delivery(Root, Deadline),
+    {Pending, Seen} = track_and_kill(Root, InitialPending, InitialSeen),
+    await_descendant_cleanup(Pending, Seen, Deadline).
+
+await_initial_trace_delivery(Root, Deadline) ->
+    try erlang:trace_delivered(Root) of
+        Reference ->
+            await_trace_delivery(Root, Reference, #{}, #{}, Deadline)
+    catch
+        error:badarg -> {#{}, #{}}
+    end.
+
+await_trace_delivery(Root, Reference, Pending, Seen, Deadline) ->
+    Remaining = erlang:max(
+        0, Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {trace_delivered, Root, Reference} -> {Pending, Seen};
+        {trace, _Parent, spawn, Child, _Mfa} ->
+            {NextPending, NextSeen} =
+                track_and_kill(Child, Pending, Seen),
+            await_trace_delivery(
+              Root, Reference, NextPending, NextSeen, Deadline);
+        {trace, Child, spawned, _Parent, _Mfa} ->
+            {NextPending, NextSeen} =
+                track_and_kill(Child, Pending, Seen),
+            await_trace_delivery(
+              Root, Reference, NextPending, NextSeen, Deadline);
+        {trace, _Owner, link, Port} when is_port(Port) ->
+            {NextPending, NextSeen} =
+                track_and_close_port(Port, Pending, Seen),
+            await_trace_delivery(
+              Root, Reference, NextPending, NextSeen, Deadline);
+        {trace, Port, open, _Owner, _Driver} when is_port(Port) ->
+            {NextPending, NextSeen} =
+                track_and_close_port(Port, Pending, Seen),
+            await_trace_delivery(
+              Root, Reference, NextPending, NextSeen, Deadline);
+        {'DOWN', DownReference, process, _Pid, _Reason}
+          when is_map_key(DownReference, Pending) ->
+            await_trace_delivery(
+              Root, Reference, maps:remove(DownReference, Pending), Seen,
+              Deadline);
+        {'DOWN', DownReference, port, _Port, _Reason}
+          when is_map_key(DownReference, Pending) ->
+            await_trace_delivery(
+              Root, Reference, maps:remove(DownReference, Pending), Seen,
+              Deadline);
+        {trace, _Tracee, _Event, _Detail, _Extra} ->
+            await_trace_delivery(Root, Reference, Pending, Seen, Deadline);
+        {trace, _Tracee, _Event, _Detail} ->
+            await_trace_delivery(Root, Reference, Pending, Seen, Deadline);
+        {trace, _Tracee, _Event} ->
+            await_trace_delivery(Root, Reference, Pending, Seen, Deadline)
+    after Remaining ->
+        {Pending, Seen}
+    end.
+
+track_and_kill(Pid, Pending, Seen) ->
+    case maps:is_key(Pid, Seen) of
+        true -> {Pending, Seen};
+        false ->
+            Reference = erlang:monitor(process, Pid),
+            exit(Pid, kill),
+            {maps:put(Reference, Pid, Pending), maps:put(Pid, true, Seen)}
+    end.
+
+track_and_close_port(Port, Pending, Seen) ->
+    case maps:is_key(Port, Seen) of
+        true -> {Pending, Seen};
+        false ->
+            try
+                Reference = erlang:monitor(port, Port),
+                kangaroo_process_ffi:terminate_port(Port),
+                {maps:put(Reference, Port, Pending),
+                 maps:put(Port, true, Seen)}
+            catch
+                error:badarg -> {Pending, maps:put(Port, true, Seen)}
+            end
+    end.
+
+await_descendant_cleanup(Pending, Seen, Deadline) ->
+    Remaining = erlang:max(
+        0, Deadline - erlang:monotonic_time(millisecond)),
+    Wait = case map_size(Pending) of 0 -> 0; _ -> Remaining end,
+    receive
+        {trace, _Parent, spawn, Child, _Mfa} ->
+            {NextPending, NextSeen} =
+                track_and_kill(Child, Pending, Seen),
+            await_descendant_cleanup(NextPending, NextSeen, Deadline);
+        {trace, Child, spawned, _Parent, _Mfa} ->
+            {NextPending, NextSeen} =
+                track_and_kill(Child, Pending, Seen),
+            await_descendant_cleanup(NextPending, NextSeen, Deadline);
+        {trace, _Owner, link, Port} when is_port(Port) ->
+            {NextPending, NextSeen} =
+                track_and_close_port(Port, Pending, Seen),
+            await_descendant_cleanup(NextPending, NextSeen, Deadline);
+        {trace, Port, open, _Owner, _Driver} when is_port(Port) ->
+            {NextPending, NextSeen} =
+                track_and_close_port(Port, Pending, Seen),
+            await_descendant_cleanup(NextPending, NextSeen, Deadline);
+        {'DOWN', Reference, process, _Pid, _Reason}
+          when is_map_key(Reference, Pending) ->
+            await_descendant_cleanup(
+              maps:remove(Reference, Pending), Seen, Deadline);
+        {'DOWN', Reference, port, _Port, _Reason}
+          when is_map_key(Reference, Pending) ->
+            await_descendant_cleanup(
+              maps:remove(Reference, Pending), Seen, Deadline);
+        {trace, _Port, _Event, _Detail, _Extra} ->
+            await_descendant_cleanup(Pending, Seen, Deadline);
+        {trace, _Pid, _Event, _Detail} ->
+            await_descendant_cleanup(Pending, Seen, Deadline);
+        {trace, _Pid, _Event} ->
+            await_descendant_cleanup(Pending, Seen, Deadline)
+    after Wait ->
+        case map_size(Pending) of
+            0 -> ok;
+            _ -> abandon_descendant_cleanup(Pending, Seen)
+        end
+    end.
+
+abandon_descendant_cleanup(Pending, Seen) ->
+    maps:foreach(fun(Reference, _Pid) ->
+        erlang:demonitor(Reference, [flush])
+    end, Pending),
+    maps:foreach(fun(Tracee, _Present) ->
+        disable_trace(Tracee),
+        exit(Tracee, kill)
+    end, Seen),
+    {error, descendant_cleanup_timeout}.
+
+cleanup_result(ok, Result) -> Result;
+cleanup_result({error, descendant_cleanup_timeout}, _Result) ->
+    {crashed,
+     {caught_error, <<"infrastructure">>,
+      <<"test process cleanup did not settle within 1000 ms">>,
+      none, none, none, none}}.
 
 disable_trace(Pid) ->
     try
@@ -83,34 +277,46 @@ disable_trace(Pid) ->
         error:badarg -> ok
     end.
 
-collect_descendants(Root, Descendants) ->
-    receive
-        {trace, _Parent, spawn, Child, _Mfa} when Child =/= Root ->
-            collect_descendants(Root, [Child | Descendants]);
-        {trace, Child, spawned, _Parent, _Mfa} when Child =/= Root ->
-            collect_descendants(Root, [Child | Descendants]);
-        {trace, _Pid, _Event, _Detail} ->
-            collect_descendants(Root, Descendants);
-        {trace, _Pid, _Event} ->
-            collect_descendants(Root, Descendants)
-    after 0 ->
-        Descendants
-    end.
-
-finish_capture(Collector, Result) ->
-    kangaroo_coverage_probe_ffi:flush(),
+finish_capture(Collector, Result, OutputLimit) ->
+    FinalResult = case kangaroo_coverage_probe_ffi:flush() of
+        nil -> Result;
+        {error, Failure} -> coverage_failure_result(Failure)
+    end,
     Reference = make_ref(),
     Collector ! {kangaroo_take_output, self(), Reference},
     receive
-        {Reference, Stdout, Stderr} ->
+        {Reference, _Stdout, _Stderr, true} ->
             delete_collector(Collector),
             Collector ! kangaroo_stop,
-            {captured_isolation, Result, Stdout, Stderr}
+            {captured_isolation, output_limit_result(OutputLimit), <<>>, <<>>};
+        {Reference, Stdout, Stderr, false} ->
+            delete_collector(Collector),
+            Collector ! kangaroo_stop,
+            {captured_isolation, FinalResult, Stdout, Stderr}
     after 1000 ->
         delete_collector(Collector),
         exit(Collector, kill),
-        {captured_isolation, Result, <<>>, <<>>}
+        {captured_isolation, collector_failure_result(), <<>>, <<>>}
     end.
+
+coverage_failure_result(Message) ->
+    {crashed,
+     {caught_error, <<"infrastructure">>,
+      <<"coverage persistence failed: ", Message/binary>>,
+      none, none, none, none}}.
+
+collector_failure_result() ->
+    {crashed,
+     {caught_error, <<"infrastructure">>,
+      <<"test output collector stopped before publishing captured output">>,
+      none, none, none, none}}.
+
+output_limit_result(OutputLimit) ->
+    {crashed,
+     {caught_error, <<"infrastructure">>,
+      <<"test output exceeded ", (integer_to_binary(OutputLimit))/binary,
+        " bytes">>,
+      none, none, none, none}}.
 
 delete_collector(Collector) ->
     try ets:delete(kangaroo_output_collectors, Collector)
@@ -281,27 +487,42 @@ stderr_proxy(Original) ->
             stderr_proxy(Original)
     end.
 
-output_collector(Stdout, Stderr) ->
+output_collector(Stdout, Stderr, Bytes, Exceeded, OutputLimit) ->
     receive
         {io_request, From, ReplyAs, Request} ->
             {Reply, Text} = render_io_request(Request),
             From ! {io_reply, ReplyAs, Reply},
-            output_collector(append_output(Text, Stdout), Stderr);
+            {NextStdout, NextBytes, NextExceeded} =
+                capture_output(Text, Stdout, Bytes, Exceeded, OutputLimit),
+            output_collector(NextStdout, Stderr,
+                             NextBytes, NextExceeded, OutputLimit);
         {kangaroo_stderr_request, From, ReplyAs, Request} ->
             {Reply, Text} = render_io_request(Request),
             From ! {io_reply, ReplyAs, Reply},
-            output_collector(Stdout, append_output(Text, Stderr));
+            {NextStderr, NextBytes, NextExceeded} =
+                capture_output(Text, Stderr, Bytes, Exceeded, OutputLimit),
+            output_collector(Stdout, NextStderr,
+                             NextBytes, NextExceeded, OutputLimit);
         {kangaroo_take_output, From, Reference} ->
-            From ! {Reference, combine_output(Stdout), combine_output(Stderr)},
-            output_collector(Stdout, Stderr);
+            From ! {Reference, combine_output(Stdout), combine_output(Stderr),
+                    Exceeded},
+            output_collector(Stdout, Stderr, Bytes, Exceeded, OutputLimit);
         kangaroo_stop ->
             ok;
         _Other ->
-            output_collector(Stdout, Stderr)
+            output_collector(Stdout, Stderr, Bytes, Exceeded, OutputLimit)
     end.
 
-append_output(<<>>, Output) -> Output;
-append_output(Text, Output) -> [Text | Output].
+capture_output(_Text, Output, Bytes, true, _OutputLimit) ->
+    {Output, Bytes, true};
+capture_output(<<>>, Output, Bytes, false, _OutputLimit) ->
+    {Output, Bytes, false};
+capture_output(Text, Output, Bytes, false, OutputLimit) ->
+    NextBytes = Bytes + byte_size(Text),
+    case NextBytes =< OutputLimit of
+        true -> {[Text | Output], NextBytes, false};
+        false -> {Output, Bytes, true}
+    end.
 
 combine_output(Output) ->
     iolist_to_binary(lists:reverse(Output)).

@@ -1,5 +1,7 @@
+import gleam/dict
 import gleam/dynamic/decode as dynamic_decode
 import gleam/json
+import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
 import kangaroo/event.{
@@ -15,8 +17,8 @@ import kangaroo/location.{type Location, Location}
 import kangaroo/report.{type Summary, Summary}
 
 /// The sink used for machine-readable output: every event is printed as a
-/// single JSON object on its own line. Enabled by setting the `KANGAROO_JSON`
-/// environment variable.
+/// single JSON object on its own line. The CLI selects it with
+/// `--reporter ndjson`.
 pub fn json_sink(event: Event) -> Nil {
   fs.write_stdout_line(encode(event))
 }
@@ -28,7 +30,7 @@ pub fn encode(event: Event) -> String {
 /// Decodes the event format emitted by `encode`. Watch/TUI consumers use this
 /// strict boundary to ignore compiler logs and malformed child output.
 pub fn decode(source: String) -> Result(Event, String) {
-  json.parse(source, using: event_decoder())
+  json.parse(source, using: decoder())
   |> result.map_error(fn(_) { "invalid kangaroo event" })
 }
 
@@ -149,74 +151,113 @@ fn summary_json(summary: Summary) -> json.Json {
   ])
 }
 
-fn event_decoder() -> dynamic_decode.Decoder(Event) {
+/// Strictly decodes the event payload embedded by protocol integrations.
+/// This module is package-internal, but sharing the decoder keeps every
+/// machine-readable boundary on the same event contract.
+pub fn decoder() -> dynamic_decode.Decoder(Event) {
   dynamic_decode.field("type", dynamic_decode.string, fn(event_type) {
     case event_type {
       "run_started" ->
-        dynamic_decode.field("run_id", dynamic_decode.int, fn(run_id) {
-          dynamic_decode.field("case_count", dynamic_decode.int, fn(case_count) {
-            dynamic_decode.success(RunStarted(run_id, case_count))
-          })
-        })
+        exact_object(
+          ["type", "run_id", "case_count"],
+          RunStarted(0, 0),
+          dynamic_decode.field("run_id", dynamic_decode.int, fn(run_id) {
+            dynamic_decode.field("case_count", minimum_int(0), fn(case_count) {
+              dynamic_decode.success(RunStarted(run_id, case_count))
+            })
+          }),
+        )
       "case_started" ->
-        dynamic_decode.field("suite", dynamic_decode.string, fn(suite) {
-          dynamic_decode.field("case", dynamic_decode.string, fn(case_name) {
-            dynamic_decode.success(CaseStarted(suite, case_name))
-          })
-        })
+        exact_object(
+          ["type", "suite", "case"],
+          CaseStarted("", ""),
+          dynamic_decode.field("suite", dynamic_decode.string, fn(suite) {
+            dynamic_decode.field("case", dynamic_decode.string, fn(case_name) {
+              dynamic_decode.success(CaseStarted(suite, case_name))
+            })
+          }),
+        )
       "case_output" ->
-        dynamic_decode.field("suite", dynamic_decode.string, fn(suite) {
-          dynamic_decode.field("case", dynamic_decode.string, fn(case_name) {
-            dynamic_decode.field("stdout", dynamic_decode.string, fn(stdout) {
-              dynamic_decode.field("stderr", dynamic_decode.string, fn(stderr) {
-                dynamic_decode.field("outcome", outcome_decoder(), fn(outcome) {
-                  dynamic_decode.success(CaseOutput(
-                    suite,
-                    case_name,
-                    stdout,
-                    stderr,
-                    outcome,
-                  ))
-                })
+        exact_object(
+          ["type", "suite", "case", "stdout", "stderr", "outcome"],
+          CaseOutput("", "", "", "", Passed),
+          dynamic_decode.field("suite", dynamic_decode.string, fn(suite) {
+            dynamic_decode.field("case", dynamic_decode.string, fn(case_name) {
+              dynamic_decode.field("stdout", dynamic_decode.string, fn(stdout) {
+                dynamic_decode.field(
+                  "stderr",
+                  dynamic_decode.string,
+                  fn(stderr) {
+                    dynamic_decode.field(
+                      "outcome",
+                      outcome_decoder(),
+                      fn(outcome) {
+                        dynamic_decode.success(CaseOutput(
+                          suite,
+                          case_name,
+                          stdout,
+                          stderr,
+                          outcome,
+                        ))
+                      },
+                    )
+                  },
+                )
               })
             })
-          })
-        })
+          }),
+        )
       "case_finished" ->
-        dynamic_decode.field("suite", dynamic_decode.string, fn(suite) {
-          dynamic_decode.field("case", dynamic_decode.string, fn(case_name) {
-            dynamic_decode.field("outcome", outcome_decoder(), fn(outcome) {
-              dynamic_decode.field(
-                "duration_ms",
-                dynamic_decode.int,
-                fn(duration_ms) {
-                  dynamic_decode.success(CaseFinished(
-                    suite,
-                    case_name,
-                    outcome,
-                    duration_ms,
-                  ))
-                },
-              )
+        exact_object(
+          ["type", "suite", "case", "outcome", "duration_ms"],
+          CaseFinished("", "", Passed, 0),
+          dynamic_decode.field("suite", dynamic_decode.string, fn(suite) {
+            dynamic_decode.field("case", dynamic_decode.string, fn(case_name) {
+              dynamic_decode.field("outcome", outcome_decoder(), fn(outcome) {
+                dynamic_decode.field(
+                  "duration_ms",
+                  minimum_int(0),
+                  fn(duration_ms) {
+                    dynamic_decode.success(CaseFinished(
+                      suite,
+                      case_name,
+                      outcome,
+                      duration_ms,
+                    ))
+                  },
+                )
+              })
             })
-          })
-        })
+          }),
+        )
       "suite_started" ->
-        dynamic_decode.field("suite", dynamic_decode.string, fn(suite) {
-          dynamic_decode.success(SuiteStarted(suite))
-        })
+        exact_object(
+          ["type", "suite"],
+          SuiteStarted(""),
+          dynamic_decode.field("suite", dynamic_decode.string, fn(suite) {
+            dynamic_decode.success(SuiteStarted(suite))
+          }),
+        )
       "suite_finished" ->
-        dynamic_decode.field("suite", dynamic_decode.string, fn(suite) {
-          dynamic_decode.field("outcome", outcome_decoder(), fn(outcome) {
-            dynamic_decode.success(SuiteFinished(suite, outcome))
-          })
-        })
+        exact_object(
+          ["type", "suite", "outcome"],
+          SuiteFinished("", Passed),
+          dynamic_decode.field("suite", dynamic_decode.string, fn(suite) {
+            dynamic_decode.field("outcome", outcome_decoder(), fn(outcome) {
+              dynamic_decode.success(SuiteFinished(suite, outcome))
+            })
+          }),
+        )
       "run_finished" ->
-        dynamic_decode.field("run_id", dynamic_decode.int, fn(run_id) {
-          dynamic_decode.field("summary", summary_decoder(), fn(summary) {
-            dynamic_decode.success(RunFinished(run_id, summary))
-          })
-        })
+        exact_object(
+          ["type", "run_id", "summary"],
+          RunFinished(0, Summary(0, 0, 0, 0)),
+          dynamic_decode.field("run_id", dynamic_decode.int, fn(run_id) {
+            dynamic_decode.field("summary", summary_decoder(), fn(summary) {
+              dynamic_decode.success(RunFinished(run_id, summary))
+            })
+          }),
+        )
       _ -> dynamic_decode.failure(RunStarted(0, 0), "known event type")
     }
   })
@@ -225,34 +266,46 @@ fn event_decoder() -> dynamic_decode.Decoder(Event) {
 fn outcome_decoder() -> dynamic_decode.Decoder(Outcome) {
   dynamic_decode.field("kind", dynamic_decode.string, fn(kind) {
     case kind {
-      "passed" -> dynamic_decode.success(Passed)
+      "passed" -> exact_object(["kind"], Passed, dynamic_decode.success(Passed))
       "skipped" ->
-        dynamic_decode.optional_field(
-          "reason",
-          None,
-          dynamic_decode.optional(dynamic_decode.string),
-          fn(reason) {
-            dynamic_decode.success(case reason {
-              Some(reason) -> SkippedWithReason(reason)
-              None -> Skipped
-            })
-          },
+        exact_object(
+          ["kind", "reason"],
+          Skipped,
+          dynamic_decode.optional_field(
+            "reason",
+            None,
+            dynamic_decode.map(dynamic_decode.string, Some),
+            fn(reason) {
+              dynamic_decode.success(case reason {
+                Some(reason) -> SkippedWithReason(reason)
+                None -> Skipped
+              })
+            },
+          ),
         )
       "failed" ->
-        dynamic_decode.field(
-          "failures",
-          dynamic_decode.list(failure_decoder()),
-          fn(failures) { dynamic_decode.success(Failed(failures)) },
+        exact_object(
+          ["kind", "failures"],
+          Failed([]),
+          dynamic_decode.field(
+            "failures",
+            dynamic_decode.list(failure_decoder()),
+            fn(failures) { dynamic_decode.success(Failed(failures)) },
+          ),
         )
       "flaky" ->
-        dynamic_decode.field(
-          "failures",
-          dynamic_decode.list(failure_decoder()),
-          fn(failures) {
-            dynamic_decode.field("attempts", dynamic_decode.int, fn(attempts) {
-              dynamic_decode.success(Flaky(failures, attempts))
-            })
-          },
+        exact_object(
+          ["kind", "attempts", "failures"],
+          Flaky([], 2),
+          dynamic_decode.field(
+            "failures",
+            dynamic_decode.list(failure_decoder()),
+            fn(failures) {
+              dynamic_decode.field("attempts", minimum_int(2), fn(attempts) {
+                dynamic_decode.success(Flaky(failures, attempts))
+              })
+            },
+          ),
         )
       _ -> dynamic_decode.failure(Passed, "known outcome kind")
     }
@@ -263,50 +316,66 @@ fn failure_decoder() -> dynamic_decode.Decoder(Failure) {
   dynamic_decode.field("kind", dynamic_decode.string, fn(kind) {
     case kind {
       "equality_mismatch" ->
-        dynamic_decode.field("expected", dynamic_decode.string, fn(expected) {
-          dynamic_decode.field("actual", dynamic_decode.string, fn(actual) {
-            dynamic_decode.field(
-              "diff",
-              dynamic_decode.optional(dynamic_decode.string),
-              fn(diff) {
-                dynamic_decode.field(
-                  "location",
-                  dynamic_decode.optional(location_decoder()),
-                  fn(location) {
-                    dynamic_decode.success(EqualityMismatch(
-                      expected,
-                      actual,
-                      diff,
-                      location,
-                    ))
-                  },
-                )
-              },
-            )
-          })
-        })
+        exact_object(
+          ["kind", "expected", "actual", "diff", "location"],
+          EqualityMismatch("", "", None, None),
+          dynamic_decode.field("expected", dynamic_decode.string, fn(expected) {
+            dynamic_decode.field("actual", dynamic_decode.string, fn(actual) {
+              dynamic_decode.field(
+                "diff",
+                dynamic_decode.optional(dynamic_decode.string),
+                fn(diff) {
+                  dynamic_decode.field(
+                    "location",
+                    dynamic_decode.optional(location_decoder()),
+                    fn(location) {
+                      dynamic_decode.success(EqualityMismatch(
+                        expected,
+                        actual,
+                        diff,
+                        location,
+                      ))
+                    },
+                  )
+                },
+              )
+            })
+          }),
+        )
       "assertion_failed" ->
-        dynamic_decode.field("message", dynamic_decode.string, fn(message) {
-          dynamic_decode.field(
-            "location",
-            dynamic_decode.optional(location_decoder()),
-            fn(location) {
-              dynamic_decode.success(AssertionFailed(message, location))
-            },
-          )
-        })
-      "unexpected_error" ->
-        dynamic_decode.field("name", dynamic_decode.string, fn(name) {
+        exact_object(
+          ["kind", "message", "location"],
+          AssertionFailed("", None),
           dynamic_decode.field("message", dynamic_decode.string, fn(message) {
             dynamic_decode.field(
               "location",
               dynamic_decode.optional(location_decoder()),
               fn(location) {
-                dynamic_decode.success(UnexpectedError(name, message, location))
+                dynamic_decode.success(AssertionFailed(message, location))
               },
             )
-          })
-        })
+          }),
+        )
+      "unexpected_error" ->
+        exact_object(
+          ["kind", "name", "message", "location"],
+          UnexpectedError("", "", None),
+          dynamic_decode.field("name", dynamic_decode.string, fn(name) {
+            dynamic_decode.field("message", dynamic_decode.string, fn(message) {
+              dynamic_decode.field(
+                "location",
+                dynamic_decode.optional(location_decoder()),
+                fn(location) {
+                  dynamic_decode.success(UnexpectedError(
+                    name,
+                    message,
+                    location,
+                  ))
+                },
+              )
+            })
+          }),
+        )
       _ ->
         dynamic_decode.failure(AssertionFailed("", None), "known failure kind")
     }
@@ -314,25 +383,64 @@ fn failure_decoder() -> dynamic_decode.Decoder(Failure) {
 }
 
 fn location_decoder() -> dynamic_decode.Decoder(Location) {
-  dynamic_decode.field("file", dynamic_decode.string, fn(file) {
-    dynamic_decode.field("line", dynamic_decode.int, fn(line) {
-      dynamic_decode.field(
-        "column",
-        dynamic_decode.optional(dynamic_decode.int),
-        fn(column) { dynamic_decode.success(Location(file, line, column)) },
-      )
-    })
-  })
+  exact_object(
+    ["file", "line", "column"],
+    Location("", 1, None),
+    dynamic_decode.field("file", dynamic_decode.string, fn(file) {
+      dynamic_decode.field("line", minimum_int(1), fn(line) {
+        dynamic_decode.field(
+          "column",
+          dynamic_decode.optional(minimum_int(1)),
+          fn(column) { dynamic_decode.success(Location(file, line, column)) },
+        )
+      })
+    }),
+  )
 }
 
 fn summary_decoder() -> dynamic_decode.Decoder(Summary) {
-  dynamic_decode.field("passed", dynamic_decode.int, fn(passed) {
-    dynamic_decode.field("failed", dynamic_decode.int, fn(failed) {
-      dynamic_decode.field("skipped", dynamic_decode.int, fn(skipped) {
-        dynamic_decode.field("duration_ms", dynamic_decode.int, fn(duration_ms) {
-          dynamic_decode.success(Summary(passed, failed, skipped, duration_ms))
+  exact_object(
+    ["passed", "failed", "skipped", "duration_ms"],
+    Summary(0, 0, 0, 0),
+    dynamic_decode.field("passed", minimum_int(0), fn(passed) {
+      dynamic_decode.field("failed", minimum_int(0), fn(failed) {
+        dynamic_decode.field("skipped", minimum_int(0), fn(skipped) {
+          dynamic_decode.field("duration_ms", minimum_int(0), fn(duration_ms) {
+            dynamic_decode.success(Summary(passed, failed, skipped, duration_ms))
+          })
         })
       })
-    })
+    }),
+  )
+}
+
+fn exact_object(
+  allowed: List(String),
+  placeholder: value,
+  decoder: dynamic_decode.Decoder(value),
+) -> dynamic_decode.Decoder(value) {
+  dynamic_decode.then(
+    dynamic_decode.dict(dynamic_decode.string, dynamic_decode.dynamic),
+    fn(fields) {
+      case
+        list.all(dict.keys(fields), fn(field) { list.contains(allowed, field) })
+      {
+        True -> decoder
+        False ->
+          dynamic_decode.failure(
+            placeholder,
+            "object without additional fields",
+          )
+      }
+    },
+  )
+}
+
+fn minimum_int(minimum: Int) -> dynamic_decode.Decoder(Int) {
+  dynamic_decode.then(dynamic_decode.int, fn(value) {
+    case value >= minimum {
+      True -> dynamic_decode.success(value)
+      False -> dynamic_decode.failure(0, "integer at or above the minimum")
+    }
   })
 }

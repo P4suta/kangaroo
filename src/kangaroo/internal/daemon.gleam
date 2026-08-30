@@ -22,6 +22,8 @@ const javascript_input_poll_ms = 150
 
 const operation_timeout_ms = 604_800_000
 
+const max_output_work_per_operation_poll = 64
+
 pub fn poll_interval_ms() -> Int {
   poll_interval_for(vm.target())
 }
@@ -37,6 +39,12 @@ type State {
   State(operations: operations.State, discovery_cache: discovery.Cache)
 }
 
+type CancellationOutcome {
+  CancellationSettled
+  CancellationTimedOut(message: String)
+  CancellationFailed(message: String)
+}
+
 pub fn operation_arguments(
   kind: operations.Kind,
   target: String,
@@ -44,7 +52,8 @@ pub fn operation_arguments(
   run_arguments: List(String),
 ) -> List(String) {
   case kind, target {
-    RunOperation, _ -> watcher.run_arguments_for(target, runtime, run_arguments)
+    RunOperation, _ ->
+      watcher.run_arguments_for(target, runtime, ["run", ..run_arguments])
     WatchOperation, "erlang" ->
       watcher.erlang_runtime_arguments(["watch", ..run_arguments])
     WatchOperation, "javascript" ->
@@ -112,6 +121,10 @@ fn loop(project_dir: String, state: State) -> Nil {
   case fs.read_line_timeout(poll_interval_ms()) {
     fs.InputPending -> loop(project_dir, state)
     fs.InputEnd -> stop_operations(state.operations)
+    fs.InputError(message) -> {
+      fs.write_stdout_line(protocol.encode_error("", message))
+      loop(project_dir, state)
+    }
     fs.InputLine(line) -> {
       let #(state, continue) = case string.trim(line) {
         "" -> #(state, True)
@@ -197,21 +210,36 @@ fn handle(
       )
     }
     Ok(CancelRequest(id, operation_id)) -> {
-      let #(operations, handle) =
-        operations.cancel(state.operations, operation_id)
-      case handle {
-        None ->
+      case operations.handle(state.operations, operation_id) {
+        None -> {
           fs.write_stdout_line(protocol.encode_error(
             id,
             "operation `" <> operation_id <> "` is not active",
           ))
+          #(state, True)
+        }
         Some(handle) -> {
           process.cancel(handle)
-          await_cancellation(handle, sys.now_ms())
-          fs.write_stdout_line(protocol.encode_cancelled(id, operation_id))
+          case await_cancellation(handle, sys.now_ms()) {
+            CancellationSettled -> {
+              let #(operations, _) =
+                operations.cancel(state.operations, operation_id)
+              fs.write_stdout_line(protocol.encode_cancelled(id, operation_id))
+              #(State(..state, operations:), True)
+            }
+            CancellationFailed(message) -> {
+              let #(operations, _) =
+                operations.cancel(state.operations, operation_id)
+              fs.write_stdout_line(protocol.encode_error(id, message))
+              #(State(..state, operations:), True)
+            }
+            CancellationTimedOut(message) -> {
+              fs.write_stdout_line(protocol.encode_error(id, message))
+              #(state, True)
+            }
+          }
         }
       }
-      #(State(..state, operations:), True)
     }
     Ok(ShutdownRequest(id)) -> {
       fs.write_stdout_line(protocol.encode_ok(id, "shutdown"))
@@ -243,15 +271,12 @@ fn start_operation(
   exclude_tags: List(String),
   kind: operations.Kind,
 ) -> operations.State {
-  case operations.has(state, id) {
-    True -> {
-      fs.write_stdout_line(protocol.encode_error(
-        id,
-        "operation `" <> id <> "` is already active",
-      ))
+  case operations.can_start(state, id) {
+    Error(message) -> {
+      fs.write_stdout_line(protocol.encode_error(id, message))
       state
     }
-    False ->
+    Ok(_) ->
       case list.try_map(raw_selectors, selector.parse) {
         Error(message) -> {
           fs.write_stdout_line(protocol.encode_error(id, message))
@@ -281,7 +306,7 @@ fn start_operation(
               project_dir,
               executable,
               arguments,
-              [#("KANGAROO_PROTOCOL_REQUEST_ID", id)],
+              protocol.child_environment(id),
               operation_timeout_ms,
             )
           {
@@ -319,51 +344,68 @@ fn drain_operations(state: operations.State) -> operations.State {
 }
 
 // Child output commonly arrives as one port message per reporter event. Drain
-// every message already waiting before the daemon sleeps again so a large
-// event burst cannot delay later change or cancellation notifications by one
-// full protocol poll per line.
+// a bounded burst before reading stdin again. Both complete lines and chunks
+// without a newline consume this budget, so adversarial output cannot starve a
+// later cancellation or shutdown request.
 fn drain_operation(state: operations.State, entry: operations.Entry) {
-  case process.poll(entry.handle) {
-    process.ProcessRunning -> state
-    process.ProcessOutput(output) -> {
-      let #(state, lines) = operations.append_output(state, entry.id, output)
-      emit_lines(entry.id, lines)
-      drain_operation(state, entry)
-    }
-    process.ProcessFinished(completed) -> {
-      let #(state, remainder) = operations.finish_output(state, entry.id)
-      case remainder {
-        Some(line) -> emit_line(entry.id, line)
-        None -> Nil
+  drain_operation_output(state, entry, max_output_work_per_operation_poll)
+}
+
+fn drain_operation_output(
+  state: operations.State,
+  entry: operations.Entry,
+  remaining: Int,
+) {
+  let #(state, lines) = operations.take_output_lines(state, entry.id, remaining)
+  emit_lines(entry.id, lines)
+  let remaining = remaining - list.length(lines)
+  case remaining <= 0 {
+    True -> state
+    False ->
+      case process.poll(entry.handle) {
+        process.ProcessRunning -> state
+        process.ProcessOutput(output) ->
+          drain_operation_output(
+            operations.append_output(state, entry.id, output),
+            entry,
+            remaining - 1,
+          )
+        process.ProcessFinished(completed) -> {
+          let #(state, remainder) = operations.finish_output(state, entry.id)
+          case remainder {
+            Some(line) -> emit_line(entry.id, line)
+            None -> Nil
+          }
+          let #(state, publish) = operations.complete(state, entry.id)
+          case publish {
+            True ->
+              fs.write_stdout_line(protocol.encode_completed(
+                entry.id,
+                completed.exit_code,
+              ))
+            False -> Nil
+          }
+          state
+        }
+        process.ProcessFailed(message) -> {
+          let #(state, remainder) = operations.finish_output(state, entry.id)
+          case remainder {
+            Some(line) -> emit_line(entry.id, line)
+            None -> Nil
+          }
+          let #(state, publish) = operations.complete(state, entry.id)
+          case publish {
+            True ->
+              fs.write_stdout_line(protocol.encode_error(entry.id, message))
+            False -> Nil
+          }
+          state
+        }
+        process.ProcessCancelled -> {
+          let #(state, _) = operations.complete(state, entry.id)
+          state
+        }
       }
-      let #(state, publish) = operations.complete(state, entry.id)
-      case publish {
-        True ->
-          fs.write_stdout_line(protocol.encode_completed(
-            entry.id,
-            completed.exit_code,
-          ))
-        False -> Nil
-      }
-      state
-    }
-    process.ProcessFailed(message) -> {
-      let #(state, remainder) = operations.finish_output(state, entry.id)
-      case remainder {
-        Some(line) -> emit_line(entry.id, line)
-        None -> Nil
-      }
-      let #(state, publish) = operations.complete(state, entry.id)
-      case publish {
-        True -> fs.write_stdout_line(protocol.encode_error(entry.id, message))
-        False -> Nil
-      }
-      state
-    }
-    process.ProcessCancelled -> {
-      let #(state, _) = operations.complete(state, entry.id)
-      state
-    }
   }
 }
 
@@ -386,19 +428,32 @@ fn emit_line(operation_id: String, line: String) -> Nil {
 fn stop_operations(state: operations.State) -> Nil {
   let #(_, handles) = operations.shutdown(state)
   list.each(handles, fn(handle) { process.cancel(handle) })
-  list.each(handles, fn(handle) { await_cancellation(handle, sys.now_ms()) })
+  let started = sys.now_ms()
+  list.each(handles, fn(handle) {
+    case await_cancellation(handle, started) {
+      CancellationSettled -> Nil
+      CancellationTimedOut(message) | CancellationFailed(message) ->
+        fs.write_stderr_line("kangaroo: " <> message)
+    }
+  })
 }
 
-fn await_cancellation(handle: Int, started: Int) -> Nil {
+fn await_cancellation(handle: Int, started: Int) -> CancellationOutcome {
   case process.poll(handle) {
     process.ProcessRunning | process.ProcessOutput(_) ->
-      case sys.now_ms() - started < vm.process_cleanup_timeout_ms() {
-        True -> {
+      case
+        vm.cleanup_wait_result(
+          sys.now_ms() - started,
+          vm.process_cleanup_timeout_ms(),
+        )
+      {
+        Ok(_) -> {
           fs.sleep(5)
           await_cancellation(handle, started)
         }
-        False -> Nil
+        Error(message) -> CancellationTimedOut(message)
       }
-    _ -> Nil
+    process.ProcessCancelled | process.ProcessFinished(_) -> CancellationSettled
+    process.ProcessFailed(message) -> CancellationFailed(message)
   }
 }

@@ -31,8 +31,8 @@ pub type Event {
   )
   /// A source module has started running its selected tests.
   SuiteStarted(suite: String)
-  /// A source module finished. Per-test outcomes arrive as `CaseFinished`
-  /// events; `suite` is retained as the protocol v1 field name.
+  /// A source module finished. Its outcome aggregates the selected cases;
+  /// detailed per-test outcomes still arrive as `CaseFinished` events.
   SuiteFinished(suite: String, outcome: Outcome)
   /// The run has finished with an overall summary.
   RunFinished(run_id: Int, summary: Summary)

@@ -1,3 +1,4 @@
+import gleam/int
 import gleam/option.{None, Some}
 import kangaroo/internal/daemon
 import kangaroo/internal/operations.{RunOperation, WatchOperation}
@@ -58,12 +59,43 @@ pub fn duplicate_active_operation_ids_are_rejected_test() {
     == Error("operation `run-1` is already active")
 }
 
+pub fn daemon_operation_limit_is_checked_before_spawning_test() {
+  let state = fill_operations(operations.empty(), 1)
+  assert operations.can_start(state, "overflow")
+    == Error("daemon supports at most 32 active operations")
+  assert operations.start(state, "overflow", 99, RunOperation)
+    == Error("daemon supports at most 32 active operations")
+}
+
+fn fill_operations(state: operations.State, number: Int) -> operations.State {
+  case number > 32 {
+    True -> state
+    False -> {
+      let assert Ok(state) =
+        operations.start(
+          state,
+          "run-" <> int.to_string(number),
+          number,
+          RunOperation,
+        )
+      fill_operations(state, number + 1)
+    }
+  }
+}
+
 pub fn cancellation_returns_exactly_one_handle_test() {
   let assert Ok(state) =
     operations.start(operations.empty(), "watch-1", 42, WatchOperation)
   let #(cancelled, handle) = operations.cancel(state, "watch-1")
   assert handle == Some(42)
   assert operations.cancel(cancelled, "watch-1").1 == None
+}
+
+pub fn cancellation_lookup_retains_operation_until_cleanup_succeeds_test() {
+  let assert Ok(state) =
+    operations.start(operations.empty(), "watch-1", 42, WatchOperation)
+  assert operations.handle(state, "watch-1") == Some(42)
+  assert operations.has(state, "watch-1")
 }
 
 pub fn stale_completion_after_cancellation_is_ignored_test() {
@@ -87,15 +119,49 @@ pub fn shutdown_returns_handles_in_registration_order_test() {
 pub fn streamed_protocol_lines_are_reassembled_across_chunks_test() {
   let assert Ok(state) =
     operations.start(operations.empty(), "run-1", 9, RunOperation)
-  let #(state, first_lines) =
-    operations.append_output(state, "run-1", "{\"type\":\"ev")
+  let state = operations.append_output(state, "run-1", "{\"type\":\"ev")
+  let #(state, first_lines) = operations.take_output_lines(state, "run-1", 64)
   assert first_lines == []
-  let #(state, lines) =
+  let state =
     operations.append_output(state, "run-1", "ent\"}\ncompiler log\npartial")
+  let #(state, lines) = operations.take_output_lines(state, "run-1", 64)
   assert lines == ["{\"type\":\"event\"}", "compiler log"]
   let #(state, remainder) = operations.finish_output(state, "run-1")
   assert remainder == Some("partial")
   let assert [_] = operations.entries(state)
+}
+
+pub fn buffered_output_is_taken_with_a_bounded_line_budget_test() {
+  let assert Ok(state) =
+    operations.start(operations.empty(), "run-1", 9, RunOperation)
+  let state =
+    operations.append_output(
+      state,
+      "run-1",
+      "one\ntwo\nthree\nfour\nfive\ntrailing",
+    )
+  let #(state, first) = operations.take_output_lines(state, "run-1", 2)
+  assert first == ["one", "two"]
+  let #(state, second) = operations.take_output_lines(state, "run-1", 2)
+  assert second == ["three", "four"]
+  let #(state, third) = operations.take_output_lines(state, "run-1", 2)
+  assert third == ["five"]
+  let #(_, remainder) = operations.finish_output(state, "run-1")
+  assert remainder == Some("trailing")
+}
+
+pub fn unterminated_output_fragments_preserve_order_without_repeated_joining_test() {
+  let assert Ok(state) =
+    operations.start(operations.empty(), "run-1", 9, RunOperation)
+  let state = operations.append_output(state, "run-1", "one")
+  let state = operations.append_output(state, "run-1", "two")
+  let #(state, lines) = operations.take_output_lines(state, "run-1", 64)
+  assert lines == []
+  let state = operations.append_output(state, "run-1", "three\ntrailing")
+  let #(state, lines) = operations.take_output_lines(state, "run-1", 64)
+  assert lines == ["onetwothree"]
+  let #(_, remainder) = operations.finish_output(state, "run-1")
+  assert remainder == Some("trailing")
 }
 
 pub fn operations_are_routed_to_runtime_commands_test() {
@@ -110,6 +176,7 @@ pub fn operations_are_routed_to_runtime_commands_test() {
       "--runtime",
       "bun",
       "--",
+      "run",
       "--reporter",
       "ndjson",
     ]

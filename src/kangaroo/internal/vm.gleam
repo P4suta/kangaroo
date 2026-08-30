@@ -1,3 +1,5 @@
+import gleam/int
+
 /// Runs closures concurrently on BEAM and collects their values in input
 /// order. JavaScript executes closures in order; each indexed test itself is
 /// still isolated in a fresh runtime Worker.
@@ -52,6 +54,22 @@ pub fn process_cleanup_timeout_for(operating_system: String) -> Int {
   case operating_system {
     "windows" -> 5000
     _ -> 1000
+  }
+}
+
+/// Keeps cancellation waits fail-closed. Callers must not publish a
+/// superseding generation or successful protocol cancellation after this
+/// deadline expires.
+pub fn cleanup_wait_result(
+  elapsed_ms: Int,
+  timeout_ms: Int,
+) -> Result(Nil, String) {
+  case elapsed_ms < timeout_ms {
+    True -> Ok(Nil)
+    False ->
+      Error(
+        "process cancellation exceeded " <> int.to_string(timeout_ms) <> " ms",
+      )
   }
 }
 

@@ -1,4 +1,5 @@
 import { read } from "node:fs";
+import { Buffer } from "node:buffer";
 import { parentPort, workerData } from "node:worker_threads";
 
 const port = workerData.port;
@@ -22,8 +23,11 @@ let buffer = "";
 let ended = false;
 let waitingForContinue = false;
 let readPending = false;
+let discardingOverlongLine = false;
 const readBuffer = new Uint8Array(64 * 1024);
 const nodeDecoder = new TextDecoder();
+const maxLineBytes = 1024 * 1024;
+const lineLimitMessage = `daemon request line exceeded ${maxLineBytes} bytes`;
 let bunReader;
 let resumeBunRead;
 if (typeof globalThis.Bun !== "undefined") {
@@ -58,18 +62,38 @@ function trimCr(value) {
 }
 
 function acceptChunk(chunk) {
-  buffer += String(chunk);
+  let value = String(chunk);
+  if (discardingOverlongLine) {
+    const newline = value.indexOf("\n");
+    if (newline < 0) return;
+    discardingOverlongLine = false;
+    value = value.slice(newline + 1);
+  }
+  buffer += value;
   deliverBufferedLine();
 }
 
 function deliverBufferedLine() {
   if (waitingForContinue) return false;
   const newline = buffer.indexOf("\n");
-  if (newline < 0) return false;
+  if (newline < 0) {
+    if (Buffer.byteLength(buffer, "utf8") > maxLineBytes) {
+      buffer = "";
+      discardingOverlongLine = true;
+      waitingForContinue = true;
+      send({ type: "error", value: lineLimitMessage });
+      return true;
+    }
+    return false;
+  }
   const line = trimCr(buffer.slice(0, newline));
   buffer = buffer.slice(newline + 1);
   waitingForContinue = true;
-  send({ type: "line", value: line });
+  if (Buffer.byteLength(line, "utf8") > maxLineBytes) {
+    send({ type: "error", value: lineLimitMessage });
+  } else {
+    send({ type: "line", value: line });
+  }
   return true;
 }
 

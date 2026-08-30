@@ -3,7 +3,7 @@ import gleam/dynamic/decode
 import gleam/int
 import gleam/json
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import kangaroo/encode
@@ -11,6 +11,8 @@ import kangaroo/event.{type Event}
 import kangaroo/internal/index.{type IndexedTest}
 
 pub const version = 1
+
+const child_mode_token = "kangaroo-daemon-child-v1"
 
 pub type Request {
   DiscoverRequest(id: String)
@@ -43,7 +45,12 @@ type Envelope {
 }
 
 type ChildEnvelope {
-  ChildEnvelope(protocol_version: Int, message_type: String, request_id: String)
+  ChildEnvelope(
+    protocol_version: Int,
+    message_type: String,
+    request_id: String,
+    event: Event,
+  )
 }
 
 pub fn decode_request(line: String) -> Result(Request, String) {
@@ -100,10 +107,22 @@ fn validate_fields(
 /// generation. Compiler logs and forged lifecycle messages are kept off the
 /// protocol stream.
 pub fn forwardable_event(line: String, request_id: String) -> Bool {
-  case json.parse(line, using: child_envelope_decoder()) {
-    Ok(ChildEnvelope(1, "event", child_request_id)) ->
+  let exact_fields = case
+    json.parse(line, using: decode.dict(decode.string, decode.dynamic))
+  {
+    Ok(fields) ->
+      list.all(dict.keys(fields), fn(field) {
+        list.contains(
+          ["protocol_version", "type", "request_id", "event"],
+          field,
+        )
+      })
+    Error(_) -> False
+  }
+  case exact_fields, json.parse(line, using: child_envelope_decoder()) {
+    True, Ok(ChildEnvelope(1, "event", child_request_id, _)) ->
       child_request_id == request_id
-    _ -> False
+    _, _ -> False
   }
 }
 
@@ -111,36 +130,109 @@ fn child_envelope_decoder() -> decode.Decoder(ChildEnvelope) {
   decode.field("protocol_version", decode.int, fn(protocol_version) {
     decode.field("type", decode.string, fn(message_type) {
       decode.field("request_id", decode.string, fn(request_id) {
-        decode.success(ChildEnvelope(protocol_version, message_type, request_id))
+        decode.field("event", encode.decoder(), fn(event) {
+          decode.success(ChildEnvelope(
+            protocol_version,
+            message_type,
+            request_id,
+            event,
+          ))
+        })
       })
     })
   })
 }
 
 fn request(envelope: Envelope) -> Result(Request, String) {
+  use _ <- result.try(require_non_empty(
+    envelope.id,
+    "request id cannot be empty",
+  ))
   case envelope.command {
     "discover" -> Ok(DiscoverRequest(envelope.id))
-    "run" ->
+    "run" -> {
+      use _ <- result.try(validate_filters(envelope))
       Ok(RunRequest(
         envelope.id,
         envelope.selectors,
         envelope.include_tags,
         envelope.exclude_tags,
       ))
-    "watch" ->
+    }
+    "watch" -> {
+      use _ <- result.try(validate_filters(envelope))
       Ok(WatchRequest(
         envelope.id,
         envelope.selectors,
         envelope.include_tags,
         envelope.exclude_tags,
       ))
-    "cancel" ->
-      case envelope.operation_id {
-        "" -> Error("cancel requires operation_id")
-        operation_id -> Ok(CancelRequest(envelope.id, operation_id))
-      }
+    }
+    "cancel" -> {
+      use _ <- result.try(require_non_empty(
+        envelope.operation_id,
+        "cancel requires operation_id",
+      ))
+      Ok(CancelRequest(envelope.id, envelope.operation_id))
+    }
     "shutdown" -> Ok(ShutdownRequest(envelope.id))
     unknown -> Error("unknown daemon command `" <> unknown <> "`")
+  }
+}
+
+fn validate_filters(envelope: Envelope) -> Result(Nil, String) {
+  use _ <- result.try(validate_values(
+    envelope.selectors,
+    "selector cannot be empty",
+  ))
+  use _ <- result.try(validate_values(
+    envelope.include_tags,
+    "include_tags cannot contain an empty value",
+  ))
+  validate_values(
+    envelope.exclude_tags,
+    "exclude_tags cannot contain an empty value",
+  )
+}
+
+fn validate_values(
+  values: List(String),
+  message: String,
+) -> Result(Nil, String) {
+  case list.any(values, fn(value) { string.trim(value) == "" }) {
+    True -> Error(message)
+    False -> Ok(Nil)
+  }
+}
+
+fn require_non_empty(value: String, message: String) -> Result(Nil, String) {
+  case string.trim(value) == "" {
+    True -> Error(message)
+    False -> Ok(Nil)
+  }
+}
+
+/// Private environment handshake used between the daemon and a child runner.
+/// Requiring both fields prevents an unrelated inherited request-id variable
+/// from silently changing an ordinary `--reporter ndjson` stream.
+pub fn child_environment(request_id: String) -> List(#(String, String)) {
+  [
+    #("KANGAROO_PROTOCOL_MODE", child_mode_token),
+    #("KANGAROO_PROTOCOL_REQUEST_ID", request_id),
+  ]
+}
+
+pub fn child_request_id(
+  mode: Option(String),
+  request_id: Option(String),
+) -> Option(String) {
+  case mode, request_id {
+    Some(token), Some(request_id) if token == child_mode_token ->
+      case string.trim(request_id) == "" {
+        True -> None
+        False -> Some(request_id)
+      }
+    _, _ -> None
   }
 }
 
@@ -262,9 +354,18 @@ pub fn encode_completed(request_id: String, exit_code: Int) -> String {
     #("protocol_version", json.int(version)),
     #("type", json.string("completed")),
     #("request_id", json.string(request_id)),
-    #("exit_code", json.int(exit_code)),
+    #("exit_code", json.int(protocol_exit_code(exit_code))),
   ])
   |> json.to_string
+}
+
+fn protocol_exit_code(exit_code: Int) -> Int {
+  case exit_code {
+    0 -> 0
+    1 -> 1
+    2 -> 2
+    _ -> 2
+  }
 }
 
 fn encode_test(indexed: IndexedTest) -> json.Json {

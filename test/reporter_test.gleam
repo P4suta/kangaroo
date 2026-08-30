@@ -52,3 +52,21 @@ pub fn junit_reporter_retains_escaped_stdout_and_stderr_test() {
   assert string.contains(xml, "<system-out>hello &lt;world&gt;\n</system-out>")
   assert string.contains(xml, "<system-err>warning &amp; detail\n</system-err>")
 }
+
+pub fn junit_reporter_removes_xml_forbidden_control_characters_test() {
+  let xml =
+    reporter.junit_with_output(
+      sample_report(),
+      [
+        reporter.CaseCapture(
+          "test/math.gleam::passes_test",
+          "before\u{1b}[31mred\u{0}after\t🦘",
+          "",
+        ),
+      ],
+      15,
+    )
+  assert !string.contains(xml, "\u{1b}")
+  assert !string.contains(xml, "\u{0}")
+  assert string.contains(xml, "before[31mredafter\t🦘")
+}

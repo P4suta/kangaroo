@@ -39,7 +39,15 @@ pub type Command {
   Doctor(reporter: Reporter)
   Daemon
   Help
+  SubcommandHelp(name: String)
   Version
+}
+
+type OptionScope {
+  RunScope
+  WatchScope
+  CoverageScope
+  ListScope
 }
 
 pub fn default_run_options() -> RunOptions {
@@ -97,55 +105,119 @@ pub fn run_arguments(
   }
 }
 
+/// Serialises a one-shot child invocation with an explicit subcommand. A raw
+/// selector such as `watch` or `daemon` must never be reinterpreted as the
+/// child process's command.
+pub fn child_run_arguments(
+  options: RunOptions,
+  selectors: List(String),
+) -> List(String) {
+  ["run", ..run_arguments(options, selectors)]
+}
+
 pub fn parse(args: List(String)) -> Result(Command, String) {
   case args {
     [] -> Ok(Run(default_run_options()))
-    ["watch", ..flags] -> parse_options(flags, default_run_options(), Watch)
+    ["run", ..flags] -> parse_subcommand(flags, "run", RunScope, Run)
+    ["watch", ..flags] -> parse_subcommand(flags, "watch", WatchScope, Watch)
     ["coverage", ..flags] ->
-      parse_options(flags, default_run_options(), Coverage)
-    ["list", ..flags] -> parse_options(flags, default_run_options(), ListTests)
+      parse_subcommand(flags, "coverage", CoverageScope, Coverage)
+    ["list", ..flags] -> parse_subcommand(flags, "list", ListScope, ListTests)
     ["init"] -> Ok(Init)
+    ["init", "--help"] | ["init", "-h"] -> Ok(SubcommandHelp("init"))
     ["init", ..] -> Error("kangaroo: init does not accept arguments")
     ["doctor", ..flags] -> parse_doctor(flags)
     ["daemon"] -> Ok(Daemon)
+    ["daemon", "--help"] | ["daemon", "-h"] -> Ok(SubcommandHelp("daemon"))
     ["daemon", ..] -> Error("kangaroo: daemon does not accept arguments")
-    ["--help"] | ["-h"] | ["help"] -> Ok(Help)
+    ["version", "--help"] | ["version", "-h"] -> Ok(SubcommandHelp("version"))
     ["--version"] | ["-v"] | ["version"] -> Ok(Version)
-    arguments -> parse_options(arguments, default_run_options(), Run)
+    ["version", ..] -> Error("kangaroo: version does not accept arguments")
+    ["--help"] | ["-h"] | ["help"] -> Ok(Help)
+    ["help", name] -> help_for(name)
+    ["help", ..] -> Error("kangaroo: help accepts one command name")
+    arguments -> parse_subcommand(arguments, "run", RunScope, Run)
+  }
+}
+
+fn parse_subcommand(
+  args: List(String),
+  name: String,
+  scope: OptionScope,
+  finish: fn(RunOptions) -> Command,
+) -> Result(Command, String) {
+  case help_requested(args) {
+    True -> Ok(SubcommandHelp(name))
+    False -> parse_options(args, default_run_options(), scope, finish)
+  }
+}
+
+fn help_requested(args: List(String)) -> Bool {
+  list.contains(args, "--help") || list.contains(args, "-h")
+}
+
+fn help_for(name: String) -> Result(Command, String) {
+  case name {
+    "run"
+    | "watch"
+    | "coverage"
+    | "list"
+    | "init"
+    | "doctor"
+    | "daemon"
+    | "version" -> Ok(SubcommandHelp(name))
+    _ -> Error("kangaroo: unknown command `" <> name <> "`")
   }
 }
 
 fn parse_options(
   args: List(String),
   options: RunOptions,
+  scope: OptionScope,
   finish: fn(RunOptions) -> Command,
 ) -> Result(Command, String) {
-  case args {
-    [] -> Ok(finish(options))
-    ["--tag"] -> Error("kangaroo: --tag requires a value")
-    ["--tag", value, ..rest] ->
-      parse_options(
-        rest,
-        RunOptions(..options, include_tags: append(options.include_tags, value)),
-        finish,
-      )
-    ["--exclude-tag"] -> Error("kangaroo: --exclude-tag requires a value")
-    ["--exclude-tag", value, ..rest] ->
-      parse_options(
-        rest,
-        RunOptions(..options, exclude_tags: append(options.exclude_tags, value)),
-        finish,
-      )
-    ["--reporter"] -> Error("kangaroo: --reporter requires a value")
-    ["--reporter", value, ..rest] ->
-      case reporter(value) {
+  case scope, args {
+    _, [] -> Ok(finish(options))
+    _, ["--tag"] -> Error("kangaroo: --tag requires a value")
+    _, ["--tag", value, ..rest] ->
+      case string.trim(value) == "" {
+        True -> Error("kangaroo: --tag requires a non-empty value")
+        False ->
+          parse_options(
+            rest,
+            RunOptions(
+              ..options,
+              include_tags: append(options.include_tags, value),
+            ),
+            scope,
+            finish,
+          )
+      }
+    _, ["--exclude-tag"] -> Error("kangaroo: --exclude-tag requires a value")
+    _, ["--exclude-tag", value, ..rest] ->
+      case string.trim(value) == "" {
+        True -> Error("kangaroo: --exclude-tag requires a non-empty value")
+        False ->
+          parse_options(
+            rest,
+            RunOptions(
+              ..options,
+              exclude_tags: append(options.exclude_tags, value),
+            ),
+            scope,
+            finish,
+          )
+      }
+    _, ["--reporter"] -> Error("kangaroo: --reporter requires a value")
+    _, ["--reporter", value, ..rest] ->
+      case reporter(scope, value) {
         Error(message) -> Error(message)
         Ok(reporter) ->
-          parse_options(rest, RunOptions(..options, reporter:), finish)
+          parse_options(rest, RunOptions(..options, reporter:), scope, finish)
       }
-    ["--coverage-reporter"] ->
+    CoverageScope, ["--coverage-reporter"] ->
       Error("kangaroo: --coverage-reporter requires a value")
-    ["--coverage-reporter", value, ..rest] ->
+    CoverageScope, ["--coverage-reporter", value, ..rest] ->
       case coverage_reporter(value) {
         Error(message) -> Error(message)
         Ok(value) ->
@@ -158,46 +230,76 @@ fn parse_options(
                 value,
               ),
             ),
+            scope,
             finish,
           )
       }
-    ["--workers"] -> Error("kangaroo: --workers requires a value")
-    ["--workers", value, ..rest] ->
+    _, ["--coverage-reporter", ..] ->
+      Error("kangaroo: --coverage-reporter is only valid for coverage")
+    ListScope, [flag, ..]
+      if flag == "--workers"
+      || flag == "--timeout"
+      || flag == "--timeout-ms"
+      || flag == "--retry"
+      || flag == "--shuffle"
+      || flag == "--no-shuffle"
+      || flag == "--fail-fast"
+    -> Error("kangaroo: " <> flag <> " is not valid for list")
+    _, ["--workers"] -> Error("kangaroo: --workers requires a value")
+    _, ["--workers", value, ..rest] ->
       parse_positive_option(
         rest,
         value,
         "--workers",
         options,
+        scope,
         finish,
         fn(options, value) { RunOptions(..options, workers: Some(value)) },
       )
-    ["--timeout"] | ["--timeout-ms"] ->
+    _, ["--timeout"] | _, ["--timeout-ms"] ->
       Error("kangaroo: --timeout requires a value")
-    [flag, value, ..rest] if flag == "--timeout" || flag == "--timeout-ms" ->
+    _, [flag, value, ..rest] if flag == "--timeout" || flag == "--timeout-ms" ->
       parse_positive_option(
         rest,
         value,
         "--timeout",
         options,
+        scope,
         finish,
         fn(options, value) { RunOptions(..options, timeout_ms: Some(value)) },
       )
-    ["--retry"] -> Error("kangaroo: --retry requires a value")
-    ["--retry", value, ..rest] ->
+    _, ["--retry"] -> Error("kangaroo: --retry requires a value")
+    _, ["--retry", value, ..rest] ->
       case int.parse(value) {
         Ok(value) if value >= 0 ->
-          parse_options(rest, RunOptions(..options, retry: Some(value)), finish)
+          parse_options(
+            rest,
+            RunOptions(..options, retry: Some(value)),
+            scope,
+            finish,
+          )
         _ -> Error("kangaroo: --retry must be zero or greater")
       }
-    ["--shuffle", ..rest] ->
-      parse_options(rest, RunOptions(..options, shuffle: Some(True)), finish)
-    ["--no-shuffle", ..rest] ->
-      parse_options(rest, RunOptions(..options, shuffle: Some(False)), finish)
-    ["--fail-fast", ..rest] ->
-      parse_options(rest, RunOptions(..options, fail_fast: True), finish)
-    [argument, ..rest] ->
-      case inline_flag(argument, options) {
-        Ok(Some(options)) -> parse_options(rest, options, finish)
+    _, ["--shuffle", ..rest] ->
+      parse_options(
+        rest,
+        RunOptions(..options, shuffle: Some(True)),
+        scope,
+        finish,
+      )
+    _, ["--no-shuffle", ..rest] ->
+      parse_options(
+        rest,
+        RunOptions(..options, shuffle: Some(False)),
+        scope,
+        finish,
+      )
+    _, ["--fail-fast", ..rest] ->
+      parse_options(rest, RunOptions(..options, fail_fast: True), scope, finish)
+    _, ["", ..] -> Error("kangaroo: selector cannot be empty")
+    _, [argument, ..rest] ->
+      case inline_flag(scope, argument, options) {
+        Ok(Some(options)) -> parse_options(rest, options, scope, finish)
         Ok(None) ->
           case string.starts_with(argument, "-") {
             True -> Error("kangaroo: unknown flag `" <> argument <> "`")
@@ -208,6 +310,7 @@ fn parse_options(
                   ..options,
                   selectors: append(options.selectors, argument),
                 ),
+                scope,
                 finish,
               )
           }
@@ -217,24 +320,39 @@ fn parse_options(
 }
 
 fn inline_flag(
+  scope: OptionScope,
   argument: String,
   options: RunOptions,
 ) -> Result(Option(RunOptions), String) {
-  case argument {
-    "--tag=" <> value if value != "" ->
-      Ok(Some(
-        RunOptions(..options, include_tags: append(options.include_tags, value)),
-      ))
-    "--exclude-tag=" <> value if value != "" ->
-      Ok(Some(
-        RunOptions(..options, exclude_tags: append(options.exclude_tags, value)),
-      ))
-    "--reporter=" <> value ->
-      case reporter(value) {
+  case scope, argument {
+    _, "--tag=" <> value ->
+      case string.trim(value) == "" {
+        True -> Error("kangaroo: --tag requires a non-empty value")
+        False ->
+          Ok(Some(
+            RunOptions(
+              ..options,
+              include_tags: append(options.include_tags, value),
+            ),
+          ))
+      }
+    _, "--exclude-tag=" <> value ->
+      case string.trim(value) == "" {
+        True -> Error("kangaroo: --exclude-tag requires a non-empty value")
+        False ->
+          Ok(Some(
+            RunOptions(
+              ..options,
+              exclude_tags: append(options.exclude_tags, value),
+            ),
+          ))
+      }
+    _, "--reporter=" <> value ->
+      case reporter(scope, value) {
         Ok(reporter) -> Ok(Some(RunOptions(..options, reporter:)))
         Error(message) -> Error(message)
       }
-    "--coverage-reporter=" <> value ->
+    CoverageScope, "--coverage-reporter=" <> value ->
       case coverage_reporter(value) {
         Ok(value) ->
           Ok(Some(
@@ -248,23 +366,31 @@ fn inline_flag(
           ))
         Error(message) -> Error(message)
       }
-    "--workers=" <> value ->
+    _, "--coverage-reporter=" <> _ ->
+      Error("kangaroo: --coverage-reporter is only valid for coverage")
+    ListScope, "--workers=" <> _ ->
+      Error("kangaroo: --workers is not valid for list")
+    ListScope, "--timeout=" <> _ | ListScope, "--timeout-ms=" <> _ ->
+      Error("kangaroo: --timeout is not valid for list")
+    ListScope, "--retry=" <> _ ->
+      Error("kangaroo: --retry is not valid for list")
+    _, "--workers=" <> value ->
       case positive(value, "--workers") {
         Ok(value) -> Ok(Some(RunOptions(..options, workers: Some(value))))
         Error(message) -> Error(message)
       }
-    "--timeout=" <> value | "--timeout-ms=" <> value ->
+    _, "--timeout=" <> value | _, "--timeout-ms=" <> value ->
       case positive(value, "--timeout") {
         Ok(value) -> Ok(Some(RunOptions(..options, timeout_ms: Some(value))))
         Error(message) -> Error(message)
       }
-    "--retry=" <> value ->
+    _, "--retry=" <> value ->
       case int.parse(value) {
         Ok(value) if value >= 0 ->
           Ok(Some(RunOptions(..options, retry: Some(value))))
         _ -> Error("kangaroo: --retry must be zero or greater")
       }
-    _ -> Ok(None)
+    _, _ -> Ok(None)
   }
 }
 
@@ -273,11 +399,12 @@ fn parse_positive_option(
   value: String,
   flag: String,
   options: RunOptions,
+  scope: OptionScope,
   finish: fn(RunOptions) -> Command,
   update: fn(RunOptions, Int) -> RunOptions,
 ) -> Result(Command, String) {
   case positive(value, flag) {
-    Ok(value) -> parse_options(rest, update(options, value), finish)
+    Ok(value) -> parse_options(rest, update(options, value), scope, finish)
     Error(message) -> Error(message)
   }
 }
@@ -289,13 +416,19 @@ fn positive(value: String, flag: String) -> Result(Int, String) {
   }
 }
 
-fn reporter(value: String) -> Result(Reporter, String) {
-  case value {
-    "pretty" -> Ok(Pretty)
-    "dot" -> Ok(Dot)
-    "ndjson" | "json" -> Ok(Ndjson)
-    "junit" -> Ok(Junit)
-    _ -> Error("kangaroo: --reporter must be pretty, dot, ndjson, or junit")
+fn reporter(scope: OptionScope, value: String) -> Result(Reporter, String) {
+  case scope, value {
+    _, "pretty" -> Ok(Pretty)
+    RunScope, "dot" | WatchScope, "dot" | CoverageScope, "dot" -> Ok(Dot)
+    _, "ndjson" -> Ok(Ndjson)
+    RunScope, "junit" -> Ok(Junit)
+    RunScope, _ ->
+      Error("kangaroo: run --reporter must be pretty, dot, ndjson, or junit")
+    WatchScope, _ ->
+      Error("kangaroo: watch --reporter must be pretty, dot, or ndjson")
+    CoverageScope, _ ->
+      Error("kangaroo: coverage --reporter must be pretty, dot, or ndjson")
+    ListScope, _ -> Error("kangaroo: list --reporter must be pretty or ndjson")
   }
 }
 
@@ -321,9 +454,19 @@ fn reporter_name(reporter: Reporter) -> String {
 fn parse_doctor(flags: List(String)) -> Result(Command, String) {
   case flags {
     [] -> Ok(Doctor(Pretty))
+    ["--help"] | ["-h"] -> Ok(SubcommandHelp("doctor"))
+    ["--reporter"] -> Error("kangaroo: --reporter requires a value")
     ["--reporter", value] | ["--reporter=" <> value] ->
-      reporter(value) |> result_map_doctor
+      doctor_reporter(value) |> result_map_doctor
     _ -> Error("kangaroo: doctor accepts only --reporter")
+  }
+}
+
+fn doctor_reporter(value: String) -> Result(Reporter, String) {
+  case value {
+    "pretty" -> Ok(Pretty)
+    "ndjson" -> Ok(Ndjson)
+    _ -> Error("kangaroo: doctor --reporter must be pretty or ndjson")
   }
 }
 
@@ -358,9 +501,39 @@ fn list_append(first: List(a), second: List(a)) -> List(a) {
 }
 
 pub fn usage() -> String {
-  "usage: gleam run -m kangaroo -- <watch|coverage|list|init|doctor|daemon> [selectors] [options]\n"
+  "usage: gleam run -m kangaroo -- <run|watch|coverage|list|init|doctor|daemon|version> [selectors] [options]\n"
   <> "one shot: gleam test\n"
-  <> "options: --tag TAG --exclude-tag TAG --reporter pretty|dot|ndjson|junit --coverage-reporter terminal|lcov|cobertura --workers N --timeout MS --retry N --shuffle --fail-fast"
+  <> "run `gleam run -m kangaroo -- COMMAND --help` for command-specific options"
+}
+
+pub fn usage_for(name: String) -> String {
+  case name {
+    "run" ->
+      "usage: gleam run -m kangaroo -- run [selectors] [options]\n"
+      <> execution_options("pretty|dot|ndjson|junit")
+    "watch" ->
+      "usage: gleam run -m kangaroo -- watch [selectors] [options]\n"
+      <> execution_options("pretty|dot|ndjson")
+    "coverage" ->
+      "usage: gleam run -m kangaroo -- coverage [selectors] [options]\n"
+      <> execution_options("pretty|dot|ndjson")
+      <> "\ncoverage options: --coverage-reporter terminal|lcov|cobertura"
+    "list" ->
+      "usage: gleam run -m kangaroo -- list [selectors] [options]\n"
+      <> "options: --tag TAG --exclude-tag TAG --reporter pretty|ndjson"
+    "doctor" ->
+      "usage: gleam run -m kangaroo -- doctor [--reporter pretty|ndjson]"
+    "init" -> "usage: gleam run -m kangaroo -- init"
+    "daemon" -> "usage: gleam run -m kangaroo -- daemon"
+    "version" -> "usage: gleam run -m kangaroo -- version"
+    _ -> usage()
+  }
+}
+
+fn execution_options(reporters: String) -> String {
+  "options: --tag TAG --exclude-tag TAG --reporter "
+  <> reporters
+  <> " --workers N --timeout MS --retry N --shuffle --no-shuffle --fail-fast"
 }
 
 pub fn version() -> String {

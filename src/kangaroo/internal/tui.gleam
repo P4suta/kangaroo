@@ -136,6 +136,13 @@ pub fn finish_output(state: State) -> State {
   }
 }
 
+/// Drops an incomplete record when a process generation is cancelled. A
+/// fragment from an obsolete child must never prefix the first event emitted
+/// by its replacement.
+pub fn discard_partial_output(state: State) -> State {
+  State(..state, output_buffer: "")
+}
+
 /// Applies only complete NDJSON records and retains a trailing partial record
 /// for the next process chunk.
 pub fn apply_chunk(state: State, chunk: String) -> State {

@@ -189,6 +189,17 @@ fn seconds(milliseconds: Int) -> String {
 
 fn xml(value: String) -> String {
   value
+  |> string.to_utf_codepoints
+  |> list.filter(fn(codepoint) {
+    let value = string.utf_codepoint_to_int(codepoint)
+    value == 0x9
+    || value == 0xA
+    || value == 0xD
+    || { value >= 0x20 && value <= 0xD7FF }
+    || { value >= 0xE000 && value <= 0xFFFD }
+    || { value >= 0x10000 && value <= 0x10FFFF }
+  })
+  |> string.from_utf_codepoints
   |> string.replace(each: "&", with: "&amp;")
   |> string.replace(each: "<", with: "&lt;")
   |> string.replace(each: ">", with: "&gt;")

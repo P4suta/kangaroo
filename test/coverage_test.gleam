@@ -1,4 +1,6 @@
 import gleam/string
+import kangaroo/internal/cli
+import kangaroo/internal/command.{Ndjson, Pretty}
 import kangaroo/internal/coverage.{FileCoverage}
 import kangaroo/internal/coverage_run
 import kangaroo/internal/fs
@@ -12,6 +14,7 @@ fn files() {
 
 pub fn generated_workspace_entries_are_excluded_test() {
   assert fs.workspace_entry_excluded(".kangaroo-coverage-old")
+  assert fs.workspace_entry_excluded(".kangaroo-coverage-owner")
   assert fs.workspace_entry_excluded(".vscode-test")
   assert fs.workspace_entry_excluded("node_modules")
   assert fs.workspace_entry_excluded("build")
@@ -26,6 +29,20 @@ pub fn workspace_clone_reuses_dependencies_without_compiled_outputs_test() {
   let copied_dependencies =
     fs.is_directory(workspace <> "/build/packages/gleam_stdlib")
   let copied_compiled_output = fs.is_directory(workspace <> "/build/dev")
+  let copied_nested_dependencies =
+    fs.is_directory(
+      workspace <> "/fixtures/watch_project/build/packages/gleam_stdlib",
+    )
+  let copied_nested_compiled_output =
+    fs.is_directory(workspace <> "/fixtures/watch_project/build/dev")
+  let copied_legitimate_coverage_source =
+    fs.exists(
+      workspace <> "/test/fixtures/watch_root/src/coverage/legitimate.gleam",
+    )
+  let copied_legitimate_build_source =
+    fs.exists(
+      workspace <> "/test/fixtures/watch_root/src/build/legitimate.gleam",
+    )
   let assert Ok(Nil) =
     fs.write_file(workspace <> "/coverage/result.txt", "first")
   let assert Ok(Nil) =
@@ -35,17 +52,54 @@ pub fn workspace_clone_reuses_dependencies_without_compiled_outputs_test() {
 
   assert copied_config
   assert copied_dependencies
+  assert copied_nested_dependencies
+  assert copied_legitimate_coverage_source
+  assert copied_legitimate_build_source
   assert !copied_compiled_output
+  assert !copied_nested_compiled_output
+  assert !fs.is_directory(workspace)
+}
+
+pub fn generated_names_inside_source_trees_are_not_pruned_test() {
+  let assert Ok(files) =
+    fs.list_source_files_recursive("test/fixtures/watch_root/src")
+
+  assert list_contains_path_segment(files, "/coverage/legitimate.gleam")
+  assert list_contains_path_segment(files, "/build/legitimate.gleam")
+}
+
+pub fn coverage_cleanup_requires_an_owned_workspace_marker_test() {
+  let assert Ok(workspace) = fs.copy_to_temporary_workspace(".")
+  let marker = workspace <> "/.kangaroo-coverage-owner"
+  let assert Ok(Nil) = fs.remove_file(marker)
+
+  let assert Error(_) = fs.remove_tree(workspace)
+  assert fs.is_directory(workspace)
+
+  // Restore the path-bound marker so the disposable fixture is recoverable.
+  let assert Ok(Nil) = fs.write_exclusive(marker, workspace)
+  let assert Ok(Nil) = fs.remove_tree(workspace)
   assert !fs.is_directory(workspace)
 }
 
 pub fn workspace_source_listing_prunes_every_generated_tree_test() {
   let assert Ok(files) = fs.list_workspace_files_recursive(".")
   assert files != []
-  assert !list_contains_path_segment(files, "/build/")
+  assert !list_contains_root_path(files, "build/")
+  assert !list_contains_root_path(files, "coverage/")
   assert !list_contains_path_segment(files, "/.vscode-test/")
   assert !list_contains_path_segment(files, "/node_modules/")
   assert !list_contains_path_segment(files, "/.kangaroo-coverage-")
+}
+
+fn list_contains_root_path(files: List(String), prefix: String) -> Bool {
+  case files {
+    [] -> False
+    [file, ..rest] -> {
+      let file = string.replace(file, "\\", "/") |> string.remove_prefix("./")
+      string.starts_with(file, prefix) || list_contains_root_path(rest, prefix)
+    }
+  }
 }
 
 fn list_contains_path_segment(files: List(String), segment: String) -> Bool {
@@ -168,4 +222,30 @@ pub fn failed_tests_or_thresholds_use_exit_one_test() {
   assert coverage_run.final_exit_code(1, []) == 1
   assert coverage_run.final_exit_code(0, ["below minimum"]) == 1
   assert coverage_run.final_exit_code(2, []) == 2
+}
+
+pub fn coverage_cleanup_errors_never_hide_the_primary_failure_test() {
+  assert coverage_run.combine_cleanup(Ok(42), Ok(Nil)) == Ok(42)
+  assert coverage_run.combine_cleanup(Ok(42), Error("locked"))
+    == Error("could not remove coverage workspace: locked")
+  assert coverage_run.combine_cleanup(Error("collection failed"), Ok(Nil))
+    == Error("collection failed")
+  assert coverage_run.combine_cleanup(
+      Error("collection failed"),
+      Error("locked"),
+    )
+    == Error("collection failed\ncould not remove coverage workspace: locked")
+}
+
+pub fn coverage_ndjson_keeps_compiler_logs_off_stdout_test() {
+  let event = "{\"type\":\"run_started\",\"run_id\":1,\"case_count\":2}"
+  assert cli.partition_coverage_ndjson(
+      "  Compiling dependency\r\n" <> event <> "\n\n",
+    )
+    == #([event], ["  Compiling dependency"])
+}
+
+pub fn coverage_ndjson_keeps_the_terminal_table_off_stdout_test() {
+  assert !cli.coverage_terminal_uses_stdout(Ndjson)
+  assert cli.coverage_terminal_uses_stdout(Pretty)
 }

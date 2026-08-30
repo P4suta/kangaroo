@@ -106,8 +106,12 @@ pub fn index(
         })
         |> list.flatten
       let positions = source_positions.locate(source, position_offsets)
+      let test_definitions = case in_test_paths(path, test_paths) {
+        True -> parsed.functions
+        False -> []
+      }
       use tests <- result.try(
-        parsed.functions
+        test_definitions
         |> list.reverse
         |> list.try_map(fn(definition) {
           indexed_test(
@@ -243,7 +247,16 @@ fn directive(
         None -> Ok(None)
         Some("tag") ->
           case arguments {
-            [glance.String(_, value)] -> Ok(Some(Tag(value)))
+            [glance.String(_, value)] ->
+              case string.trim(value) == "" {
+                True ->
+                  invalid(
+                    id,
+                    source_line(location, fallback_line),
+                    "tag must be a non-empty string literal",
+                  )
+                False -> Ok(Some(Tag(value)))
+              }
             _ ->
               invalid(
                 id,
@@ -255,7 +268,18 @@ fn directive(
           case arguments {
             [glance.List(_, values, None)] ->
               case list.try_map(values, string_literal) {
-                Ok(values) -> Ok(Some(Tags(values)))
+                Ok(values) ->
+                  case
+                    list.any(values, fn(value) { string.trim(value) == "" })
+                  {
+                    True ->
+                      invalid(
+                        id,
+                        source_line(location, fallback_line),
+                        "tags must contain non-empty string literals",
+                      )
+                    False -> Ok(Some(Tags(values)))
+                  }
                 Error(_) ->
                   invalid(
                     id,
@@ -467,8 +491,8 @@ fn module_name(path: String, test_paths: List(String)) -> String {
 
 fn fixed_source_relative(path: String) -> Option(String) {
   case path {
-    "test/" <> relative -> Some(relative)
-    "src/" <> relative -> Some(relative)
+    "test/" <> relative | "src/" <> relative | "dev/" <> relative ->
+      Some(relative)
     _ -> None
   }
 }
@@ -476,9 +500,9 @@ fn fixed_source_relative(path: String) -> Option(String) {
 fn configured_module_name(path: String, test_paths: List(String)) -> String {
   let root =
     test_paths
-    |> list.map(normalise_path)
+    |> list.map(normalise_test_root)
     |> list.filter(fn(root) {
-      path == root || string.starts_with(path, root <> "/")
+      root == "" || path == root || string.starts_with(path, root <> "/")
     })
     |> list.sort(longest_first)
     |> list.first
@@ -489,6 +513,27 @@ fn configured_module_name(path: String, test_paths: List(String)) -> String {
     Error(_) -> path
   }
   string.remove_suffix(relative, ".gleam")
+}
+
+fn normalise_test_root(path: String) -> String {
+  case normalise_path(path) {
+    "." -> ""
+    path -> trim_trailing_slashes(path)
+  }
+}
+
+fn in_test_paths(path: String, test_paths: List(String)) -> Bool {
+  list.any(test_paths, fn(root) {
+    let root = normalise_test_root(root)
+    root == "" || path == root || string.starts_with(path, root <> "/")
+  })
+}
+
+fn trim_trailing_slashes(path: String) -> String {
+  case string.ends_with(path, "/") {
+    True -> trim_trailing_slashes(string.drop_end(path, 1))
+    False -> path
+  }
 }
 
 fn longest_first(a: String, b: String) -> Order {

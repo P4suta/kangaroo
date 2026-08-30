@@ -2,6 +2,7 @@ import gleam/option.{type Option}
 
 pub type LineRead {
   InputLine(value: String)
+  InputError(message: String)
   InputPending
   InputEnd
 }
@@ -15,6 +16,12 @@ pub fn list_files_recursive(directory: String) -> Result(List(String), String)
 @external(erlang, "kangaroo_fs_ffi", "list_workspace_files_recursive")
 @external(javascript, "../../kangaroo_fs_ffi.mjs", "list_workspace_files_recursive")
 pub fn list_workspace_files_recursive(
+  directory: String,
+) -> Result(List(String), String)
+
+@external(erlang, "kangaroo_fs_ffi", "list_source_files_recursive")
+@external(javascript, "../../kangaroo_fs_ffi.mjs", "list_source_files_recursive")
+pub fn list_source_files_recursive(
   directory: String,
 ) -> Result(List(String), String)
 
@@ -35,8 +42,9 @@ pub fn args() -> List(String)
 pub fn read_line() -> Option(String)
 
 /// Reads one stdin line without preventing daemon operations from being
-/// polled. `InputPending` means the timeout elapsed; `InputEnd` is permanent
-/// EOF.
+/// polled. `InputError` reports a rejected bounded line while keeping the
+/// reader usable, `InputPending` means the timeout elapsed, and `InputEnd` is
+/// permanent EOF.
 @external(erlang, "kangaroo_fs_ffi", "read_line_timeout")
 @external(javascript, "../../kangaroo_fs_ffi.mjs", "read_line_timeout")
 pub fn read_line_timeout(milliseconds: Int) -> LineRead
@@ -84,6 +92,16 @@ pub fn write_exclusive(path: String, contents: String) -> Result(Nil, String)
 @external(erlang, "kangaroo_fs_ffi", "write_file")
 @external(javascript, "../../kangaroo_fs_ffi.mjs", "write_file")
 pub fn write_file(path: String, contents: String) -> Result(Nil, String)
+
+/// Resolves a project-relative output path after rejecting traversal and every
+/// existing symbolic-link component. Call this immediately before writes that
+/// originate from repository configuration or fixed report destinations.
+@external(erlang, "kangaroo_fs_ffi", "project_file_path")
+@external(javascript, "../../kangaroo_fs_ffi.mjs", "project_file_path")
+pub fn project_file_path(
+  project_dir: String,
+  relative: String,
+) -> Result(String, String)
 
 @external(erlang, "kangaroo_fs_ffi", "replace_if_unchanged")
 @external(javascript, "../../kangaroo_fs_ffi.mjs", "replace_if_unchanged")

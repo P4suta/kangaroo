@@ -14,12 +14,21 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { tmpdir } from "node:os";
 import { Error as GleamError, Ok, toList } from "./gleam.mjs";
 import { Option$None$const, Some } from "../gleam_stdlib/gleam/option.mjs";
 import {
   InputEnd,
+  InputError,
   InputLine,
   InputPending,
 } from "./kangaroo/internal/fs.mjs";
@@ -39,6 +48,7 @@ const activityBuffer =
 globalThis[activityBufferKey] = activityBuffer;
 const activity = new Int32Array(activityBuffer);
 let observedActivity = Atomics.load(activity, 0);
+const coverageOwnerMarker = ".kangaroo-coverage-owner";
 
 export function list_files_recursive(directory) {
   try {
@@ -61,9 +71,30 @@ export function list_files_recursive(directory) {
 export function list_workspace_files_recursive(directory) {
   try {
     const files = [];
-    const walk = (dir) => {
+    const walk = (dir, workspaceRoot = false) => {
+      const packageRoot = workspaceRoot || isPackageRoot(dir);
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (workspace_entry_excluded(entry.name)) continue;
+        if (workspaceEntryExcludedAt(entry.name, packageRoot)) continue;
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (entry.isFile()) files.push(path);
+      }
+    };
+    walk(directory, true);
+    files.sort();
+    return new Ok(toList(files));
+  } catch (error) {
+    return new GleamError(String(error && error.message ? error.message : error));
+  }
+}
+
+export function list_source_files_recursive(directory) {
+  try {
+    const files = [];
+    const walk = (dir) => {
+      const packageRoot = isPackageRoot(dir);
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (workspaceEntryExcludedAt(entry.name, packageRoot)) continue;
         const path = join(dir, entry.name);
         if (entry.isDirectory()) walk(path);
         else if (entry.isFile()) files.push(path);
@@ -111,18 +142,32 @@ export function remove_file(path) {
   }
 }
 
-const workspaceExcludes = new Set([
+const workspaceUniversalExcludes = new Set([
   ".git",
-  "build",
   ".kangaroo",
   ".vscode-test",
-  "coverage",
   "node_modules",
 ]);
+const workspacePackageExcludes = new Set(["build", "coverage"]);
 
 export function workspace_entry_excluded(name) {
+  return workspaceEntryExcludedAt(name, true);
+}
+
+function workspaceEntryExcludedAt(name, packageRoot) {
   const value = String(name);
-  return workspaceExcludes.has(value) || value.startsWith(".kangaroo-coverage-");
+  return workspaceUniversalExcludes.has(value) ||
+    (packageRoot && workspacePackageExcludes.has(value)) ||
+    value.startsWith(".kangaroo-coverage-");
+}
+
+function isPackageRoot(directory) {
+  try {
+    const info = lstatSync(join(directory, "gleam.toml"));
+    return info.isFile() && !info.isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 export function copy_to_temporary_workspace(projectDir) {
@@ -135,7 +180,11 @@ export function copy_to_temporary_workspace(projectDir) {
       if (error?.code !== "EACCES" && error?.code !== "EROFS") throw error;
       destination = mkdtempSync(join(tmpdir(), ".kangaroo-coverage-"));
     }
-    copyDirectory(source, destination, true);
+    writeFileSync(join(destination, coverageOwnerMarker), destination, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+    copyDirectory(source, destination, true, true);
     return new Ok(destination);
   } catch (error) {
     if (destination) rmSync(destination, { recursive: true, force: true });
@@ -143,13 +192,19 @@ export function copy_to_temporary_workspace(projectDir) {
   }
 }
 
-function copyDirectory(source, destination, includeDependencyCache = false) {
+function copyDirectory(
+  source,
+  destination,
+  includeDependencyCache = false,
+  workspaceRoot = false,
+) {
+  const packageRoot = workspaceRoot || isPackageRoot(source);
   for (const entry of readdirSync(source, { withFileTypes: true })) {
-    if (includeDependencyCache && entry.name === "build") {
+    if (includeDependencyCache && packageRoot && entry.name === "build") {
       copyDependencyCache(source, destination);
       continue;
     }
-    if (workspace_entry_excluded(entry.name)) continue;
+    if (workspaceEntryExcludedAt(entry.name, packageRoot)) continue;
     const from = join(source, entry.name);
     const to = join(destination, entry.name);
     const info = lstatSync(from);
@@ -157,7 +212,7 @@ function copyDirectory(source, destination, includeDependencyCache = false) {
     if (info.isDirectory()) {
       mkdirSync(to);
       chmodSync(to, info.mode);
-      copyDirectory(from, to);
+      copyDirectory(from, to, includeDependencyCache);
     } else if (info.isFile()) {
       copyFileSync(from, to);
       chmodSync(to, info.mode);
@@ -183,7 +238,7 @@ function copyDependencyCache(source, destination) {
   chmodSync(toBuild, lstatSync(sourceBuild).mode);
   mkdirSync(to);
   chmodSync(to, info.mode);
-  copyDirectory(from, to);
+  copyDirectory(from, to, false);
 }
 
 export function remove_tree(path) {
@@ -191,6 +246,33 @@ export function remove_tree(path) {
     const value = resolve(String(path));
     if (!basename(value).startsWith(".kangaroo-coverage-")) {
       throw new Error("refusing to remove a non-coverage workspace");
+    }
+    let workspaceInfo;
+    try {
+      workspaceInfo = lstatSync(value);
+    } catch (error) {
+      if (error?.code === "ENOENT") return new Ok(undefined);
+      throw error;
+    }
+    const marker = join(value, coverageOwnerMarker);
+    let markerInfo;
+    try {
+      markerInfo = lstatSync(marker);
+    } catch {
+      throw new Error(
+        "refusing to remove a coverage workspace without its ownership marker",
+      );
+    }
+    if (
+      !workspaceInfo.isDirectory() ||
+      workspaceInfo.isSymbolicLink() ||
+      !markerInfo.isFile() ||
+      markerInfo.isSymbolicLink() ||
+      readFileSync(marker, "utf8") !== value
+    ) {
+      throw new Error(
+        "refusing to remove a coverage workspace without its ownership marker",
+      );
     }
     rmSync(value, { recursive: true, force: true });
     return new Ok(undefined);
@@ -216,6 +298,57 @@ export function write_file(path, contents) {
     return new Ok(undefined);
   } catch (error) {
     return new GleamError(String(error && error.message ? error.message : error));
+  }
+}
+
+export function project_file_path(projectDir, relativePath) {
+  try {
+    const root = resolve(String(projectDir));
+    const raw = String(relativePath).replaceAll("\\", "/");
+    const components = raw.split("/");
+    if (
+      !raw ||
+      isAbsolute(raw) ||
+      /^[A-Za-z]:/.test(raw) ||
+      components.some((component) =>
+        component === "" || component === "." || component === ".."
+      )
+    ) {
+      throw new Error("project output path must be a safe relative path");
+    }
+    const candidate = resolve(root, ...components);
+    const fromRoot = relative(root, candidate);
+    if (!fromRoot || fromRoot === ".." || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
+      throw new Error("project output path escapes the project directory");
+    }
+    assertNoSymlinkComponents(root, components);
+    return new Ok(candidate);
+  } catch (error) {
+    return new GleamError(String(error && error.message ? error.message : error));
+  }
+}
+
+function assertNoSymlinkComponents(root, components) {
+  let current = root;
+  const rootInfo = lstatSync(root);
+  if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) {
+    throw new Error("project directory must be a real directory");
+  }
+  for (let index = 0; index < components.length; index += 1) {
+    current = join(current, components[index]);
+    let info;
+    try {
+      info = lstatSync(current);
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    if (info.isSymbolicLink()) {
+      throw new Error("refusing to write through a symbolic link");
+    }
+    if (index < components.length - 1 && !info.isDirectory()) {
+      throw new Error("project output parent is not a directory");
+    }
   }
 }
 
@@ -308,6 +441,9 @@ export function read_line_timeout(milliseconds) {
     return new InputEnd();
   }
   inputReader.awaitingResume = true;
+  if (received.message.type === "error") {
+    return new InputError(String(received.message.value || "stdin error"));
+  }
   return new InputLine(String(received.message.value || ""));
 }
 

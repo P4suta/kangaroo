@@ -42,6 +42,12 @@ pub fn selector_parses_ids_tags_files_and_locations_test() {
     == Ok(Location("test/a_test.gleam", 9))
 }
 
+pub fn selector_rejects_blank_paths_and_tags_test() {
+  assert selector.parse("  ") == Error("selector cannot be empty")
+  assert selector.parse("tag:  ") == Error("tag selector cannot be empty")
+  assert selector.parse("--help") == Error("selector cannot start with '-'")
+}
+
 pub fn selector_uses_union_without_reordering_test() {
   let assert [_, second, third] = tests()
   let selected =

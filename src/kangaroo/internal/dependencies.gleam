@@ -80,6 +80,7 @@ fn changed_module(path: String) -> Result(String, Nil) {
   case path {
     "src/" <> relative -> gleam_module(relative)
     "test/" <> relative -> gleam_module(relative)
+    "dev/" <> relative -> gleam_module(relative)
     _ -> Error(Nil)
   }
 }

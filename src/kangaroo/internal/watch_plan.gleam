@@ -49,7 +49,7 @@ pub fn initialise(
   Ok(State(cache: updated.cache, modules: updated.modules))
 }
 
-/// Refreshes the content-hash index and produces the smallest safe execution
+/// Refreshes the exact-source index and produces the smallest safe execution
 /// selection. Modules removed in this generation remain in the dependency
 /// graph for this decision so their former dependants are still rerun.
 pub fn refresh(

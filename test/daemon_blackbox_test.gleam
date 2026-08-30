@@ -22,9 +22,11 @@ fn completed_output_contains(output: String, expected: String) -> Bool {
 }
 
 pub fn daemon_bidirectional_protocol_and_cancellation_test() {
+  let root_build = "build/dev/" <> vm.target()
+  assert fs.is_directory(root_build)
   let assert Ok(handle) =
     process.start(
-      ".",
+      "fixtures/coverage_project",
       "gleam",
       watcher.coordinator_arguments_for(vm.target(), vm.runtime_name(), [
         "daemon",
@@ -39,18 +41,24 @@ pub fn daemon_bidirectional_protocol_and_cancellation_test() {
   )
   let assert Ok(discovery) =
     await_contains(handle, "\"type\":\"discovered\"", 15_000, "")
-  assert string.contains(discovery, "test/v1/passing.gleam::fixture_test")
-  assert string.contains(discovery, "\"line\":1")
+  assert string.contains(
+    discovery,
+    "test/kangaroo_coverage_fixture_test.gleam::covered_test",
+  )
+  assert string.contains(discovery, "\"line\":8")
 
   process.write(
     handle,
-    "{\"protocol_version\":1,\"id\":\"run-1\",\"command\":\"run\",\"selectors\":[\"test/v1/passing.gleam::fixture_test\"]}\n",
+    "{\"protocol_version\":1,\"id\":\"run-1\",\"command\":\"run\",\"selectors\":[\"test/kangaroo_coverage_fixture_test.gleam::covered_test\"]}\n",
   )
   let assert Ok(run_output) =
     await_contains(
       handle,
       "\"type\":\"completed\",\"request_id\":\"run-1\"",
-      10_000,
+      // This is a functional protocol assertion. The child compile/run can
+      // share a constrained host with the process stress cases; cancellation
+      // latency is asserted independently below and in the benchmark gate.
+      30_000,
       "",
     )
   assert string.contains(run_output, "\"type\":\"started\"")
@@ -77,6 +85,50 @@ pub fn daemon_bidirectional_protocol_and_cancellation_test() {
     "{\"protocol_version\":1,\"id\":\"shutdown-1\",\"command\":\"shutdown\"}\n",
   )
   let assert Ok(completed) = await_completion(handle, 5000, "")
+  assert completed.exit_code == 0
+  assert string.contains(completed.output, "\"type\":\"shutdown\"")
+  // The nested compiler belongs to the fixture project. It must never clean
+  // or replace the outer test runner's live module tree.
+  assert fs.is_directory(root_build)
+}
+
+pub fn overlong_fragmented_request_is_rejected_without_poisoning_daemon_test() {
+  let assert Ok(handle) =
+    process.start(
+      "fixtures/coverage_project",
+      "gleam",
+      watcher.coordinator_arguments_for(vm.target(), vm.runtime_name(), [
+        "daemon",
+      ]),
+      [],
+      30_000,
+    )
+
+  // Do not charge compiler/runtime startup to the bounded-input response
+  // deadline. The first complete protocol response proves that the daemon's
+  // stdin reader and coordinator loop are ready before the large write.
+  process.write(
+    handle,
+    "{\"protocol_version\":1,\"id\":\"ready-limit\",\"command\":\"discover\"}\n",
+  )
+  let assert Ok(_) =
+    await_contains(handle, "\"type\":\"discovered\"", 15_000, "")
+
+  process.write(handle, string.repeat("x", 1_048_577) <> "\n")
+  let assert Ok(output) =
+    await_contains(
+      handle,
+      "daemon request line exceeded 1048576 bytes",
+      5000,
+      "",
+    )
+  assert string.contains(output, "\"type\":\"error\"")
+
+  process.write(
+    handle,
+    "{\"protocol_version\":1,\"id\":\"shutdown-after-limit\",\"command\":\"shutdown\"}\n",
+  )
+  let assert Ok(completed) = await_completion(handle, 5000, output)
   assert completed.exit_code == 0
   assert string.contains(completed.output, "\"type\":\"shutdown\"")
 }

@@ -94,3 +94,23 @@ pub fn watch_plan_ignores_unrelated_source_edit_test() {
   let assert Selected(tests) = refresh.selection
   assert tests == []
 }
+
+pub fn watch_plan_tracks_dev_helpers_without_running_out_of_root_tests_test() {
+  let sources = [
+    #("dev/support.gleam", "pub fn value() { 1 }"),
+    #(
+      "test/unit/uses_support_test.gleam",
+      "import support\npub fn uses_support_test() { assert support.value() == 1 }",
+    ),
+    #(
+      "test/integration/outside_test.gleam",
+      "import support\npub fn outside_test() { assert support.value() == 1 }",
+    ),
+  ]
+  let assert Ok(state) = watch_plan.initialise(sources, ["test/unit"])
+  let assert Ok(refresh) =
+    watch_plan.refresh(state, sources, ["test/unit"], ["dev/support.gleam"])
+  let assert Selected(tests) = refresh.selection
+  assert list.map(tests, fn(indexed) { indexed.id })
+    == ["test/unit/uses_support_test.gleam::uses_support_test"]
+}

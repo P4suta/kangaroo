@@ -1,4 +1,4 @@
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/string
 import kangaroo/internal/index.{IndexedTest}
 import kangaroo/internal/protocol.{
@@ -56,6 +56,54 @@ pub fn protocol_rejects_unsupported_versions_and_commands_test() {
     == Error("unknown daemon command `erase`")
 }
 
+pub fn protocol_rejects_empty_identity_and_filter_values_test() {
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"\",\"command\":\"discover\"}",
+    )
+    == Error("request id cannot be empty")
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"run-1\",\"command\":\"run\",\"selectors\":[\"\"]}",
+    )
+    == Error("selector cannot be empty")
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"run-1\",\"command\":\"run\",\"include_tags\":[\"\"]}",
+    )
+    == Error("include_tags cannot contain an empty value")
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"watch-1\",\"command\":\"watch\",\"exclude_tags\":[\"\"]}",
+    )
+    == Error("exclude_tags cannot contain an empty value")
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"  \",\"command\":\"discover\"}",
+    )
+    == Error("request id cannot be empty")
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"run-1\",\"command\":\"run\",\"include_tags\":[\" \"]}",
+    )
+    == Error("include_tags cannot contain an empty value")
+  assert protocol.decode_request(
+      "{\"protocol_version\":1,\"id\":\"cancel-1\",\"command\":\"cancel\",\"operation_id\":\" \"}",
+    )
+    == Error("cancel requires operation_id")
+}
+
+pub fn daemon_child_protocol_requires_the_private_mode_handshake_test() {
+  assert protocol.child_environment("run-1")
+    == [
+      #("KANGAROO_PROTOCOL_MODE", "kangaroo-daemon-child-v1"),
+      #("KANGAROO_PROTOCOL_REQUEST_ID", "run-1"),
+    ]
+  assert protocol.child_request_id(
+      Some("kangaroo-daemon-child-v1"),
+      Some("run-1"),
+    )
+    == Some("run-1")
+  assert protocol.child_request_id(None, Some("run-1")) == None
+  assert protocol.child_request_id(Some("unrelated"), Some("run-1")) == None
+  assert protocol.child_request_id(Some("kangaroo-daemon-child-v1"), Some(" "))
+    == None
+}
+
 pub fn protocol_encodes_discovery_with_one_based_ranges_test() {
   let line = protocol.encode_discovered("req-1", [indexed()])
   assert string.contains(line, "\"protocol_version\":1")
@@ -75,9 +123,24 @@ pub fn protocol_encodes_operation_lifecycle_with_stable_ids_test() {
   assert string.contains(cancelled, "\"operation_id\":\"run-1\"")
 }
 
+pub fn protocol_normalises_unexpected_child_status_to_infrastructure_test() {
+  assert protocol.encode_completed("run-1", 137)
+    == "{\"protocol_version\":1,\"type\":\"completed\",\"request_id\":\"run-1\",\"exit_code\":2}"
+  assert protocol.encode_completed("run-1", -1)
+    == "{\"protocol_version\":1,\"type\":\"completed\",\"request_id\":\"run-1\",\"exit_code\":2}"
+}
+
 pub fn protocol_forwards_only_validated_child_event_envelopes_test() {
   assert protocol.forwardable_event(
+    "{\"protocol_version\":1,\"type\":\"event\",\"request_id\":\"run-1\",\"event\":{\"type\":\"run_started\",\"run_id\":1,\"case_count\":1}}",
+    "run-1",
+  )
+  assert !protocol.forwardable_event(
     "{\"protocol_version\":1,\"type\":\"event\",\"request_id\":\"run-1\",\"event\":{}}",
+    "run-1",
+  )
+  assert !protocol.forwardable_event(
+    "{\"protocol_version\":1,\"type\":\"event\",\"request_id\":\"run-1\",\"event\":{\"type\":\"case_finished\",\"suite\":\"math\",\"case\":\"addition\",\"outcome\":{\"kind\":\"passed\"},\"duration_ms\":\"fast\"}}",
     "run-1",
   )
   assert !protocol.forwardable_event("Compiling project", "run-1")
@@ -87,6 +150,10 @@ pub fn protocol_forwards_only_validated_child_event_envelopes_test() {
   )
   assert !protocol.forwardable_event(
     "{\"protocol_version\":1,\"type\":\"event\",\"request_id\":\"other\",\"event\":{}}",
+    "run-1",
+  )
+  assert !protocol.forwardable_event(
+    "{\"protocol_version\":1,\"type\":\"event\",\"request_id\":\"run-1\",\"event\":{\"type\":\"run_started\",\"run_id\":1,\"case_count\":1},\"extra\":true}",
     "run-1",
   )
 }

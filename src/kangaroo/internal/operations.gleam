@@ -1,5 +1,6 @@
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 
 pub type Kind {
@@ -8,12 +9,20 @@ pub type Kind {
 }
 
 pub type Entry {
-  Entry(id: String, handle: Int, kind: Kind, buffer: String)
+  Entry(
+    id: String,
+    handle: Int,
+    kind: Kind,
+    buffer: String,
+    pending_fragments: List(String),
+  )
 }
 
 pub type State {
   State(entries: List(Entry))
 }
+
+const max_active_operations = 32
 
 pub fn empty() -> State {
   State([])
@@ -27,37 +36,79 @@ pub fn has(state: State, id: String) -> Bool {
   list.any(state.entries, fn(entry) { entry.id == id })
 }
 
+/// Looks up an operation without relinquishing ownership. Cancellation keeps
+/// the entry until the child reaches a terminal state, so a timeout cannot
+/// turn a still-running process into an untracked stale operation.
+pub fn handle(state: State, id: String) -> Option(Int) {
+  case list.find(state.entries, fn(entry) { entry.id == id }) {
+    Ok(entry) -> Some(entry.handle)
+    Error(_) -> None
+  }
+}
+
 pub fn start(
   state: State,
   id: String,
   handle: Int,
   kind: Kind,
 ) -> Result(State, String) {
-  case list.any(state.entries, fn(entry) { entry.id == id }) {
-    True -> Error("operation `" <> id <> "` is already active")
-    False ->
-      Ok(State(list.append(state.entries, [Entry(id, handle, kind, "")])))
+  use _ <- result.try(can_start(state, id))
+  Ok(State(list.append(state.entries, [Entry(id, handle, kind, "", [])])))
+}
+
+/// Checks daemon capacity before a child process is spawned.
+pub fn can_start(state: State, id: String) -> Result(Nil, String) {
+  case has(state, id), list.length(state.entries) >= max_active_operations {
+    True, _ -> Error("operation `" <> id <> "` is already active")
+    _, True -> Error("daemon supports at most 32 active operations")
+    False, False -> Ok(Nil)
   }
 }
 
-pub fn append_output(
+pub fn append_output(state: State, id: String, chunk: String) -> State {
+  case list.find(state.entries, fn(entry) { entry.id == id }) {
+    Error(_) -> state
+    Ok(found) ->
+      State(
+        list.map(state.entries, fn(entry) {
+          case entry.id == id {
+            True ->
+              case string.contains(chunk, "\n") {
+                True ->
+                  Entry(
+                    ..entry,
+                    buffer: join_fragments(
+                      found.buffer,
+                      found.pending_fragments,
+                      chunk,
+                    ),
+                    pending_fragments: [],
+                  )
+                False ->
+                  Entry(..entry, pending_fragments: [
+                    chunk,
+                    ..found.pending_fragments
+                  ])
+              }
+            False -> entry
+          }
+        }),
+      )
+  }
+}
+
+/// Removes at most `limit` complete lines from an operation's buffered output.
+/// The unsplit suffix stays raw so one large process chunk cannot allocate and
+/// synchronously emit an unbounded list before the daemon reads stdin again.
+pub fn take_output_lines(
   state: State,
   id: String,
-  chunk: String,
+  limit: Int,
 ) -> #(State, List(String)) {
   case list.find(state.entries, fn(entry) { entry.id == id }) {
     Error(_) -> #(state, [])
     Ok(found) -> {
-      let parts = string.split(found.buffer <> chunk, "\n") |> list.reverse
-      let #(remainder, lines) = case parts {
-        [] -> #("", [])
-        [remainder, ..complete] -> #(
-          remainder,
-          complete
-            |> list.reverse
-            |> list.map(fn(line) { string.trim_end(line) }),
-        )
-      }
+      let #(remainder, lines) = take_lines(found.buffer, limit, [])
       #(
         State(
           list.map(state.entries, fn(entry) {
@@ -73,11 +124,24 @@ pub fn append_output(
   }
 }
 
+fn take_lines(buffer: String, remaining: Int, found: List(String)) {
+  case remaining <= 0 {
+    True -> #(buffer, list.reverse(found))
+    False ->
+      case string.split_once(buffer, on: "\n") {
+        Error(_) -> #(buffer, list.reverse(found))
+        Ok(#(line, rest)) ->
+          take_lines(rest, remaining - 1, [string.trim_end(line), ..found])
+      }
+  }
+}
+
 pub fn finish_output(state: State, id: String) -> #(State, Option(String)) {
   case list.find(state.entries, fn(entry) { entry.id == id }) {
     Error(_) -> #(state, None)
     Ok(found) -> {
-      let output = case found.buffer {
+      let combined = join_fragments(found.buffer, found.pending_fragments, "")
+      let output = case combined {
         "" -> None
         value -> Some(value)
       }
@@ -85,7 +149,7 @@ pub fn finish_output(state: State, id: String) -> #(State, Option(String)) {
         State(
           list.map(state.entries, fn(entry) {
             case entry.id == id {
-              True -> Entry(..entry, buffer: "")
+              True -> Entry(..entry, buffer: "", pending_fragments: [])
               False -> entry
             }
           }),
@@ -94,6 +158,14 @@ pub fn finish_output(state: State, id: String) -> #(State, Option(String)) {
       )
     }
   }
+}
+
+fn join_fragments(
+  buffer: String,
+  pending_fragments: List(String),
+  final: String,
+) -> String {
+  string.concat([buffer, ..list.reverse([final, ..pending_fragments])])
 }
 
 pub fn cancel(state: State, id: String) -> #(State, Option(Int)) {

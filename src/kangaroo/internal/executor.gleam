@@ -1,6 +1,8 @@
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import kangaroo/event.{
   type Event, CaseFinished, CaseOutput, CaseStarted, RunFinished, RunStarted,
   SuiteFinished, SuiteStarted,
@@ -20,6 +22,8 @@ import kangaroo/isolate.{
 }
 import kangaroo/report.{type CaseResult, type Report, CaseResult, Report}
 import kangaroo/sys
+
+const max_captured_output_bytes = 16_777_216
 
 type ResolvedTest {
   ResolvedTest(index: IndexedTest, body: fn() -> Nil)
@@ -273,8 +277,8 @@ fn run_module(
   previous: List(CaseResult),
 ) -> Execution {
   sink(SuiteStarted(module_name))
-  let state =
-    list.fold(tests, Execution(previous, False), fn(state, resolved) {
+  let module_state =
+    list.fold(tests, Execution([], False), fn(state, resolved) {
       case state.stopped {
         True ->
           Execution(
@@ -290,8 +294,66 @@ fn run_module(
         }
       }
     })
-  sink(SuiteFinished(module_name, Passed))
-  state
+  sink(SuiteFinished(module_name, suite_outcome(module_state.results)))
+  Execution(list.append(previous, module_state.results), module_state.stopped)
+}
+
+fn suite_outcome(results: List(CaseResult)) -> Outcome {
+  let outcomes = list.map(results, fn(result) { result.outcome })
+  let failures =
+    outcomes
+    |> list.flat_map(fn(outcome) {
+      case outcome {
+        Failed(failures) | Flaky(failures, _) -> failures
+        _ -> []
+      }
+    })
+  case
+    list.any(outcomes, fn(outcome) {
+      case outcome {
+        Failed(_) -> True
+        _ -> False
+      }
+    })
+  {
+    True -> Failed(failures)
+    False ->
+      case
+        list.filter_map(outcomes, fn(outcome) {
+          case outcome {
+            Flaky(_, attempts) -> Ok(attempts)
+            _ -> Error(Nil)
+          }
+        })
+      {
+        [attempts, ..rest] ->
+          Flaky(
+            failures,
+            list.fold(rest, attempts, fn(highest, value) {
+              case value > highest {
+                True -> value
+                False -> highest
+              }
+            }),
+          )
+        [] ->
+          case outcomes {
+            [] -> Passed
+            _ ->
+              case
+                list.all(outcomes, fn(outcome) {
+                  case outcome {
+                    Skipped | SkippedWithReason(_) -> True
+                    _ -> False
+                  }
+                })
+              {
+                True -> Skipped
+                False -> Passed
+              }
+          }
+      }
+  }
 }
 
 fn run_resolved(
@@ -350,26 +412,93 @@ fn retry(
   let CapturedIsolation(isolated, stdout, stderr) =
     isolate_captured(body, timeout)
   let outcome = outcome_of(isolated)
-  let stdout = previous_stdout <> stdout
-  let stderr = previous_stderr <> stderr
-  case outcome, retries_left, previous_failures {
-    Failed(failures), retries, _ if retries > 0 ->
-      retry(
-        body,
-        timeout,
-        retries - 1,
-        attempt + 1,
-        list.append(previous_failures, failures),
-        stdout,
-        stderr,
+  case
+    append_captured_output(
+      previous_stdout,
+      previous_stderr,
+      stdout,
+      stderr,
+      max_captured_output_bytes,
+    )
+  {
+    Error(message) ->
+      AttemptResult(
+        Failed([UnexpectedError("infrastructure", message, None)]),
+        "",
+        "",
       )
-    Passed, _, [] -> AttemptResult(Passed, stdout, stderr)
-    Passed, _, failures ->
-      AttemptResult(Flaky(failures, attempt), stdout, stderr)
-    Failed(failures), _, previous ->
-      AttemptResult(Failed(list.append(previous, failures)), stdout, stderr)
-    outcome, _, _ -> AttemptResult(outcome, stdout, stderr)
+    Ok(#(stdout, stderr)) ->
+      case infrastructure_outcome(outcome) {
+        True -> AttemptResult(outcome, stdout, stderr)
+        False ->
+          case outcome, retries_left, previous_failures {
+            Failed(failures), retries, _ if retries > 0 ->
+              retry(
+                body,
+                timeout,
+                retries - 1,
+                attempt + 1,
+                list.append(previous_failures, failures),
+                stdout,
+                stderr,
+              )
+            Passed, _, [] -> AttemptResult(Passed, stdout, stderr)
+            Passed, _, failures ->
+              AttemptResult(Flaky(failures, attempt), stdout, stderr)
+            Skipped, _, [] -> AttemptResult(Skipped, stdout, stderr)
+            SkippedWithReason(reason), _, [] ->
+              AttemptResult(SkippedWithReason(reason), stdout, stderr)
+            Skipped, _, failures | SkippedWithReason(_), _, failures ->
+              AttemptResult(Failed(failures), stdout, stderr)
+            Failed(failures), _, previous ->
+              AttemptResult(
+                Failed(list.append(previous, failures)),
+                stdout,
+                stderr,
+              )
+            Flaky(failures, attempts), _, previous ->
+              AttemptResult(
+                Flaky(list.append(previous, failures), attempts),
+                stdout,
+                stderr,
+              )
+          }
+      }
   }
+}
+
+/// Applies the per-test output budget across both streams and every retry.
+/// The size check happens before concatenation so an over-budget attempt does
+/// not transiently allocate the unbounded combined string.
+pub fn append_captured_output(
+  previous_stdout: String,
+  previous_stderr: String,
+  stdout: String,
+  stderr: String,
+  limit: Int,
+) -> Result(#(String, String), String) {
+  let bytes =
+    string.byte_size(previous_stdout)
+    + string.byte_size(previous_stderr)
+    + string.byte_size(stdout)
+    + string.byte_size(stderr)
+  case bytes > limit {
+    True -> Error("test output exceeded " <> int.to_string(limit) <> " bytes")
+    False -> Ok(#(previous_stdout <> stdout, previous_stderr <> stderr))
+  }
+}
+
+fn infrastructure_outcome(outcome: Outcome) -> Bool {
+  let failures = case outcome {
+    Failed(failures) | Flaky(failures, _) -> failures
+    _ -> []
+  }
+  list.any(failures, fn(failure) {
+    case failure {
+      UnexpectedError("infrastructure", _, _) -> True
+      _ -> False
+    }
+  })
 }
 
 fn outcome_of(isolated: Isolated) -> Outcome {

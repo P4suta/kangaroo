@@ -1,8 +1,14 @@
 import gleam/io
+import gleam/string
 import kangaroo
+import kangaroo/coverage_probe
 
 pub fn passing_test() {
   assert 1 + 1 == 2
+}
+
+pub fn coverage_hit_fixture() {
+  coverage_probe.hit("src/causal.gleam", 7)
 }
 
 pub fn panic_fixture() {
@@ -73,9 +79,42 @@ pub fn output_fixture() {
   io.println_error("captured stderr")
 }
 
+pub fn oversized_captured_output_fixture() {
+  io.println(string.repeat("x", 511))
+  io.println_error(string.repeat("y", 512))
+}
+
 @external(erlang, "runtime_fixture_ffi", "spawn_descendant")
 @external(javascript, "./runtime_fixture_ffi.mjs", "spawn_descendant")
 pub fn descendant_fixture() -> Nil
+
+@external(erlang, "runtime_fixture_ffi", "spawn_cleanup_race")
+@external(javascript, "./runtime_fixture_ffi.mjs", "spawn_cleanup_race")
+pub fn cleanup_race_fixture() -> Nil
+
+@external(erlang, "runtime_fixture_ffi", "spawn_orphan_descendant")
+@external(javascript, "./runtime_fixture_ffi.mjs", "spawn_orphan_descendant")
+pub fn orphan_descendant_fixture() -> Nil
+
+@external(erlang, "runtime_fixture_ffi", "spawn_native_orphan_descendant")
+@external(javascript, "./runtime_fixture_ffi.mjs", "spawn_native_orphan_descendant")
+pub fn native_orphan_descendant_fixture() -> Nil
+
+@external(erlang, "runtime_fixture_ffi", "spawn_port_orphan_descendant")
+@external(javascript, "./runtime_fixture_ffi.mjs", "spawn_port_orphan_descendant")
+pub fn port_orphan_descendant_fixture() -> Nil
+
+@external(erlang, "runtime_fixture_ffi", "kill_test_owner_from_link")
+@external(javascript, "./runtime_fixture_ffi.mjs", "kill_test_owner_from_link")
+pub fn killed_test_owner_fixture() -> Nil
+
+@external(erlang, "runtime_fixture_ffi", "exit_test_worker")
+@external(javascript, "./runtime_fixture_ffi.mjs", "exit_test_worker")
+pub fn exited_test_worker_fixture() -> Nil
+
+@external(erlang, "runtime_fixture_ffi", "kill_output_collector")
+@external(javascript, "./runtime_fixture_ffi.mjs", "kill_output_collector")
+pub fn output_collector_failure_fixture() -> Nil
 
 pub fn argument_fixture(_value: Int) {
   Nil
@@ -113,3 +152,24 @@ pub fn descendant_timeout_fixture() {
   descendant_fixture()
   promise_timeout_fixture()
 }
+
+pub fn fail_then_skip_fixture() {
+  fail_once()
+  kangaroo.skip("retry became inapplicable")
+}
+
+@external(erlang, "runtime_fixture_ffi", "spawn_native_descendant")
+@external(javascript, "./runtime_fixture_ffi.mjs", "spawn_native_descendant")
+pub fn native_descendant_fixture() -> Nil
+
+@external(erlang, "runtime_fixture_ffi", "spawn_synchronous_descendant")
+@external(javascript, "./runtime_fixture_ffi.mjs", "spawn_synchronous_descendant")
+pub fn synchronous_descendant_fixture() -> Nil
+
+@external(erlang, "runtime_fixture_ffi", "native_output_timeout")
+@external(javascript, "./runtime_fixture_ffi.mjs", "native_output_timeout")
+pub fn native_output_timeout_fixture() -> Nil
+
+@external(erlang, "runtime_fixture_ffi", "synchronous_timeout")
+@external(javascript, "./runtime_fixture_ffi.mjs", "synchronous_timeout")
+pub fn synchronous_timeout_fixture() -> Nil

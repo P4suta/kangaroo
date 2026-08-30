@@ -1,5 +1,4 @@
 import gleam/dict.{type Dict}
-import gleam/int
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import kangaroo/internal/fs
@@ -60,6 +59,14 @@ pub type ControlledRunOutcome(state) {
   ControlledChildCompleted(result: process.ProcessResult, state: state)
   ControlledChildSuperseded(state: state)
   ControlledChildCancelled(state: state)
+}
+
+/// Ownership decision made after a child has reached its terminal state.
+/// The final snapshot closes the gap between the last active poll and result
+/// publication, where an otherwise unseen save could make completion stale.
+pub type Completion(value) {
+  CurrentCompletion(value: value)
+  SupersededCompletion(changes: List(Change), snapshot: Dict(String, String))
 }
 
 /// State returned by a dynamic watch callback. Roots and baseline move
@@ -167,7 +174,7 @@ fn poll_controlled_compile(
   case watcher.snapshot_project(project_dir, roots) {
     Error(message) -> {
       process.cancel(handle)
-      let _ = drain_controlled_cancellation(handle, sys.now_ms())
+      use _ <- result.try(drain_controlled_cancellation(handle, sys.now_ms()))
       Error(message)
     }
     Ok(current) ->
@@ -205,10 +212,13 @@ fn poll_controlled_compile(
                 }
               }
             process.ProcessFinished(completed) ->
-              case completed.exit_code {
-                0 -> Ok(ControlledCompiled(state))
-                _ -> Ok(ControlledCompileFailed(completed.output, state))
-              }
+              finish_controlled_compile(
+                project_dir,
+                roots,
+                baseline,
+                completed,
+                state,
+              )
             process.ProcessCancelled -> Ok(ControlledCompileCancelled(state))
             process.ProcessFailed(message) -> Error(message)
           }
@@ -220,7 +230,7 @@ fn poll_compile(project_dir, roots, baseline, handle, on_detect) {
   case watcher.snapshot_project(project_dir, roots) {
     Error(message) -> {
       process.cancel(handle)
-      drain_cancellation(handle, sys.now_ms())
+      use _ <- result.try(drain_cancellation(handle, sys.now_ms()))
       Error(message)
     }
     Ok(current) ->
@@ -228,7 +238,7 @@ fn poll_compile(project_dir, roots, baseline, handle, on_detect) {
         [_, ..] as changes -> {
           on_detect(changes)
           process.cancel(handle)
-          drain_cancellation(handle, sys.now_ms())
+          use _ <- result.try(drain_cancellation(handle, sys.now_ms()))
           Ok(ObservedCompileSuperseded(changes, current))
         }
         [] ->
@@ -240,10 +250,7 @@ fn poll_compile(project_dir, roots, baseline, handle, on_detect) {
             process.ProcessOutput(_) ->
               poll_compile(project_dir, roots, baseline, handle, on_detect)
             process.ProcessFinished(completed) ->
-              case completed.exit_code {
-                0 -> Ok(ObservedCompiled)
-                _ -> Ok(ObservedCompileFailed(completed.output))
-              }
+              finish_observed_compile(project_dir, roots, baseline, completed)
             process.ProcessCancelled ->
               Ok(ObservedCompileSuperseded([], baseline))
             process.ProcessFailed(message) -> Error(message)
@@ -341,7 +348,7 @@ fn poll_controlled_run(
   case watcher.snapshot_project(project_dir, roots) {
     Error(message) -> {
       process.cancel(handle)
-      let _ = drain_controlled_cancellation(handle, sys.now_ms())
+      use _ <- result.try(drain_controlled_cancellation(handle, sys.now_ms()))
       Error(message)
     }
     Ok(current) ->
@@ -360,7 +367,10 @@ fn poll_controlled_run(
               case watcher.snapshot_project(project_dir, roots) {
                 Error(message) -> {
                   process.cancel(handle)
-                  let _ = drain_controlled_cancellation(handle, sys.now_ms())
+                  use _ <- result.try(drain_controlled_cancellation(
+                    handle,
+                    sys.now_ms(),
+                  ))
                   Error(message)
                 }
                 Ok(latest) ->
@@ -405,7 +415,13 @@ fn poll_controlled_run(
                 on_control,
               )
             process.ProcessFinished(completed) ->
-              Ok(ControlledChildCompleted(completed, state))
+              finish_controlled_run(
+                project_dir,
+                roots,
+                baseline,
+                completed,
+                state,
+              )
             process.ProcessCancelled -> Ok(ControlledChildCancelled(state))
             process.ProcessFailed(message) -> Error(message)
           }
@@ -459,6 +475,20 @@ pub fn fold_output_if_current(
   }
 }
 
+/// Returns a terminal value only when it still owns the latest source
+/// snapshot. Callers retain both the changes and snapshot on supersession so
+/// the next watch generation cannot lose the save that invalidated it.
+pub fn completion_if_current(
+  baseline: Dict(String, String),
+  current: Dict(String, String),
+  value: value,
+) -> Completion(value) {
+  case watcher.diff(baseline, current) {
+    [] -> CurrentCompletion(value)
+    changes -> SupersededCompletion(changes, current)
+  }
+}
+
 /// Folds streamed output into caller-owned state while a process is active.
 /// The control callback runs at least every poll interval, allowing an
 /// interactive caller to cancel without waiting for the child to finish.
@@ -507,19 +537,14 @@ fn drain_controlled_cancellation(
   started: Int,
 ) -> Result(Nil, String) {
   case process.poll(handle) {
-    process.ProcessRunning | process.ProcessOutput(_) ->
-      case sys.now_ms() - started < vm.process_cleanup_timeout_ms() {
-        True -> {
-          fs.sleep(5)
-          drain_controlled_cancellation(handle, started)
-        }
-        False ->
-          Error(
-            "process cancellation exceeded "
-            <> int.to_string(vm.process_cleanup_timeout_ms())
-            <> " ms",
-          )
-      }
+    process.ProcessRunning | process.ProcessOutput(_) -> {
+      use _ <- result.try(vm.cleanup_wait_result(
+        sys.now_ms() - started,
+        vm.process_cleanup_timeout_ms(),
+      ))
+      fs.sleep(5)
+      drain_controlled_cancellation(handle, started)
+    }
     process.ProcessCancelled | process.ProcessFinished(_) -> Ok(Nil)
     process.ProcessFailed(message) -> Error(message)
   }
@@ -529,7 +554,7 @@ fn poll_run(project_dir, roots, baseline, handle, on_detect) {
   case watcher.snapshot_project(project_dir, roots) {
     Error(message) -> {
       process.cancel(handle)
-      drain_cancellation(handle, sys.now_ms())
+      use _ <- result.try(drain_cancellation(handle, sys.now_ms()))
       Error(message)
     }
     Ok(current) ->
@@ -537,7 +562,7 @@ fn poll_run(project_dir, roots, baseline, handle, on_detect) {
         [_, ..] as changes -> {
           on_detect(changes)
           process.cancel(handle)
-          drain_cancellation(handle, sys.now_ms())
+          use _ <- result.try(drain_cancellation(handle, sys.now_ms()))
           Ok(ObservedChildSuperseded(changes, current))
         }
         [] ->
@@ -549,7 +574,7 @@ fn poll_run(project_dir, roots, baseline, handle, on_detect) {
             process.ProcessOutput(_) ->
               poll_run(project_dir, roots, baseline, handle, on_detect)
             process.ProcessFinished(completed) ->
-              Ok(ObservedChildCompleted(completed))
+              finish_observed_run(project_dir, roots, baseline, completed)
             process.ProcessCancelled ->
               Ok(ObservedChildSuperseded([], baseline))
             process.ProcessFailed(message) -> Error(message)
@@ -558,17 +583,82 @@ fn poll_run(project_dir, roots, baseline, handle, on_detect) {
   }
 }
 
-fn drain_cancellation(handle: Int, started: Int) -> Nil {
-  case process.poll(handle) {
-    process.ProcessRunning | process.ProcessOutput(_) ->
-      case sys.now_ms() - started < vm.process_cleanup_timeout_ms() {
-        True -> {
-          fs.sleep(5)
-          drain_cancellation(handle, started)
-        }
-        False -> Nil
+fn finish_observed_compile(
+  project_dir: String,
+  roots: List(String),
+  baseline: Dict(String, String),
+  completed: process.ProcessResult,
+) -> Result(ObservedCompileOutcome, String) {
+  use latest <- result.try(watcher.snapshot_project(project_dir, roots))
+  case completion_if_current(baseline, latest, completed) {
+    SupersededCompletion(changes, snapshot) ->
+      Ok(ObservedCompileSuperseded(changes, snapshot))
+    CurrentCompletion(completed) ->
+      case completed.exit_code {
+        0 -> Ok(ObservedCompiled)
+        _ -> Ok(ObservedCompileFailed(completed.output))
       }
-    _ -> Nil
+  }
+}
+
+fn finish_controlled_compile(
+  project_dir: String,
+  roots: List(String),
+  baseline: Dict(String, String),
+  completed: process.ProcessResult,
+  state: state,
+) -> Result(ControlledCompileOutcome(state), String) {
+  use latest <- result.try(watcher.snapshot_project(project_dir, roots))
+  case completion_if_current(baseline, latest, completed) {
+    SupersededCompletion(..) -> Ok(ControlledCompileSuperseded(state))
+    CurrentCompletion(completed) ->
+      case completed.exit_code {
+        0 -> Ok(ControlledCompiled(state))
+        _ -> Ok(ControlledCompileFailed(completed.output, state))
+      }
+  }
+}
+
+fn finish_observed_run(
+  project_dir: String,
+  roots: List(String),
+  baseline: Dict(String, String),
+  completed: process.ProcessResult,
+) -> Result(ObservedRunOutcome, String) {
+  use latest <- result.try(watcher.snapshot_project(project_dir, roots))
+  Ok(case completion_if_current(baseline, latest, completed) {
+    CurrentCompletion(completed) -> ObservedChildCompleted(completed)
+    SupersededCompletion(changes, snapshot) ->
+      ObservedChildSuperseded(changes, snapshot)
+  })
+}
+
+fn finish_controlled_run(
+  project_dir: String,
+  roots: List(String),
+  baseline: Dict(String, String),
+  completed: process.ProcessResult,
+  state: state,
+) -> Result(ControlledRunOutcome(state), String) {
+  use latest <- result.try(watcher.snapshot_project(project_dir, roots))
+  Ok(case completion_if_current(baseline, latest, completed) {
+    CurrentCompletion(completed) -> ControlledChildCompleted(completed, state)
+    SupersededCompletion(..) -> ControlledChildSuperseded(state)
+  })
+}
+
+fn drain_cancellation(handle: Int, started: Int) -> Result(Nil, String) {
+  case process.poll(handle) {
+    process.ProcessRunning | process.ProcessOutput(_) -> {
+      use _ <- result.try(vm.cleanup_wait_result(
+        sys.now_ms() - started,
+        vm.process_cleanup_timeout_ms(),
+      ))
+      fs.sleep(5)
+      drain_cancellation(handle, started)
+    }
+    process.ProcessCancelled | process.ProcessFinished(_) -> Ok(Nil)
+    process.ProcessFailed(message) -> Error(message)
   }
 }
 

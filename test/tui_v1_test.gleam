@@ -70,6 +70,12 @@ pub fn tui_search_and_key_actions_test() {
   assert tui.key_action("/", False) == tui.Search
   assert tui.key_action("q", False) == tui.Quit
   assert tui.key_action("x", True) == tui.SearchInput("x")
+  let unicode =
+    tui.initial()
+    |> tui.begin_search
+    |> tui.search_key("カ")
+    |> tui.search_key("ン")
+  assert string.contains(tui.render(unicode, 100, 30, False), "/カン_")
 }
 
 pub fn tui_renders_narrow_terminal_without_colour_test() {
@@ -122,6 +128,28 @@ pub fn tui_buffers_ndjson_split_across_process_chunks_test() {
 
   let completed = partial |> tui.apply_chunk(second)
   assert string.contains(tui.render(completed, 80, 20, False), "child_test")
+}
+
+pub fn cancelled_generation_fragment_cannot_corrupt_its_replacement_test() {
+  let stale =
+    tui.initial()
+    |> tui.apply_chunk(
+      "{\"type\":\"case_finished\",\"suite\":\"old\",\"case\":\"stale",
+    )
+    |> tui.discard_partial_output
+  let replacement =
+    encode.encode(CaseFinished(
+      "new",
+      "test/new.gleam::replacement_test",
+      Passed,
+      1,
+    ))
+    <> "\n"
+
+  let rendered =
+    stale |> tui.apply_chunk(replacement) |> tui.render(80, 20, False)
+  assert string.contains(rendered, "replacement_test")
+  assert !string.contains(rendered, "stale")
 }
 
 fn list_length(items: List(a)) -> Int {

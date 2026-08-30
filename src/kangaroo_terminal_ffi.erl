@@ -2,6 +2,9 @@
 -export([stdout_is_terminal/0, interactive_terminal/0, dimensions/0,
          with_ui/1, suspend/1, poll_key/0]).
 
+-define(KEYBOARD_READER, kangaroo_keyboard_reader).
+-define(KEYBOARD_AWAITING, kangaroo_keyboard_awaiting_continue).
+
 stdout_is_terminal() ->
     case os:type() of
         {win32, _} ->
@@ -28,11 +31,10 @@ with_ui(Body) ->
         false -> Body();
         true ->
             raw_mode(true),
-            Main = self(),
-            Reader = spawn(fun() -> keyboard_loop(Main) end),
+            start_keyboard_reader(),
             try Body()
             after
-                exit(Reader, kill),
+                stop_keyboard_reader(),
                 raw_mode(false)
             end
     end.
@@ -41,10 +43,45 @@ suspend(Body) ->
     case interactive_terminal() of
         false -> Body();
         true ->
+            stop_keyboard_reader(),
             raw_mode(false),
             try Body()
-            after raw_mode(true)
+            after
+                raw_mode(true),
+                start_keyboard_reader()
             end
+    end.
+
+start_keyboard_reader() ->
+    case get(?KEYBOARD_READER) of
+        undefined ->
+            Main = self(),
+            {Reader, Ref} = spawn_monitor(fun() -> keyboard_loop(Main) end),
+            put(?KEYBOARD_READER, {Reader, Ref}),
+            put(?KEYBOARD_AWAITING, false),
+            ok;
+        _ -> ok
+    end.
+
+stop_keyboard_reader() ->
+    erase(?KEYBOARD_AWAITING),
+    case erase(?KEYBOARD_READER) of
+        {Reader, Ref} when is_pid(Reader) ->
+            exit(Reader, kill),
+            receive
+                {'DOWN', Ref, process, Reader, _Reason} -> ok
+            after 250 ->
+                erlang:demonitor(Ref, [flush])
+            end;
+        _ -> ok
+    end,
+    discard_pending_keys().
+
+discard_pending_keys() ->
+    receive
+        {kangaroo_key, _Char} -> discard_pending_keys()
+    after 0 ->
+        ok
     end.
 
 raw_mode(true) ->
@@ -101,18 +138,40 @@ keyboard_loop(Main) ->
         {error, _} -> ok;
         [] -> keyboard_loop(Main);
         [Char | _] ->
-            Main ! {kangaroo_key, Char},
+            Main ! {kangaroo_key, unicode:characters_to_binary([Char])},
+            await_keyboard_continue(Main),
             keyboard_loop(Main);
         <<>> -> keyboard_loop(Main);
-        <<Char, _/binary>> ->
-            Main ! {kangaroo_key, Char},
+        Binary when is_binary(Binary) ->
+            case unicode:characters_to_list(Binary) of
+                [Char | _] ->
+                    Main ! {kangaroo_key,
+                            unicode:characters_to_binary([Char])},
+                    await_keyboard_continue(Main);
+                _ -> ok
+            end,
             keyboard_loop(Main)
     end.
 
+await_keyboard_continue(Main) ->
+    receive
+        {kangaroo_keyboard_continue, Main} -> ok
+    end.
+
+continue_keyboard_reader() ->
+    case {get(?KEYBOARD_AWAITING), get(?KEYBOARD_READER)} of
+        {true, {Reader, _Ref}} when is_pid(Reader) ->
+            Reader ! {kangaroo_keyboard_continue, self()},
+            put(?KEYBOARD_AWAITING, false);
+        _ -> ok
+    end.
+
 poll_key() ->
+    continue_keyboard_reader(),
     receive
         {kangaroo_key, Char} ->
-            {some, unicode:characters_to_binary([Char])}
+            put(?KEYBOARD_AWAITING, true),
+            {some, unicode:characters_to_binary(Char)}
     after 0 ->
         none
     end.

@@ -11,7 +11,7 @@ import kangaroo/internal/app.{InfrastructureFailure, Success, TestFailure}
 import kangaroo/internal/birdie
 import kangaroo/internal/command.{
   type Command, type Reporter, Coverage, Daemon, Doctor, Dot, Help, Init, Junit,
-  ListTests, Ndjson, Pretty, Run, Version, Watch,
+  ListTests, Ndjson, Pretty, Run, SubcommandHelp, Version, Watch,
 }
 import kangaroo/internal/config
 import kangaroo/internal/continuous
@@ -66,6 +66,10 @@ pub fn execute(project_dir: String, command: Command) -> Result(Int, String) {
       fs.write_stdout_line(command.usage())
       Ok(0)
     }
+    SubcommandHelp(name) -> {
+      fs.write_stdout_line(command.usage_for(name))
+      Ok(0)
+    }
     Version -> {
       fs.write_stdout_line(command.version())
       Ok(0)
@@ -100,30 +104,27 @@ fn coverage_project(
       prepared,
       vm.target(),
       vm.runtime_name(),
-      command.run_arguments(options, options.selectors),
+      command.child_run_arguments(options, options.selectors),
     )
   let cleaned = coverage_run.cleanup(prepared)
-  case collected, cleaned {
-    Error(message), _ -> Error(message)
-    _, Error(message) ->
-      Error("could not remove coverage workspace: " <> message)
-    Ok(collected), Ok(_) ->
-      finish_coverage(
-        project_dir,
-        coverage_config,
-        options.coverage_reporters,
-        collected,
-      )
-  }
+  use collected <- result.try(coverage_run.combine_cleanup(collected, cleaned))
+  finish_coverage(
+    project_dir,
+    coverage_config,
+    options.coverage_reporters,
+    options.reporter,
+    collected,
+  )
 }
 
 fn finish_coverage(
   project_dir: String,
   configured: config.CoverageConfig,
   requested_reporters: List(String),
+  test_reporter: Reporter,
   collected: coverage_run.Collected,
 ) -> Result(Int, String) {
-  fs.write_stdout(collected.test_output)
+  write_coverage_test_output(collected.test_output, test_reporter)
   case collected.test_exit_code >= 2 {
     True -> Ok(2)
     False -> {
@@ -138,14 +139,18 @@ fn finish_coverage(
         list.try_each(outputs, fn(output) {
           case output {
             coverage_run.TerminalOutput(contents) -> {
-              fs.write_stdout_line(contents)
+              case coverage_terminal_uses_stdout(test_reporter) {
+                True -> fs.write_stdout_line(contents)
+                False -> fs.write_stderr_line(contents)
+              }
               Ok(Nil)
             }
             coverage_run.FileOutput(path, contents) -> {
-              use _ <- result.try(fs.write_file(
-                project_dir <> "/" <> path,
-                contents,
+              use output_path <- result.try(fs.project_file_path(
+                project_dir,
+                path,
               ))
+              use _ <- result.try(fs.write_file(output_path, contents))
               fs.write_stderr_line("kangaroo: wrote " <> path)
               Ok(Nil)
             }
@@ -164,6 +169,46 @@ fn finish_coverage(
       Ok(coverage_run.final_exit_code(collected.test_exit_code, violations))
     }
   }
+}
+
+/// NDJSON reserves stdout for complete event records. Human-readable coverage
+/// tables remain available on stderr when the test reporter is NDJSON.
+pub fn coverage_terminal_uses_stdout(reporter: Reporter) -> Bool {
+  reporter != Ndjson
+}
+
+fn write_coverage_test_output(output: String, reporter: Reporter) -> Nil {
+  case reporter {
+    Ndjson -> {
+      let #(events, logs) = partition_coverage_ndjson(output)
+      list.each(events, fs.write_stdout_line)
+      list.each(logs, fs.write_stderr_line)
+    }
+    _ -> fs.write_stdout(output)
+  }
+}
+
+/// Splits a coverage child stream at the strict event boundary. `gleam test`
+/// writes compiler progress beside the runner stream; NDJSON callers must
+/// receive only valid events on stdout while retaining those logs on stderr.
+pub fn partition_coverage_ndjson(
+  output: String,
+) -> #(List(String), List(String)) {
+  let #(events, logs) =
+    output
+    |> string.split("\n")
+    |> list.fold(#([], []), fn(streams, line) {
+      let line = string.trim_end(line)
+      case line {
+        "" -> streams
+        _ ->
+          case encode.decode(line) {
+            Ok(_) -> #([line, ..streams.0], streams.1)
+            Error(_) -> #(streams.0, [line, ..streams.1])
+          }
+      }
+    })
+  #(list.reverse(events), list.reverse(logs))
 }
 
 fn watch_project(
@@ -279,7 +324,7 @@ fn initial_tui_generation(
         project_dir,
         roots,
         snapshot,
-        command.run_arguments(options, selectors),
+        command.child_run_arguments(options, selectors),
         state,
         tui_stream_output,
         tui_active_control,
@@ -369,24 +414,34 @@ fn refresh_tui(
 ) -> continuous.WatchContinuation(TuiWatchState) {
   case state.request {
     CoverageRequest -> {
-      let ui = run_tui_coverage(project_dir, state.ui, options)
-      draw_tui(ui)
-      continuous.WatchContinuation(
-        TuiWatchState(..state, ui:, request: NoTuiRequest),
-        roots,
+      let state = run_tui_coverage(project_dir, state, options)
+      draw_tui(state.ui)
+      continue_after_tui_action(
+        project_dir,
+        state,
+        changes,
         baseline,
+        roots,
+        selectors,
+        options,
       )
     }
     BirdieRequest -> {
       let #(ui, rerun) = run_tui_birdie(project_dir, state.ui)
-      draw_tui(ui)
-      continuous.WatchContinuation(
+      let state =
         TuiWatchState(..state, ui:, request: case rerun {
           True -> FullRunRequest
           False -> NoTuiRequest
-        }),
-        roots,
+        })
+      draw_tui(ui)
+      continue_after_tui_action(
+        project_dir,
+        state,
+        changes,
         baseline,
+        roots,
+        selectors,
+        options,
       )
     }
     QuitRequest -> continuous.WatchContinuation(state, roots, baseline)
@@ -450,7 +505,7 @@ fn refresh_tui_tests(
         baseline,
       )
     Ok(continuous.ControlledCompileCancelled(state)) ->
-      tui_continuation(
+      tui_continuation_preserving_request(
         state,
         tui.with_status(state.ui, case state.request {
           QuitRequest -> "stopping"
@@ -567,7 +622,9 @@ fn run_tui_selection(
       let state =
         TuiWatchState(
           ..state,
-          ui: tui.with_status(state.ui, "running latest generation"),
+          ui: state.ui
+            |> tui.discard_partial_output
+            |> tui.with_status("running latest generation"),
         )
       let ui = state.ui
       draw_tui(ui)
@@ -576,7 +633,7 @@ fn run_tui_selection(
           project_dir,
           roots,
           baseline,
-          command.run_arguments(options, selected),
+          command.child_run_arguments(options, selected),
           state,
           tui_stream_output,
           tui_active_control,
@@ -597,18 +654,19 @@ fn finish_controlled_tui_run(
     continuous.ControlledChildSuperseded(state) ->
       TuiWatchState(
         ..state,
-        ui: tui.with_status(state.ui, "generation superseded"),
+        ui: state.ui
+          |> tui.discard_partial_output
+          |> tui.with_status("generation superseded"),
       )
     continuous.ControlledChildCancelled(state) ->
       TuiWatchState(
         ..state,
-        ui: tui.with_status(state.ui, case state.request {
-          QuitRequest -> "stopping"
-          FullRunRequest -> "rerun requested"
-          CoverageRequest -> "coverage requested"
-          BirdieRequest -> "Birdie review requested"
-          NoTuiRequest -> "generation cancelled"
-        }),
+        ui: state.ui
+          |> tui.discard_partial_output
+          |> tui.with_status(request_status(
+            state.request,
+            "generation cancelled",
+          )),
       )
     continuous.ControlledChildCompleted(completed, state) ->
       case completed.exit_code >= 2 {
@@ -624,11 +682,49 @@ fn finish_controlled_tui_run(
 
 fn run_tui_coverage(
   project_dir: String,
-  ui: tui.State,
+  state: TuiWatchState,
   options: command.RunOptions,
-) -> tui.State {
-  let ui = tui.with_status(ui, "running full-suite coverage")
-  draw_tui(ui)
+) -> TuiWatchState {
+  let state =
+    TuiWatchState(
+      ..state,
+      ui: state.ui
+        |> tui.discard_partial_output
+        |> tui.with_status("running full-suite coverage"),
+      request: NoTuiRequest,
+    )
+  draw_tui(state.ui)
+  let preparation = {
+    use source <- result.try(fs.read_file(project_dir <> "/gleam.toml"))
+    use configured <- result.try(config.parse(source))
+    use prepared <- result.try(coverage_run.prepare(
+      project_dir,
+      configured.coverage.include,
+      configured.coverage.exclude,
+    ))
+    Ok(#(configured.coverage, prepared))
+  }
+  case preparation {
+    Error(message) ->
+      TuiWatchState(..state, ui: tui.with_compile_error(state.ui, message))
+    Ok(#(configured, prepared)) ->
+      run_prepared_tui_coverage(
+        project_dir,
+        configured,
+        prepared,
+        state,
+        options,
+      )
+  }
+}
+
+fn run_prepared_tui_coverage(
+  project_dir: String,
+  configured: config.CoverageConfig,
+  prepared: coverage_run.Prepared,
+  state: TuiWatchState,
+  options: command.RunOptions,
+) -> TuiWatchState {
   let coverage_options =
     command.RunOptions(
       ..options,
@@ -637,35 +733,212 @@ fn run_tui_coverage(
       exclude_tags: [],
       reporter: Ndjson,
     )
-  let arguments =
-    watcher.coordinator_arguments_for(vm.target(), vm.runtime_name(), [
-      "coverage",
-      ..list.append(command.run_arguments(coverage_options, []), [
-        "--coverage-reporter",
-        "terminal",
-      ])
-    ])
   case
-    process.run(
-      project_dir,
-      "gleam",
-      arguments,
-      [],
-      interactive_command_timeout_ms,
+    coverage_run.start(
+      prepared,
+      vm.target(),
+      vm.runtime_name(),
+      command.child_run_arguments(coverage_options, []),
     )
   {
-    Error(message) -> tui.with_compile_error(ui, message)
-    Ok(completed) if completed.exit_code >= 2 ->
-      tui.with_compile_error(ui, completed.output)
-    Ok(completed) -> {
-      let ui = tui.apply_output(ui, completed.output)
-      let total = line_containing(completed.output, "TOTAL  ")
-      tui.with_status(ui, case total {
-        Some(total) if completed.exit_code == 0 -> "coverage · " <> total
-        Some(total) -> "coverage failed · " <> total
-        None -> "coverage completed"
-      })
+    Error(message) ->
+      TuiWatchState(
+        ..state,
+        ui: tui.with_compile_error(
+          state.ui,
+          with_coverage_cleanup(prepared, message),
+        ),
+      )
+    Ok(handle) ->
+      case
+        continuous.control_process(
+          handle,
+          state,
+          tui_stream_output,
+          tui_active_control,
+        )
+      {
+        Error(message) ->
+          TuiWatchState(
+            ..state,
+            ui: tui.with_compile_error(
+              state.ui,
+              with_coverage_cleanup(prepared, message),
+            ),
+          )
+        Ok(continuous.ActiveCancelled(state)) ->
+          case coverage_run.cleanup(prepared) {
+            Error(message) ->
+              TuiWatchState(
+                ..state,
+                ui: tui.with_compile_error(
+                  tui.discard_partial_output(state.ui),
+                  "could not remove coverage workspace: " <> message,
+                ),
+              )
+            Ok(_) ->
+              TuiWatchState(
+                ..state,
+                ui: state.ui
+                  |> tui.discard_partial_output
+                  |> tui.with_status(request_status(
+                    state.request,
+                    "coverage cancelled",
+                  )),
+              )
+          }
+        Ok(continuous.ActiveCompleted(completed, state)) ->
+          finish_tui_coverage(
+            project_dir,
+            configured,
+            options.coverage_reporters,
+            prepared,
+            completed,
+            state,
+          )
+      }
+  }
+}
+
+fn finish_tui_coverage(
+  project_dir: String,
+  configured: config.CoverageConfig,
+  requested_reporters: List(String),
+  prepared: coverage_run.Prepared,
+  completed: process.ProcessResult,
+  state: TuiWatchState,
+) -> TuiWatchState {
+  let collected = coverage_run.finish(prepared, completed)
+  let cleaned = coverage_run.cleanup(prepared)
+  case collected, cleaned {
+    Error(message), Error(cleanup) ->
+      TuiWatchState(
+        ..state,
+        ui: tui.with_compile_error(
+          state.ui,
+          message <> "\ncould not remove coverage workspace: " <> cleanup,
+        ),
+      )
+    Error(message), _ ->
+      TuiWatchState(..state, ui: tui.with_compile_error(state.ui, message))
+    _, Error(message) ->
+      TuiWatchState(
+        ..state,
+        ui: tui.with_compile_error(
+          state.ui,
+          "could not remove coverage workspace: " <> message,
+        ),
+      )
+    Ok(collected), Ok(_) ->
+      render_tui_coverage(
+        project_dir,
+        configured,
+        requested_reporters,
+        collected,
+        state,
+      )
+  }
+}
+
+fn render_tui_coverage(
+  project_dir: String,
+  configured: config.CoverageConfig,
+  requested_reporters: List(String),
+  collected: coverage_run.Collected,
+  state: TuiWatchState,
+) -> TuiWatchState {
+  let ui = tui.finish_output(state.ui)
+  case collected.test_exit_code >= 2 {
+    True ->
+      TuiWatchState(
+        ..state,
+        ui: tui.with_compile_error(ui, collected.test_output),
+      )
+    False -> {
+      let rendered = {
+        use outputs <- result.try(coverage_run.outputs(
+          collected.files,
+          coverage_run.selected_reporters(
+            configured.reporters,
+            requested_reporters,
+          ),
+        ))
+        use _ <- result.try(
+          list.try_each(outputs, fn(output) {
+            case output {
+              coverage_run.TerminalOutput(_) -> Ok(Nil)
+              coverage_run.FileOutput(path, contents) -> {
+                use output_path <- result.try(fs.project_file_path(
+                  project_dir,
+                  path,
+                ))
+                fs.write_file(output_path, contents)
+              }
+            }
+          }),
+        )
+        let violations =
+          coverage.violations(
+            collected.files,
+            configured.minimum,
+            configured.minimum_per_file,
+          )
+        Ok(#(
+          coverage_run.final_exit_code(collected.test_exit_code, violations),
+          coverage_total(outputs),
+          violations,
+        ))
+      }
+      case rendered {
+        Error(message) ->
+          TuiWatchState(..state, ui: tui.with_compile_error(ui, message))
+        Ok(#(exit_code, total, violations)) ->
+          TuiWatchState(
+            ..state,
+            ui: tui.with_status(
+              ui,
+              coverage_status(exit_code, total, violations),
+            ),
+          )
+      }
     }
+  }
+}
+
+fn with_coverage_cleanup(
+  prepared: coverage_run.Prepared,
+  message: String,
+) -> String {
+  case coverage_run.cleanup(prepared) {
+    Ok(_) -> message
+    Error(cleanup) ->
+      message <> "\ncould not remove coverage workspace: " <> cleanup
+  }
+}
+
+fn coverage_total(outputs: List(coverage_run.Output)) -> Option(String) {
+  case outputs {
+    [] -> None
+    [coverage_run.TerminalOutput(contents), ..rest] ->
+      case line_containing(contents, "TOTAL  ") {
+        Some(total) -> Some(total)
+        None -> coverage_total(rest)
+      }
+    [_, ..rest] -> coverage_total(rest)
+  }
+}
+
+fn coverage_status(
+  exit_code: Int,
+  total: Option(String),
+  violations: List(String),
+) -> String {
+  case exit_code, total, violations {
+    0, Some(total), _ -> "coverage · " <> total
+    0, None, _ -> "coverage completed"
+    _, Some(total), _ -> "coverage failed · " <> total
+    _, None, [violation, ..] -> "coverage failed · " <> violation
+    _, None, [] -> "coverage failed"
   }
 }
 
@@ -725,6 +998,51 @@ fn line_containing(output: String, needle: String) -> Option(String) {
   }
 }
 
+fn continue_after_tui_action(
+  project_dir: String,
+  state: TuiWatchState,
+  changes: List(watcher.Change),
+  baseline: Dict(String, String),
+  roots: List(String),
+  selectors: List(selector.Selector),
+  options: command.RunOptions,
+) -> continuous.WatchContinuation(TuiWatchState) {
+  case state.request, changes {
+    QuitRequest, _ | _, [] ->
+      continuous.WatchContinuation(state, roots, baseline)
+    pending, changes -> {
+      let continuation =
+        refresh_tui_tests(
+          project_dir,
+          TuiWatchState(..state, request: NoTuiRequest),
+          changes,
+          baseline,
+          roots,
+          selectors,
+          options,
+          pending == FullRunRequest,
+        )
+      let continuous.WatchContinuation(state, roots, baseline) = continuation
+      let state = case state.request, pending {
+        NoTuiRequest, CoverageRequest | NoTuiRequest, BirdieRequest ->
+          TuiWatchState(..state, request: pending)
+        _, _ -> state
+      }
+      continuous.WatchContinuation(state, roots, baseline)
+    }
+  }
+}
+
+fn request_status(request: TuiRequest, fallback: String) -> String {
+  case request {
+    QuitRequest -> "stopping"
+    FullRunRequest -> "rerun requested"
+    CoverageRequest -> "coverage requested"
+    BirdieRequest -> "Birdie review requested"
+    NoTuiRequest -> fallback
+  }
+}
+
 fn tui_continuation(
   state: TuiWatchState,
   ui: tui.State,
@@ -736,6 +1054,15 @@ fn tui_continuation(
     roots,
     baseline,
   )
+}
+
+fn tui_continuation_preserving_request(
+  state: TuiWatchState,
+  ui: tui.State,
+  roots: List(String),
+  baseline: Dict(String, String),
+) -> continuous.WatchContinuation(TuiWatchState) {
+  continuous.WatchContinuation(TuiWatchState(..state, ui:), roots, baseline)
 }
 
 fn draw_tui(ui: tui.State) -> Nil {
@@ -842,7 +1169,7 @@ fn initial_plain_generation(
         project_dir,
         roots,
         snapshot,
-        command.run_arguments(options, options.selectors),
+        command.child_run_arguments(options, options.selectors),
         fn() { Nil },
         report_plain_changes,
       ))
@@ -984,7 +1311,7 @@ fn run_watch_selection(
           project_dir,
           roots,
           baseline,
-          command.run_arguments(options, selected),
+          command.child_run_arguments(options, selected),
           fn() { trace_plain("run start") },
           report_plain_changes,
         )
@@ -1056,28 +1383,28 @@ fn format_index_errors(errors: List(index.IndexError)) -> String {
 fn initialise(project_dir: String) -> Result(Int, String) {
   use toml <- result.try(fs.read_file(project_dir <> "/gleam.toml"))
   use package <- result.try(config.package_name(toml))
-  let path = project_dir <> "/test/" <> package <> "_test.gleam"
-  let existing = case fs.exists(path) {
-    True -> fs.read_file(path) |> result.unwrap("") |> Some
-    False -> None
-  }
+  let entrypoint = "test/" <> package <> "_test.gleam"
+  use path <- result.try(fs.project_file_path(project_dir, entrypoint))
+  use existing <- result.try(case fs.exists(path) {
+    True -> fs.read_file(path) |> result.map(Some)
+    False -> Ok(None)
+  })
   case init.plan(package, existing) {
     AlreadyConfigured -> {
       fs.write_stdout_line("kangaroo: test entry point is already configured")
       Ok(0)
     }
     Create(relative, contents) -> {
-      use _ <- result.try(fs.write_exclusive(
-        project_dir <> "/" <> relative,
-        contents,
-      ))
+      use path <- result.try(fs.project_file_path(project_dir, relative))
+      use _ <- result.try(fs.write_exclusive(path, contents))
       fs.write_stdout_line("kangaroo: created " <> relative)
       print_config_hint(toml)
       Ok(0)
     }
     ReplaceKnown(relative, expected, contents) -> {
+      use path <- result.try(fs.project_file_path(project_dir, relative))
       use replaced <- result.try(fs.replace_if_unchanged(
-        project_dir <> "/" <> relative,
+        path,
         expected,
         contents,
       ))
@@ -1093,13 +1420,11 @@ fn initialise(project_dir: String) -> Result(Int, String) {
       }
     }
     Suggest(relative, contents) -> {
-      fs.write_stderr_line(
-        "kangaroo: "
-        <> relative
+      Error(
+        relative
         <> " is custom and was not overwritten. Suggested contents:\n\n"
         <> contents,
       )
-      Ok(0)
     }
   }
 }
@@ -1340,7 +1665,12 @@ fn sink(reporter: Reporter) {
     Pretty -> format.print_sink
     Dot -> reporter.dot_sink
     Ndjson ->
-      case sys.env("KANGAROO_PROTOCOL_REQUEST_ID") {
+      case
+        protocol.child_request_id(
+          sys.env("KANGAROO_PROTOCOL_MODE"),
+          sys.env("KANGAROO_PROTOCOL_REQUEST_ID"),
+        )
+      {
         Some(request_id) -> fn(event) {
           fs.write_stdout_line(protocol.encode_event(request_id, event))
         }
