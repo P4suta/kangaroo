@@ -64,7 +64,9 @@ versioning.
   stdin/stdout and child exit code across OTP 27–29 without recompiling per
   command. OTP receives a quoted fixed command line because its Windows
   argument-vector form drops the PowerShell host arguments; user launch data
-  remains isolated in private environment metadata.
+  remains isolated in private environment metadata. The native host uses OTP's
+  hidden-window mode so it retains the supplied port handles instead of becoming
+  a detached console process.
 - Made `doctor` reject Erlang/OTP outside the documented 27–29 range instead
   of reporting untested future major releases as supported.
 - Distinguished synchronous coverage preparation from the cancellable child

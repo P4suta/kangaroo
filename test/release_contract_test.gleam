@@ -346,6 +346,7 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
     "{filename:dirname(Launcher), {spawn, Command}, []",
   )
   assert string.contains(erlang_process_ffi, "{spawn_executable, Path}")
+  assert string.contains(erlang_process_ffi, "{win32, _} -> [hide]")
   assert string.contains(erlang_process_ffi, "ENVIRONMENT_NAME_")
   assert string.contains(erlang_process_ffi, "ENVIRONMENT_VALUE_")
   let assert [_, preparation_body] =
@@ -458,6 +459,7 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_open_port_smoke, "Arguments = [\"cmd.exe\"]")
   assert string.contains(windows_open_port_smoke, "probe_output(")
   assert string.contains(windows_open_port_smoke, "<<\"cmd.exe\">>")
+  assert string.contains(windows_open_port_smoke, "hide,")
   assert !string.contains(
     windows_open_port_smoke,
     "{spawn_executable, PowerShell}",

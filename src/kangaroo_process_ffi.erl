@@ -172,6 +172,10 @@ open_process_port(Directory, Path, Arguments, Environment, Mode) ->
         captured -> [binary, use_stdio, stderr_to_stdout];
         inherited -> [nouse_stdio]
     end,
+    WindowOptions = case os:type() of
+        {win32, _} -> [hide];
+        _ -> []
+    end,
     ArgumentOptions = case LaunchSpec of
         {spawn, _Command} -> [];
         {spawn_executable, _Executable} ->
@@ -180,7 +184,7 @@ open_process_port(Directory, Path, Arguments, Environment, Mode) ->
     end,
     open_port(
       LaunchSpec,
-      Stdio ++ [exit_status,
+      Stdio ++ WindowOptions ++ [exit_status,
                 {cd, to_list(LaunchDirectory)},
                 {env, [port_environment_pair(Pair)
                        || Pair <- LaunchEnvironment]}] ++ ArgumentOptions).
@@ -235,8 +239,10 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
     %% OTP's Windows `{args, ...}` path loses the PowerShell host arguments,
     %% while cmd does not preserve its port-backed handles when starting the
     %% managed image. `{spawn, Command}` passes this fixed, quoted command line
-    %% directly to CreateProcessW with the original port handles. It contains no
-    %% user-controlled values; launch metadata remains in the private environment.
+    %% directly to CreateProcessW. The Windows `hide` option prevents OTP from
+    %% using DETACHED_PROCESS, retaining those original port handles without a
+    %% visible console. The command contains no user-controlled values; launch
+    %% metadata remains in the private environment.
     Command = windows_powershell_host_command(PowerShell, Launcher),
     {filename:dirname(Launcher), {spawn, Command}, [],
      InternalEnvironment}.

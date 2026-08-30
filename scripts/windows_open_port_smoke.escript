@@ -179,6 +179,7 @@ probe_helper_preparation() ->
                                       {spawn, powershell_host_command(
                                         PowerShell, Launcher)},
                                       [binary, use_stdio, stderr_to_stdout,
+                                       hide,
                                        exit_status,
                                        {cd, filename:dirname(Helper)},
                                        {env, internal_environment(

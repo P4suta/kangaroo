@@ -51,7 +51,9 @@ The script loads the compiled helper assembly in-process, preserving the port's
 raw standard handles and the child exit status without compiling again. Erlang
 uses OTP's fixed-command launch form because its Windows argument-vector form
 does not preserve the PowerShell host arguments; the fixed command contains no
-user-controlled launch data. Each runtime creates its absolute per-user temporary cache directory
+user-controlled launch data. The port is hidden through OTP's Windows option,
+which avoids a detached console process while keeping the supplied standard
+handles. Each runtime creates its absolute per-user temporary cache directory
 first and pins that directory as PowerShell's working directory. Because supported Windows
 OTP releases do not preserve the direct PowerShell argument vector, Erlang
 stages the bundled preparation script there under a process-owned basename and
