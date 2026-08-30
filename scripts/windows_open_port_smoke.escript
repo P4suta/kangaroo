@@ -37,13 +37,16 @@ require_executable(Name) ->
 
 internal_environment(Directory) ->
     Executable = require_executable("cmd.exe"),
+    Arguments = ["/D", "/Q", "/C", "exit", "0"],
     Values = [
         {"EXECUTABLE", Executable},
         {"DIRECTORY", Directory},
         {"ARGV0", Executable},
-        {"ARGUMENT_COUNT", "0"},
+        {"ARGUMENT_COUNT", integer_to_list(length(Arguments))},
         {"ENVIRONMENT_COUNT", "0"}
-    ],
+    ] ++ [{"ARGUMENT_" ++ lists:flatten(
+                         io_lib:format("~6..0B", [Index])), Argument}
+          || {Index, Argument} <- lists:enumerate(0, Arguments)],
     [{"__KANGAROO_INTERNAL_WINDOWS_JOB_V1_" ++ Name,
       encoded(Value)} || {Name, Value} <- Values].
 
@@ -94,41 +97,48 @@ probe_helper_preparation() ->
     case file:make_dir(CacheDirectory) of
         ok ->
             Helper = filename:join(
-              [CacheDirectory, "kangaroo",
-               "windows-job-v5-20260831.exe"]),
-            Launcher = filename:rootname(Helper) ++ ".cmd",
+              CacheDirectory, "windows-job-v5-20260831.exe"),
             Arguments = [
                 "-NoLogo", "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-File", Script,
                 "-Prepare"
+            ],
+            HelperPathEnvironment = [
+                {"__KANGAROO_INTERNAL_WINDOWS_JOB_V1_HELPER_PATH",
+                 encoded(Helper)}
             ],
             Result = try
                 case probe(
                        "isolated helper preparation", PowerShell,
                        [binary, use_stdio, stderr_to_stdout, exit_status,
                         {args, Arguments},
-                        {env, [{"TEMP", CacheDirectory},
-                               {"TMP", CacheDirectory}]}],
+                        {env, HelperPathEnvironment}],
                        20000) of
                     ok ->
-                        case {filelib:is_regular(Helper),
-                              filelib:is_regular(Launcher)} of
-                            {true, true} ->
+                        case filelib:is_regular(Helper) of
+                            true ->
+                                io:format("open_port helper artifact: ok~n"),
+                                probe(
+                                  "isolated helper execution",
+                                  require_executable("cmd.exe"),
+                                  [binary, use_stdio, stderr_to_stdout,
+                                   exit_status,
+                                   {cd, filename:dirname(Helper)},
+                                   {args, ["/D", "/Q", "/C",
+                                           filename:basename(Helper),
+                                           "--kangaroo-job-helper"]},
+                                   {env, internal_environment(
+                                           filename:absname("."))}],
+                                  5000);
+                            false ->
                                 io:format(
-                                  "open_port helper artifacts: ok~n"),
-                                ok;
-                            State ->
-                                io:format(
-                                  "open_port helper artifacts: missing ~tp~n",
-                                  [State]),
+                                  "open_port helper artifact: missing~n"),
                                 error
                         end;
                     error -> error
                 end
             after
                 safe_delete(Helper),
-                safe_delete(Launcher),
-                _ = file:del_dir(filename:dirname(Helper)),
                 _ = file:del_dir(CacheDirectory)
             end,
             Result;

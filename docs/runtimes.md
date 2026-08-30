@@ -43,12 +43,11 @@ active descendants. This ownership boundary also applies when a command exits
 successfully after starting background work, and to asynchronous subprocesses
 started by an isolated JavaScript test. PowerShell compiles the immutable
 console helper once. JavaScript runtimes execute it directly, while Erlang
-opens native `cmd.exe` with AutoRun disabled and runs a fixed, argument-free
-batch trampoline from its own cache directory around OTP's managed-executable
-boundary; both paths preserve the raw redirected handles and child exit
-status. The command processor receives only the immutable trampoline basename,
-and the trampoline contains only the immutable helper filename—never a user
-executable, argument, environment value, or working directory.
+opens native `cmd.exe` with AutoRun disabled and invokes the fixed helper
+basename from its own cache directory around OTP's managed-executable boundary;
+both paths preserve the raw redirected handles and child exit status. The
+command processor receives only the immutable helper basename and marker—never
+a user executable, argument, environment value, or working directory.
 Erlang transports Unicode environment overrides as private base64 metadata and
 the helper restores them before launching user code, avoiding OTP port option
 encoding differences. The helper's private environment

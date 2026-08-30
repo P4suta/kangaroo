@@ -123,18 +123,17 @@ versioning.
   kill-on-close Job Object before its first instruction runs, and waited for
   that object to drain before reporting completion, so successful, cancelled,
   and timed-out work cannot leave descendants behind.
-- Compiled the Windows Job Object launcher once and executed it directly from
+- Compiled the Windows Job Object helper once and executed it directly from
   JavaScript runtimes. Erlang opens native `cmd.exe` with AutoRun disabled and
-  runs a fixed, argument-free batch trampoline from its own directory for
-  OTP's managed-executable boundary while still preserving redirected
-  stdin/stdout and child exit status. The command processor sees only the
-  immutable trampoline basename. Unicode environment overrides travel as
+  invokes the fixed helper basename and marker from its own directory for OTP's
+  managed-executable boundary while still preserving redirected stdin/stdout
+  and child exit status. The command processor never sees user-controlled
+  launch data. Unicode environment overrides travel as
   private base64 metadata for the helper to restore without exposing them to
   OTP's port options or the command interpreter.
-- Let PowerShell and OTP resolve the same inherited temporary helper cache
-  without passing a string parameter through the Windows port boundary, and
-  smoke-tested exact first-launch artifacts under an isolated `TEMP`/`TMP` on
-  Windows OTP 27 through 29.
+- Passed the helper cache location through OTP's validated private base64
+  environment namespace, and smoke-tested exact first-launch compilation and
+  fixed `cmd.exe` execution on Windows OTP 27 through 29.
 - Pinned, cached, and retried the minimum supported VS Code Extension
   Development Host so editor integration gates are reproducible and tolerate
   transient download failures.

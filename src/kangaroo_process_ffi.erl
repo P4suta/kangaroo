@@ -190,7 +190,7 @@ process_launch(Directory, Path, Arguments, Environment) ->
     end.
 
 windows_job_launch(Directory, Path, Arguments, Environment) ->
-    Launcher = windows_job_launcher(),
+    Helper = windows_job_executable(),
     {ok, CommandProcessor} = windows_command_processor(),
     WorkingDirectory = filename:absname(to_list(Directory)),
     CleanEnvironment = [
@@ -222,12 +222,13 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
          encode_windows_job_value(integer_to_list(length(CleanEnvironment)))}
         | ArgumentEnvironment ++ EnvironmentEnvironment
     ],
-    %% spawn_executable accepts cmd.exe but rejects both the managed helper
-    %% image and .cmd files on supported Windows OTP releases. Keep cmd's
-    %% command string to an immutable basename in its own working directory;
-    %% no user-controlled value is ever parsed by the command processor.
-    {filename:dirname(Launcher), CommandProcessor,
-     ["/D", "/Q", "/C", filename:basename(Launcher)],
+    %% spawn_executable accepts cmd.exe but rejects the managed helper image
+    %% on supported Windows OTP releases. Keep cmd's command string to a fixed
+    %% executable basename and fixed marker in the helper's own directory; no
+    %% user-controlled value is ever parsed by the command processor.
+    {filename:dirname(Helper), CommandProcessor,
+     ["/D", "/Q", "/C", filename:basename(Helper),
+      "--kangaroo-job-helper"],
      InternalEnvironment}.
 
 windows_command_processor() ->
@@ -308,7 +309,10 @@ prepare_windows_job_helper_worker() ->
             try open_port(
                   {spawn_executable, PowerShell},
                   [binary, use_stdio, stderr_to_stdout, exit_status,
-                   {args, Arguments}]) of
+                   {args, Arguments},
+                   {env, [port_environment_pair(
+                            {?WINDOWS_JOB_PREFIX ++ "HELPER_PATH",
+                             encode_windows_job_value(Helper)})]}]) of
                 Port -> collect_windows_job_preparation(
                           Port, [], erlang:monotonic_time(millisecond) + 15000,
                           Helper)
@@ -334,17 +338,10 @@ collect_windows_job_preparation(Port, Output, Deadline, Helper) ->
                       Port, Next, Deadline, Helper)
             end;
         {Port, {exit_status, 0}} ->
-            Launcher = filename:rootname(Helper) ++ ".cmd",
-            case {filelib:is_regular(Helper),
-                  filelib:is_regular(Launcher)} of
-                {true, true} -> ok;
-                {false, false} ->
-                    {error, <<"Windows process helper and launcher were not "
-                              "created">>};
-                {false, true} ->
-                    {error, <<"Windows process helper was not created">>};
-                {true, false} ->
-                    {error, <<"Windows process launcher was not created">>}
+            case filelib:is_regular(Helper) of
+                true -> ok;
+                false ->
+                    {error, <<"Windows process helper was not created">>}
             end;
         {Port, {exit_status, Code}} ->
             Message = iolist_to_binary(lists:reverse(Output)),
@@ -374,9 +371,6 @@ windows_job_executable() ->
         Value -> Value
     end,
     filename:join([Temp, "kangaroo", "windows-job-v5-20260831.exe"]).
-
-windows_job_launcher() ->
-    filename:rootname(windows_job_executable()) ++ ".cmd".
 
 async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8, OutputBytes,
               Deadline, Streaming) ->
@@ -546,9 +540,24 @@ decode_utf8(Bytes, Output) ->
         {incomplete, Text, Pending} ->
             {iolist_to_binary(lists:reverse(prepend_nonempty(Text, Output))),
              Pending};
-        {error, Text, <<_Invalid, Rest/binary>>} ->
-            decode_utf8(Rest, [<<16#EF, 16#BF, 16#BD>>, Text | Output])
+        {error, Text, Invalid} ->
+            {Count, Rest} = invalid_utf8_prefix(Invalid),
+            Replacement = binary:copy(<<16#EF, 16#BF, 16#BD>>, Count),
+            decode_utf8(Rest, [Replacement, Text | Output])
     end.
+
+invalid_utf8_prefix(Bytes) ->
+    invalid_utf8_prefix(Bytes, 0).
+
+%% Continuation bytes, overlong two-byte leaders, and values above UTF-8's
+%% maximum leader can never begin a valid codepoint. Consume a whole run so a
+%% hostile output stream does not recurse once per byte while still emitting
+%% one replacement character for each invalid byte.
+invalid_utf8_prefix(<<Byte, Rest/binary>>, Count)
+  when Byte < 16#C2; Byte > 16#F4 ->
+    invalid_utf8_prefix(Rest, Count + 1);
+invalid_utf8_prefix(<<_Invalid, Rest/binary>>, 0) -> {1, Rest};
+invalid_utf8_prefix(Rest, Count) -> {Count, Rest}.
 
 finish_utf8(<<>>) -> <<>>;
 finish_utf8(Pending) ->

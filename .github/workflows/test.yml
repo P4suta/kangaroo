@@ -139,6 +139,11 @@ jobs:
       - name: Download daemon fixture dependencies
         working-directory: fixtures/coverage_project
         run: gleam deps download
+      - name: Validate Windows Node 24 worker and output lifecycle
+        if: runner.os == 'Windows' && matrix.runtime == 'nodejs' && matrix.version == '24'
+        run: |
+          gleam test --target javascript --runtime nodejs -- test/helper_test.gleam
+          gleam test --target javascript --runtime nodejs -- test/process_output_limit_test.gleam
       - run: gleam test --target javascript --runtime ${{ matrix.runtime }}
 
   process-stress:
