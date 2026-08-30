@@ -880,12 +880,14 @@ fn positive_delay(milliseconds: Int) -> Int {
   }
 }
 
-/// Idle scans are deliberately less frequent than the settle debounce. The
-/// two-debounce interval leaves protocol polling headroom inside the 150 ms
-/// save-detection budget, while compilation still waits for a stable window.
+/// Idle scans are deliberately less frequent than the settle debounce. Small
+/// debounce values retain their two-window response; normal watch settings
+/// use a 120 ms ceiling to reduce traversal while preserving 30 ms of
+/// scheduling headroom inside the 150 ms save-detection budget.
 pub fn scan_interval(debounce_ms: Int) -> Int {
   case debounce_ms > 0 {
-    True -> debounce_ms * 2
+    True if debounce_ms < 50 -> debounce_ms * 2
+    True -> 120
     False -> 1
   }
 }

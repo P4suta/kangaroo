@@ -154,14 +154,22 @@ close_port(Port) ->
         _:_ -> ok
     end,
     wait_for_processes(Processes,
-                       erlang:monotonic_time(millisecond) + 200).
+                       erlang:monotonic_time(millisecond) +
+                       process_cleanup_wait_ms()).
 
 terminate_process_tree(OsPid) ->
     case os:type() of
         {win32, _} ->
-            _ = os:cmd("taskkill /PID " ++ integer_to_list(OsPid) ++
-                       " /T /F >NUL 2>&1"),
-            [];
+            %% taskkill /T normally handles the complete tree, but an erl.exe
+            %% launcher can disappear while its BEAM child is still alive.
+            %% Snapshot the tree first and retain every PID for an explicit
+            %% fallback kill and handle-release wait.
+            Processes = process_table(),
+            Descendants = descendants(OsPid, Processes),
+            Targets = lists:usort(Descendants ++ [OsPid]),
+            taskkill(OsPid),
+            lists:foreach(fun taskkill/1, Descendants),
+            Targets;
         _ ->
             %% Freeze the root first so it cannot create a child between the
             %% process-table snapshot and termination.
@@ -175,6 +183,17 @@ terminate_process_tree(OsPid) ->
             Targets
     end.
 
+process_cleanup_wait_ms() ->
+    case os:type() of
+        {win32, _} -> 5000;
+        _ -> 200
+    end.
+
+taskkill(Pid) ->
+    _ = os:cmd("taskkill /PID " ++ integer_to_list(Pid) ++
+               " /T /F >NUL 2>&1"),
+    ok.
+
 wait_for_processes([], _Deadline) -> ok;
 wait_for_processes(Targets, Deadline) ->
     Running = [Pid || {Pid, _} <- process_table(),
@@ -182,13 +201,35 @@ wait_for_processes(Targets, Deadline) ->
     case {Running, erlang:monotonic_time(millisecond) < Deadline} of
         {[], _} -> ok;
         {_, true} ->
-            timer:sleep(5),
+            case os:type() of
+                {win32, _} -> lists:foreach(fun taskkill/1, Running);
+                _ -> ok
+            end,
+            timer:sleep(25),
             wait_for_processes(Running, Deadline);
         {_, false} -> ok
     end.
 
 process_table() ->
+    case os:type() of
+        {win32, _} -> windows_process_table();
+        _ -> unix_process_table()
+    end.
+
+unix_process_table() ->
     Lines = string:split(os:cmd("ps -e -o pid= -o ppid="), "\n", all),
+    parse_process_table(Lines).
+
+windows_process_table() ->
+    Command =
+        "powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"" ++
+        "Get-CimInstance Win32_Process | ForEach-Object { " ++
+        "Write-Output ([string]$_.ProcessId + ' ' + " ++
+        "[string]$_.ParentProcessId) }\"",
+    Lines = string:split(os:cmd(Command), "\n", all),
+    parse_process_table(Lines).
+
+parse_process_table(Lines) ->
     lists:filtermap(fun(Line) ->
         case string:tokens(Line, " \t\r") of
             [Pid, Parent] ->
