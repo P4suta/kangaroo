@@ -254,6 +254,8 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   let erlang_fs = string.replace(erlang_fs, each: "\r\n", with: "\n")
   let assert Ok(process_worker) =
     fs.read_file("src/kangaroo_process_worker.mjs")
+  let assert Ok(daemon_source) =
+    fs.read_file("src/kangaroo/internal/daemon.gleam")
   let assert Ok(process_tree) = fs.read_file("src/kangaroo_process_tree.mjs")
   let assert Ok(process_ffi) = fs.read_file("src/kangaroo_process_ffi.mjs")
   let assert Ok(erlang_process_ffi) =
@@ -282,6 +284,10 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(process_worker, "from \"./kangaroo_process_tree.mjs\"")
   assert string.contains(process_worker, "pendingTermination")
   assert string.contains(process_worker, "finishTermination")
+  assert string.contains(process_worker, "message.type === \"consumed\"")
+  assert string.contains(daemon_source, "process.start_streaming(")
+  assert string.contains(daemon_source, "operations.append_output_checked(")
+  assert string.contains(daemon_source, "entry.terminal_error")
   let assert [_, termination_body] =
     string.split(process_worker, "function terminateTree(message)")
   let assert [termination_body, ..] =

@@ -45,6 +45,20 @@ pub fn start(
   timeout_ms: Int,
 ) -> Result(Int, String)
 
+/// Starts a process whose output is consumed incrementally and is not retained
+/// in the terminal `ProcessResult`. The 16 MiB safety limit applies to output
+/// waiting to be consumed rather than to the lifetime total, allowing daemon
+/// watch operations to stream for as long as their clients keep up.
+@external(erlang, "kangaroo_process_ffi", "start_streaming")
+@external(javascript, "../../kangaroo_process_ffi.mjs", "start_streaming")
+pub fn start_streaming(
+  directory: String,
+  executable: String,
+  arguments: List(String),
+  environment: List(#(String, String)),
+  timeout_ms: Int,
+) -> Result(Int, String)
+
 @external(erlang, "kangaroo_process_ffi", "poll")
 @external(javascript, "../../kangaroo_process_ffi.mjs", "poll")
 pub fn poll(handle: Int) -> ProcessPoll

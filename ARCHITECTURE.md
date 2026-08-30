@@ -126,6 +126,12 @@ daemon accepts at most 32 concurrent operations. Its stdin reader bounds an
 individual request at 1 MiB and discards an overlong fragmented line without
 ending or desynchronising the stream.
 
+Daemon child output uses an acknowledged streaming boundary: lifetime output
+does not accumulate merely because a watch is long-lived, while unread output
+remains capped at 16 MiB. The daemon independently caps chunks accepted but not
+yet delivered, including an unterminated line, so moving data across the
+process boundary cannot bypass the memory limit.
+
 VS Code and Neovim start one daemon per Gleam package root. This is also the
 monorepo model: packages remain independent, while the editor owns discovery,
 restart, and complete removal of diagnostics from obsolete generations. Each

@@ -3,6 +3,7 @@ import {
   Worker,
   receiveMessageOnPort,
 } from "node:worker_threads";
+import { Buffer } from "node:buffer";
 import { Empty, Error as GleamError, Ok } from "./gleam.mjs";
 import {
   terminateProcessTree,
@@ -64,6 +65,7 @@ export function run(directory, executable, argumentList, environment, timeoutMs)
       environment,
       timeoutMs,
       false,
+      false,
     );
     return waitForProcess(id, timeoutMs);
   } catch (error) {
@@ -86,6 +88,7 @@ export function run_inherited(
       environment,
       timeoutMs,
       true,
+      false,
     );
     return waitForProcess(id, timeoutMs);
   } catch (error) {
@@ -102,6 +105,29 @@ export function start(directory, executable, argumentList, environment, timeoutM
       environment,
       timeoutMs,
       false,
+      false,
+    ));
+  } catch (error) {
+    return new GleamError(errorMessage(error));
+  }
+}
+
+export function start_streaming(
+  directory,
+  executable,
+  argumentList,
+  environment,
+  timeoutMs,
+) {
+  try {
+    return new Ok(createProcess(
+      directory,
+      executable,
+      argumentList,
+      environment,
+      timeoutMs,
+      false,
+      true,
     ));
   } catch (error) {
     return new GleamError(errorMessage(error));
@@ -115,6 +141,7 @@ function createProcess(
   environment,
   timeoutMs,
   inherited,
+  streaming,
 ) {
   ensureWindowsJobHelper();
   const id = nextProcessId++;
@@ -138,6 +165,7 @@ function createProcess(
       timeoutMs,
       maxOutputBytes,
       inherited,
+      streaming,
     },
     transferList: [port2],
   });
@@ -153,6 +181,7 @@ function createProcess(
     startup,
     startupDeadline: Date.now() + workerStartupTimeoutMs,
     cancellationStarted: 0,
+    streaming,
   });
   Atomics.wait(startup, 0, 0, 25);
   return id;
@@ -220,8 +249,16 @@ export function poll(id) {
     }
     const message = received.message;
     if (message.type === "output") {
-      active.output.push(String(message.data || ""));
-      return new ProcessOutput(String(message.data || ""));
+      const output = String(message.data || "");
+      if (active.streaming) {
+        active.port.postMessage({
+          type: "consumed",
+          bytes: Buffer.byteLength(output, "utf8"),
+        });
+      } else {
+        active.output.push(output);
+      }
+      return new ProcessOutput(output);
     }
     processes.delete(id);
     active.port.close();

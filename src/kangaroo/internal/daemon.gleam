@@ -302,7 +302,7 @@ fn start_operation(
               run_arguments,
             )
           case
-            process.start(
+            process.start_streaming(
               project_dir,
               executable,
               arguments,
@@ -365,48 +365,70 @@ fn drain_operation_output(
       case process.poll(entry.handle) {
         process.ProcessRunning -> state
         process.ProcessOutput(output) ->
-          drain_operation_output(
-            operations.append_output(state, entry.id, output),
-            entry,
-            remaining - 1,
-          )
+          case operations.append_output_checked(state, entry.id, output) {
+            Ok(state) -> drain_operation_output(state, entry, remaining - 1)
+            Error(message) -> {
+              process.cancel(entry.handle)
+              operations.fail(state, entry.id, message)
+            }
+          }
         process.ProcessFinished(completed) -> {
-          let #(state, remainder) = operations.finish_output(state, entry.id)
-          case remainder {
-            Some(line) -> emit_line(entry.id, line)
-            None -> Nil
+          case entry.terminal_error {
+            Some(message) -> complete_with_error(state, entry.id, message)
+            None -> {
+              let #(state, remainder) =
+                operations.finish_output(state, entry.id)
+              case remainder {
+                Some(line) -> emit_line(entry.id, line)
+                None -> Nil
+              }
+              let #(state, publish) = operations.complete(state, entry.id)
+              case publish {
+                True ->
+                  fs.write_stdout_line(protocol.encode_completed(
+                    entry.id,
+                    completed.exit_code,
+                  ))
+                False -> Nil
+              }
+              state
+            }
           }
-          let #(state, publish) = operations.complete(state, entry.id)
-          case publish {
-            True ->
-              fs.write_stdout_line(protocol.encode_completed(
-                entry.id,
-                completed.exit_code,
-              ))
-            False -> Nil
-          }
-          state
         }
         process.ProcessFailed(message) -> {
-          let #(state, remainder) = operations.finish_output(state, entry.id)
-          case remainder {
-            Some(line) -> emit_line(entry.id, line)
-            None -> Nil
+          case entry.terminal_error {
+            Some(primary) -> complete_with_error(state, entry.id, primary)
+            None -> {
+              let #(state, remainder) =
+                operations.finish_output(state, entry.id)
+              case remainder {
+                Some(line) -> emit_line(entry.id, line)
+                None -> Nil
+              }
+              complete_with_error(state, entry.id, message)
+            }
           }
-          let #(state, publish) = operations.complete(state, entry.id)
-          case publish {
-            True ->
-              fs.write_stdout_line(protocol.encode_error(entry.id, message))
-            False -> Nil
+        }
+        process.ProcessCancelled ->
+          case entry.terminal_error {
+            Some(message) -> complete_with_error(state, entry.id, message)
+            None -> operations.complete(state, entry.id).0
           }
-          state
-        }
-        process.ProcessCancelled -> {
-          let #(state, _) = operations.complete(state, entry.id)
-          state
-        }
       }
   }
+}
+
+fn complete_with_error(
+  state: operations.State,
+  operation_id: String,
+  message: String,
+) -> operations.State {
+  let #(state, publish) = operations.complete(state, operation_id)
+  case publish {
+    True -> fs.write_stdout_line(protocol.encode_error(operation_id, message))
+    False -> Nil
+  }
+  state
 }
 
 fn emit_lines(operation_id: String, lines: List(String)) -> Nil {

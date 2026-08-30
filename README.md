@@ -113,9 +113,11 @@ Pretty output is the default. One-shot `run` supports `pretty`, `dot`,
 `ndjson`, and `junit`; `watch` and `coverage` support `pretty`, `dot`, and
 `ndjson`; `list` and `doctor` support `pretty` and `ndjson`. Captured stdout
 and stderr follow the configured `show_output` policy. Each test's captured
-output and each external child command's combined stdout and stderr are
-limited to 16 MiB; exceeding either limit is an infrastructure error instead
-of allowing an unbounded runner process.
+output and each finite captured child command's combined stdout and stderr are
+limited to 16 MiB. Daemon operations may stream more than 16 MiB over their
+lifetime, but both output awaiting consumption and output awaiting delivery to
+the client retain independent 16 MiB limits. Exceeding a live memory boundary
+is an infrastructure error instead of allowing an unbounded runner process.
 
 Exit status is 0 for a clean run, including an all-skipped selection; 1 for a
 test failure, a retry that passes only after failing (`flaky`), or an unmet

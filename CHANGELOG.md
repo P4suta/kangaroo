@@ -61,6 +61,9 @@ versioning.
   daemon request lines to 1 MiB, and concurrent daemon operations to 32,
   returning explicit infrastructure errors so malformed clients and noisy
   tools cannot grow memory without limit.
+- Made daemon run/watch output acknowledged and bounded by unread data rather
+  than lifetime totals, allowing a responsive client to keep a long-lived
+  watch active beyond 16 MiB while independently bounding undelivered lines.
 - Required a path-bound ownership marker before deleting a disposable coverage
   clone, including symlink-safe validation on every runtime.
 - Made editor results operation-generation aware, invalidated cancelled runs

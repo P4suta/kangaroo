@@ -1,10 +1,19 @@
 -module(kangaroo_process_ffi).
--export([run/5, run_inherited/5, start/5, poll/1, cancel/1, write/2,
+-export([run/5, run_inherited/5, start/5, start_streaming/5, poll/1, cancel/1, write/2,
          terminate_port/1, internal_windows_job_name/1]).
 -define(MAX_OUTPUT_BYTES, 16777216).
 -define(WINDOWS_JOB_PREFIX, "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_").
 
 start(Directory, Executable, Arguments, Environment, TimeoutMs) ->
+    start_with_mode(Directory, Executable, Arguments, Environment, TimeoutMs,
+                    false).
+
+start_streaming(Directory, Executable, Arguments, Environment, TimeoutMs) ->
+    start_with_mode(Directory, Executable, Arguments, Environment, TimeoutMs,
+                    true).
+
+start_with_mode(Directory, Executable, Arguments, Environment, TimeoutMs,
+                Streaming) ->
     case executable_path(Executable) of
         {error, _} = Error -> Error;
         {ok, Path} ->
@@ -15,9 +24,9 @@ start(Directory, Executable, Arguments, Environment, TimeoutMs) ->
                     Parent = self(),
                     Pid = spawn(fun() ->
                         async_run(Parent, Id, Directory, Path, Arguments,
-                                  Environment, TimeoutMs)
+                                  Environment, TimeoutMs, Streaming)
                     end),
-                    put({kangaroo_process, Id}, Pid),
+                    put({kangaroo_process, Id}, {Pid, Streaming}),
                     {ok, Id}
             end
     end.
@@ -25,6 +34,7 @@ start(Directory, Executable, Arguments, Environment, TimeoutMs) ->
 poll(Id) ->
     receive
         {kangaroo_process, Id, {output, Output}} ->
+            acknowledge_output(Id, Output),
             {process_output, Output};
         {kangaroo_process, Id, {finished, Result}} ->
             erase({kangaroo_process, Id}),
@@ -45,14 +55,14 @@ poll(Id) ->
 cancel(Id) ->
     case get({kangaroo_process, Id}) of
         undefined -> ok;
-        Pid -> Pid ! cancel
+        {Pid, _Streaming} -> Pid ! cancel
     end,
     nil.
 
 write(Id, Input) ->
     case get({kangaroo_process, Id}) of
         undefined -> ok;
-        Pid -> Pid ! {input, Input}
+        {Pid, _Streaming} -> Pid ! {input, Input}
     end,
     nil.
 
@@ -123,21 +133,29 @@ collect_inherited(Port, OsPid, Deadline) ->
         {error, <<"process timed out">>}
     end.
 
-async_run(Parent, Id, Directory, Path, Arguments, Environment, TimeoutMs) ->
+acknowledge_output(Id, Output) ->
+    case get({kangaroo_process, Id}) of
+        {Pid, true} -> Pid ! {consumed, byte_size(Output)};
+        _ -> ok
+    end.
+
+async_run(Parent, Id, Directory, Path, Arguments, Environment, TimeoutMs,
+          Streaming) ->
     process_flag(trap_exit, true),
     try open_process_port(Directory, Path, Arguments, Environment, captured) of
-        Port -> async_run_port(Parent, Id, Port, TimeoutMs)
+        Port -> async_run_port(Parent, Id, Port, TimeoutMs, Streaming)
     catch
         Class:Reason:Stack ->
             Parent ! {kangaroo_process, Id,
                       {failed, format_exception(Class, Reason, Stack)}}
     end.
 
-async_run_port(Parent, Id, Port, TimeoutMs) ->
+async_run_port(Parent, Id, Port, TimeoutMs, Streaming) ->
     try
         OsPid = port_os_pid(Port),
         Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
-        async_collect(Parent, Id, Port, OsPid, [], <<>>, 0, Deadline)
+        async_collect(Parent, Id, Port, OsPid, [], <<>>, 0, Deadline,
+                      Streaming)
     catch
         Class:Reason:Stack ->
             safe_close_port(Port),
@@ -358,7 +376,7 @@ windows_job_launcher() ->
     filename:rootname(windows_job_executable()) ++ ".cmd".
 
 async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8, OutputBytes,
-              Deadline) ->
+              Deadline, Streaming) ->
     %% A full output pipe can enqueue many port messages ahead of a caller's
     %% cancellation request. Selectively check the control message first so
     %% cancellation latency does not depend on draining captured output.
@@ -373,7 +391,7 @@ async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8, OutputBytes,
                       {failed, <<"process stdin is not writable">>}};
         {'EXIT', Port, normal} ->
             async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8,
-                          OutputBytes, Deadline);
+                          OutputBytes, Deadline, Streaming);
         {'EXIT', Port, Reason} ->
             terminate_process_tree(OsPid),
             safe_close_port(Port),
@@ -381,11 +399,11 @@ async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8, OutputBytes,
                       {failed, port_failure_message(Reason)}}
     after 0 ->
         async_collect_wait(Parent, Id, Port, OsPid, Output, PendingUtf8,
-                           OutputBytes, Deadline)
+                           OutputBytes, Deadline, Streaming)
     end.
 
 async_collect_wait(Parent, Id, Port, OsPid, Output, PendingUtf8,
-                   OutputBytes, Deadline) ->
+                   OutputBytes, Deadline, Streaming) ->
     Remaining = erlang:max(0, Deadline - erlang:monotonic_time(millisecond)),
     receive
         {Port, {data, Data}} ->
@@ -399,9 +417,12 @@ async_collect_wait(Parent, Id, Port, OsPid, Output, PendingUtf8,
                               {failed, output_limit_message()}};
                 false ->
                     send_output(Parent, Id, Text),
-                    NextOutput = prepend_nonempty(Text, Output),
+                    NextOutput = case Streaming of
+                        true -> Output;
+                        false -> prepend_nonempty(Text, Output)
+                    end,
                     async_collect(Parent, Id, Port, OsPid, NextOutput,
-                                  Pending, NextBytes, Deadline)
+                                  Pending, NextBytes, Deadline, Streaming)
             end;
         {Port, {exit_status, Code}} ->
             terminate_remaining_process_group(OsPid),
@@ -412,18 +433,27 @@ async_collect_wait(Parent, Id, Port, OsPid, Output, PendingUtf8,
                               {failed, output_limit_message()}};
                 false ->
                     send_output(Parent, Id, Final),
+                    CompleteOutput = case Streaming of
+                        true -> <<>>;
+                        false -> iolist_to_binary(
+                                   lists:reverse(
+                                     prepend_nonempty(Final, Output)))
+                    end,
                     Parent ! {kangaroo_process, Id,
                               {finished, {process_result, Code,
-                                          iolist_to_binary(
-                                            lists:reverse(
-                                              prepend_nonempty(
-                                                Final, Output)))}}}
+                                          CompleteOutput}}}
             end;
+        {consumed, Bytes} when Streaming =:= true, is_integer(Bytes),
+                               Bytes > 0 ->
+            async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8,
+                          erlang:max(0, OutputBytes - Bytes), Deadline,
+                          Streaming);
         {input, Input} ->
             case write_port(Port, Input) of
                 ok ->
                     async_collect(Parent, Id, Port, OsPid, Output,
-                                  PendingUtf8, OutputBytes, Deadline);
+                                  PendingUtf8, OutputBytes, Deadline,
+                                  Streaming);
                 {error, Message} ->
                     close_port(Port),
                     Parent ! {kangaroo_process, Id, {failed, Message}}
@@ -438,7 +468,7 @@ async_collect_wait(Parent, Id, Port, OsPid, Output, PendingUtf8,
                       {failed, <<"process stdin is not writable">>}};
         {'EXIT', Port, normal} ->
             async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8,
-                          OutputBytes, Deadline);
+                          OutputBytes, Deadline, Streaming);
         {'EXIT', Port, Reason} ->
             terminate_process_tree(OsPid),
             safe_close_port(Port),

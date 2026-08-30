@@ -119,11 +119,16 @@ pub fn shutdown_returns_handles_in_registration_order_test() {
 pub fn streamed_protocol_lines_are_reassembled_across_chunks_test() {
   let assert Ok(state) =
     operations.start(operations.empty(), "run-1", 9, RunOperation)
-  let state = operations.append_output(state, "run-1", "{\"type\":\"ev")
+  let assert Ok(state) =
+    operations.append_output_checked(state, "run-1", "{\"type\":\"ev")
   let #(state, first_lines) = operations.take_output_lines(state, "run-1", 64)
   assert first_lines == []
-  let state =
-    operations.append_output(state, "run-1", "ent\"}\ncompiler log\npartial")
+  let assert Ok(state) =
+    operations.append_output_checked(
+      state,
+      "run-1",
+      "ent\"}\ncompiler log\npartial",
+    )
   let #(state, lines) = operations.take_output_lines(state, "run-1", 64)
   assert lines == ["{\"type\":\"event\"}", "compiler log"]
   let #(state, remainder) = operations.finish_output(state, "run-1")
@@ -134,8 +139,8 @@ pub fn streamed_protocol_lines_are_reassembled_across_chunks_test() {
 pub fn buffered_output_is_taken_with_a_bounded_line_budget_test() {
   let assert Ok(state) =
     operations.start(operations.empty(), "run-1", 9, RunOperation)
-  let state =
-    operations.append_output(
+  let assert Ok(state) =
+    operations.append_output_checked(
       state,
       "run-1",
       "one\ntwo\nthree\nfour\nfive\ntrailing",
@@ -153,15 +158,33 @@ pub fn buffered_output_is_taken_with_a_bounded_line_budget_test() {
 pub fn unterminated_output_fragments_preserve_order_without_repeated_joining_test() {
   let assert Ok(state) =
     operations.start(operations.empty(), "run-1", 9, RunOperation)
-  let state = operations.append_output(state, "run-1", "one")
-  let state = operations.append_output(state, "run-1", "two")
+  let assert Ok(state) = operations.append_output_checked(state, "run-1", "one")
+  let assert Ok(state) = operations.append_output_checked(state, "run-1", "two")
   let #(state, lines) = operations.take_output_lines(state, "run-1", 64)
   assert lines == []
-  let state = operations.append_output(state, "run-1", "three\ntrailing")
+  let assert Ok(state) =
+    operations.append_output_checked(state, "run-1", "three\ntrailing")
   let #(state, lines) = operations.take_output_lines(state, "run-1", 64)
   assert lines == ["onetwothree"]
   let #(_, remainder) = operations.finish_output(state, "run-1")
   assert remainder == Some("trailing")
+}
+
+pub fn daemon_stream_buffer_is_bounded_after_consumed_lines_are_released_test() {
+  let assert Ok(state) =
+    operations.start(operations.empty(), "run-1", 9, RunOperation)
+  let assert Ok(state) =
+    operations.append_output_with_limit(state, "run-1", "one\npending", 11)
+  let #(state, lines) = operations.take_output_lines(state, "run-1", 1)
+  assert lines == ["one"]
+  let assert Ok(state) =
+    operations.append_output_with_limit(state, "run-1", "123", 10)
+  assert operations.append_output_with_limit(state, "run-1", "x", 10)
+    == Error("process output exceeded 16777216 bytes")
+
+  let failed = operations.fail(state, "run-1", "buffer limit")
+  let assert [entry] = operations.entries(failed)
+  assert entry.terminal_error == Some("buffer limit")
 }
 
 pub fn operations_are_routed_to_runtime_commands_test() {

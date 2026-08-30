@@ -8,6 +8,7 @@
          oversized_output_arguments/0,
          oversized_split_output_arguments/0,
          invalid_utf8_expansion_arguments/0,
+         streaming_handshake_arguments/0,
          streaming_output_arguments/0,
          closed_stdin_executable/0, closed_stdin_tree_arguments/1,
          silent_exit_arguments/1, schedule_replace/4,
@@ -82,6 +83,14 @@ invalid_utf8_expansion_arguments() ->
        "Chunk=binary:copy(<<255>>,65536), "
        "lists:foreach(fun(_) -> true=port_command(P,Chunk) end, "
        "lists:seq(1,86)), halt().">>].
+
+streaming_handshake_arguments() ->
+    [<<"-noshell">>, <<"-eval">>,
+     <<"Chunk=binary:copy(<<97>>,1048576), "
+       "Loop=fun Self() -> case io:get_line(\"\") of "
+       "\"next\\n\" -> io:put_chars(Chunk), Self(); "
+       "\"done\\n\" -> halt(0); eof -> halt(2); _ -> halt(3) end end, "
+       "Loop().">>].
 
 streaming_output_arguments() ->
     [<<"-noshell">>, <<"-eval">>,

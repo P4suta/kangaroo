@@ -1,3 +1,4 @@
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -15,6 +16,8 @@ pub type Entry {
     kind: Kind,
     buffer: String,
     pending_fragments: List(String),
+    buffered_bytes: Int,
+    terminal_error: Option(String),
   )
 }
 
@@ -23,6 +26,8 @@ pub type State {
 }
 
 const max_active_operations = 32
+
+const max_buffered_output_bytes = 16_777_216
 
 pub fn empty() -> State {
   State([])
@@ -53,7 +58,13 @@ pub fn start(
   kind: Kind,
 ) -> Result(State, String) {
   use _ <- result.try(can_start(state, id))
-  Ok(State(list.append(state.entries, [Entry(id, handle, kind, "", [])])))
+  Ok(
+    State(
+      list.append(state.entries, [
+        Entry(id, handle, kind, "", [], 0, None),
+      ]),
+    ),
+  )
 }
 
 /// Checks daemon capacity before a child process is spawned.
@@ -65,36 +76,74 @@ pub fn can_start(state: State, id: String) -> Result(Nil, String) {
   }
 }
 
-pub fn append_output(state: State, id: String, chunk: String) -> State {
+/// Appends a process chunk while bounding output already accepted by the
+/// daemon but not yet written to its client. Streaming-process acknowledgments
+/// move memory ownership into this buffer, so both sides enforce the same
+/// limit independently.
+pub fn append_output_checked(
+  state: State,
+  id: String,
+  chunk: String,
+) -> Result(State, String) {
+  append_output_with_limit(state, id, chunk, max_buffered_output_bytes)
+}
+
+pub fn append_output_with_limit(
+  state: State,
+  id: String,
+  chunk: String,
+  limit: Int,
+) -> Result(State, String) {
   case list.find(state.entries, fn(entry) { entry.id == id }) {
-    Error(_) -> state
-    Ok(found) ->
-      State(
-        list.map(state.entries, fn(entry) {
-          case entry.id == id {
-            True ->
-              case string.contains(chunk, "\n") {
-                True ->
-                  Entry(
-                    ..entry,
-                    buffer: join_fragments(
-                      found.buffer,
-                      found.pending_fragments,
-                      chunk,
-                    ),
-                    pending_fragments: [],
-                  )
-                False ->
-                  Entry(..entry, pending_fragments: [
-                    chunk,
-                    ..found.pending_fragments
-                  ])
-              }
-            False -> entry
-          }
-        }),
-      )
+    Error(_) -> Ok(state)
+    Ok(found) -> {
+      let buffered_bytes = found.buffered_bytes + string.byte_size(chunk)
+      case buffered_bytes > limit {
+        True -> Error("process output exceeded 16777216 bytes")
+        False ->
+          Ok(
+            State(
+              list.map(state.entries, fn(entry) {
+                case entry.id == id {
+                  True ->
+                    case string.contains(chunk, "\n") {
+                      True ->
+                        Entry(
+                          ..entry,
+                          buffer: join_fragments(
+                            found.buffer,
+                            found.pending_fragments,
+                            chunk,
+                          ),
+                          pending_fragments: [],
+                          buffered_bytes:,
+                        )
+                      False ->
+                        Entry(
+                          ..entry,
+                          pending_fragments: [chunk, ..found.pending_fragments],
+                          buffered_bytes:,
+                        )
+                    }
+                  False -> entry
+                }
+              }),
+            ),
+          )
+      }
+    }
   }
+}
+
+pub fn fail(state: State, id: String, message: String) -> State {
+  State(
+    list.map(state.entries, fn(entry) {
+      case entry.id == id {
+        True -> Entry(..entry, terminal_error: Some(message))
+        False -> entry
+      }
+    }),
+  )
 }
 
 /// Removes at most `limit` complete lines from an operation's buffered output.
@@ -109,11 +158,21 @@ pub fn take_output_lines(
     Error(_) -> #(state, [])
     Ok(found) -> {
       let #(remainder, lines) = take_lines(found.buffer, limit, [])
+      let consumed_bytes =
+        string.byte_size(found.buffer) - string.byte_size(remainder)
       #(
         State(
           list.map(state.entries, fn(entry) {
             case entry.id == id {
-              True -> Entry(..entry, buffer: remainder)
+              True ->
+                Entry(
+                  ..entry,
+                  buffer: remainder,
+                  buffered_bytes: int.max(
+                    0,
+                    found.buffered_bytes - consumed_bytes,
+                  ),
+                )
               False -> entry
             }
           }),
@@ -149,7 +208,13 @@ pub fn finish_output(state: State, id: String) -> #(State, Option(String)) {
         State(
           list.map(state.entries, fn(entry) {
             case entry.id == id {
-              True -> Entry(..entry, buffer: "", pending_fragments: [])
+              True ->
+                Entry(
+                  ..entry,
+                  buffer: "",
+                  pending_fragments: [],
+                  buffered_bytes: 0,
+                )
               False -> entry
             }
           }),

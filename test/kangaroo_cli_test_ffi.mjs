@@ -131,6 +131,51 @@ export function invalid_utf8_expansion_arguments() {
   return toList(deno ? ["eval", code] : ["-e", code]);
 }
 
+export function streaming_handshake_arguments() {
+  if (typeof globalThis.Deno !== "undefined") {
+    return toList([
+      "eval",
+      `const chunk = new Uint8Array(1048576).fill(97);
+       const input = new Uint8Array(64);
+       const decoder = new TextDecoder();
+       let pending = "";
+       while (true) {
+         const count = await Deno.stdin.read(input);
+         if (count === null) Deno.exit(2);
+         pending += decoder.decode(input.subarray(0, count), { stream: true });
+         let newline;
+         while ((newline = pending.indexOf("\\n")) >= 0) {
+           const command = pending.slice(0, newline);
+           pending = pending.slice(newline + 1);
+           if (command === "done") Deno.exit(0);
+           if (command !== "next") Deno.exit(3);
+           Deno.stdout.writeSync(chunk);
+         }
+       }`,
+    ]);
+  }
+  return toList([
+    "-e",
+    `const fs = require("node:fs");
+     const chunk = Buffer.alloc(1048576, 97);
+     const input = Buffer.alloc(64);
+     let pending = "";
+     while (true) {
+       const count = fs.readSync(0, input, 0, input.length, null);
+       if (count === 0) process.exit(2);
+       pending += input.toString("utf8", 0, count);
+       let newline;
+       while ((newline = pending.indexOf("\\n")) >= 0) {
+         const command = pending.slice(0, newline);
+         pending = pending.slice(newline + 1);
+         if (command === "done") process.exit(0);
+         if (command !== "next") process.exit(3);
+         fs.writeSync(1, chunk);
+       }
+     }`,
+  ]);
+}
+
 export function streaming_output_arguments() {
   if (typeof globalThis.Deno !== "undefined") {
     return toList([

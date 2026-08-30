@@ -109,9 +109,11 @@ A finite run ends with its process exit status:
 ```
 
 Watch operations remain active until cancellation, shutdown, daemon exit, or
-an infrastructure error. The combined stdout and stderr of each external child
-command is limited to 16 MiB; exceeding it is an infrastructure error. A
-successful cancellation responds to the cancel request:
+an infrastructure error. A run or watch may stream more than 16 MiB over its
+lifetime when the client keeps up. Output waiting at either the child bridge or
+the daemon delivery buffer is independently limited to 16 MiB; exceeding a
+live buffer is an infrastructure error. A successful cancellation responds to
+the cancel request:
 
 ```json
 {"protocol_version":1,"type":"cancelled","request_id":"cancel-1","operation_id":"watch-1"}

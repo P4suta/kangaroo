@@ -29,6 +29,7 @@ const usingBunSpawn =
   typeof globalThis.Bun !== "undefined" &&
   globalThis.process.platform !== "win32";
 const inherited = workerData.inherited === true;
+const streaming = workerData.streaming === true;
 
 function commandLaunch() {
   if (globalThis.process.platform !== "win32") {
@@ -275,6 +276,13 @@ try {
 }
 
 port.on("message", (message) => {
+  if (message && message.type === "consumed" && streaming && !terminal) {
+    const bytes = Number(message.bytes);
+    if (Number.isFinite(bytes) && bytes > 0) {
+      outputBytes = Math.max(0, outputBytes - bytes);
+    }
+    return;
+  }
   if (message && message.type === "input" && !terminal) {
     inputRequested = true;
     if (
