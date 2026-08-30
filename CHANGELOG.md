@@ -33,8 +33,8 @@ versioning.
 - Made ordinary Gleam test functions and built-in `assert`/`let assert` the
   complete assertion model.
 - Moved all configuration to `[tools.kangaroo]`, rejecting unknown keys,
-  empty paths, absolute paths, and parent traversal instead of silently
-  ignoring mistakes or allowing cleanup outside the package.
+  empty paths, absolute or drive-qualified paths, and parent traversal instead
+  of silently ignoring mistakes or allowing cleanup outside the package.
 - Exposed only `kangaroo` plus the instrumentation-only
   `kangaroo/coverage_probe` tooling ABI from the Hex package.
 - Scoped CLI flags and reporters per command, added command-specific help, and

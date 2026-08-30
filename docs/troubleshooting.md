@@ -31,7 +31,8 @@ Selectors use project-relative `/` paths. Quote stable IDs in shells where
 `tag`, `tags`, and `timeout` must use literals and `serial()` accepts no
 arguments. Dynamic decisions belong in `skip_if`; dynamic scheduling metadata
 would make discovery nondeterministic and is rejected with a source line.
-Configuration paths and globs are project-relative; absolute paths and `..`
+Configuration paths and globs are project-relative; absolute paths, Windows
+drive-qualified paths such as `C:outside`, and `..`
 components are rejected rather than allowing a watch or cleanup to escape the
 package root. `test_paths` must be inside Gleam's compiled `src`, `dev`, or
 `test` directories; use a narrower path such as `test/integration` when needed.

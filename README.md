@@ -155,7 +155,8 @@ reporters = ["terminal"]
 Unknown keys and empty path or tag entries are errors, so misspelled
 configuration is never silently ignored. Test-root spellings such as `test`,
 `test/`, and `./test` are equivalent; overlapping roots never duplicate a test.
-Every configured path or glob is project-relative. Absolute paths and `..`
+Every configured path or glob is project-relative. Absolute paths,
+Windows drive-qualified paths such as `C:outside`, and `..`
 components are rejected before discovery, watching, or build-cache cleanup.
 Test roots must be inside Gleam's compiled `src`, `dev`, or `test` source
 directories; narrower roots such as `test/integration` are supported.

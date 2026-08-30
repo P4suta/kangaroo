@@ -92,6 +92,10 @@ pub fn config_rejects_paths_outside_the_project_test() {
     == Error(
       "tools.kangaroo.coverage.include paths must be project-relative and must not contain `..`",
     )
+  assert config.parse("[tools.kangaroo.watch]\nextra_paths = [\"C:outside\"]")
+    == Error(
+      "tools.kangaroo.watch.extra_paths paths must be project-relative and must not contain `..`",
+    )
 }
 
 pub fn config_rejects_test_roots_the_gleam_build_will_not_compile_test() {

@@ -468,12 +468,14 @@ fn trim_path_slashes(path: String) -> String {
 fn unsafe_project_path(value: String) -> Bool {
   let path = string.replace(value, each: "\\", with: "/")
   let components = string.split(path, "/")
-  let drive_absolute = case components {
-    [drive, ..] -> string.ends_with(drive, ":")
+  let drive_qualified = case components {
+    // Both `C:\\path` and drive-relative `C:path` can escape the project on
+    // Windows. Colons are not portable in a project-relative path component.
+    [first, ..] -> string.contains(first, ":")
     [] -> False
   }
   string.starts_with(path, "/")
-  || drive_absolute
+  || drive_qualified
   || list.contains(components, "..")
 }
 
