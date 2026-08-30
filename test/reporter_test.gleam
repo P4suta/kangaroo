@@ -1,8 +1,14 @@
+import gleam/io
 import gleam/option.{None}
 import gleam/string
+import kangaroo
 import kangaroo/failure.{Failed, Passed, Skipped, UnexpectedError}
+import kangaroo/internal/process
 import kangaroo/internal/reporter
+import kangaroo/internal/vm
+import kangaroo/internal/watcher
 import kangaroo/report.{CaseResult, Report}
+import kangaroo/sys
 
 fn sample_report() {
   Report(cases: [
@@ -21,6 +27,47 @@ pub fn dot_reporter_maps_outcomes_to_compact_symbols_test() {
   assert reporter.dot(Passed) == "."
   assert reporter.dot(Failed([])) == "F"
   assert reporter.dot(Skipped) == "S"
+}
+
+pub fn dot_reporter_retains_failure_details_and_captured_output_test() {
+  kangaroo.serial()
+  kangaroo.timeout(120_000)
+  let selection = "test/reporter_test.gleam::dot_reporter_failure_fixture_test"
+  let assert Ok(completed) =
+    process.run(
+      ".",
+      "gleam",
+      watcher.run_arguments_for(vm.target(), vm.runtime_name(), [
+        "--reporter",
+        "dot",
+        selection,
+      ]),
+      [#("KANGAROO_DOT_REPORTER_FIXTURE", "1")],
+      90_000,
+    )
+  assert completed.exit_code == 1
+  assert string.contains(completed.output, "F")
+  assert string.contains(completed.output, "dot fixture failure detail")
+  assert string.contains(
+    completed.output,
+    "stdout (" <> selection <> "):\n      dot fixture stdout",
+  )
+  assert string.contains(
+    completed.output,
+    "stderr (" <> selection <> "):\n      dot fixture stderr",
+  )
+  assert string.contains(completed.output, "0 passed, 1 failed, 0 skipped")
+}
+
+pub fn dot_reporter_failure_fixture_test() {
+  case sys.env("KANGAROO_DOT_REPORTER_FIXTURE") {
+    None -> Nil
+    _ -> {
+      io.println("dot fixture stdout")
+      io.println_error("dot fixture stderr")
+      panic as "dot fixture failure detail"
+    }
+  }
 }
 
 pub fn junit_reporter_escapes_testcase_outcomes_test() {

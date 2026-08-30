@@ -1,6 +1,7 @@
 import gleam/float
 import gleam/int
 import gleam/list
+import gleam/option.{None, Some}
 import gleam/string
 import kangaroo/event.{
   type Event, CaseFinished, CaseOutput, RunFinished, RunStarted,
@@ -9,6 +10,7 @@ import kangaroo/failure.{
   type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Flaky,
   Passed, Skipped, SkippedWithReason, UnexpectedError,
 }
+import kangaroo/format
 import kangaroo/internal/fs
 import kangaroo/internal/reporter_buffer
 import kangaroo/report.{type CaseResult, type Report, CaseResult, Report}
@@ -16,7 +18,30 @@ import kangaroo/report.{type CaseResult, type Report, CaseResult, Report}
 pub fn dot_sink(event: Event) -> Nil {
   case event {
     RunStarted(..) -> Nil
-    CaseFinished(_, _, outcome, _) -> fs.write_stdout(dot(outcome))
+    CaseFinished(suite, name, outcome, duration_ms) -> {
+      fs.write_stdout(dot(outcome))
+      case format.failure_lines(CaseResult(suite, name, outcome, duration_ms)) {
+        [] -> Nil
+        lines -> {
+          fs.write_stdout_line("")
+          lines
+          |> list.each(fn(line) {
+            fs.write_stdout_line(format.without_color(line))
+          })
+        }
+      }
+    }
+    CaseOutput(_, name, stdout, stderr, outcome) ->
+      case format.case_output_text(name, stdout, stderr, outcome) {
+        None -> Nil
+        Some(text) -> {
+          case outcome {
+            Failed(_) | Flaky(_, _) -> Nil
+            _ -> fs.write_stdout_line("")
+          }
+          fs.write_stdout_line(text)
+        }
+      }
     RunFinished(_, summary) ->
       fs.write_stdout_line(
         "  "

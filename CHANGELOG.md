@@ -39,6 +39,9 @@ versioning.
   `kangaroo/coverage_probe` tooling ABI from the Hex package.
 - Scoped CLI flags and reporters per command, added command-specific help, and
   made release publishing independently rerunnable per registry.
+- Made the compact dot reporter stream failure details and every captured
+  stdout/stderr event permitted by `show_output`, rather than reducing failures
+  to an unexplained `F`.
 - Added a Bun-native process backend with a complete descriptor-write fallback
   for Bun 1.4.0 piped-stdin failures, and made coverage clones reuse nested
   dependency caches for offline builds.
