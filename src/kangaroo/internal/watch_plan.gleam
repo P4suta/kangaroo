@@ -23,6 +23,13 @@ pub type Refresh {
   )
 }
 
+/// Starts a watch generation without a previously valid source index. This is
+/// used only when the source present at coordinator startup cannot be indexed;
+/// a later valid save rebuilds the complete cache through `refresh`.
+pub fn empty() -> State {
+  State(cache: index_cache.empty(), modules: [])
+}
+
 /// Converts a complete watch snapshot into the deterministic source set used
 /// by the AST cache. FFI and configuration files remain watch events but are
 /// not Gleam modules, and configured exclusions never enter the runnable set.

@@ -145,6 +145,77 @@ pub fn initial_watch_cancels_stale_run_and_publishes_saved_source_test() {
   }
 }
 
+pub fn watch_started_with_invalid_source_recovers_after_save_test() {
+  kangaroo.serial()
+  kangaroo.timeout(120_000)
+  let assert Ok(workspace) =
+    fs.copy_to_temporary_workspace("fixtures/watch_project")
+  let path = workspace <> "/test/kangaroo_watch_fixture_test.gleam"
+  let assert Ok(original) = fs.read_file(path)
+  let assert Ok(compiled) =
+    process.run(
+      workspace,
+      "gleam",
+      watcher.compile_arguments(vm.target(), vm.runtime_name()),
+      watcher.compile_environment(),
+      120_000,
+    )
+  case compiled.exit_code {
+    0 -> {
+      let invalid = "pub fn broken_test( {\n"
+      let assert Ok(Nil) = fs.write_file(path, invalid)
+      let assert Ok(handle) =
+        process.start(
+          workspace,
+          daemon.operation_executable(
+            WatchOperation,
+            vm.target(),
+            vm.runtime_name(),
+          ),
+          daemon.operation_arguments(
+            WatchOperation,
+            vm.target(),
+            vm.runtime_name(),
+            [],
+          ),
+          [],
+          90_000,
+        )
+      let #(watching, startup_output) =
+        await_output(handle, "kangaroo: watching", sys.now_ms(), 5000, "")
+      let #(recovered, recovery_output) = case watching {
+        False -> #(False, startup_output)
+        True -> {
+          schedule_replace(path, invalid, original, 100)
+          await_output(handle, "1 passed, 0 failed", sys.now_ms(), 30_000, "")
+        }
+      }
+      process.cancel(handle)
+      let _ =
+        await_terminal(
+          handle,
+          sys.now_ms(),
+          vm.process_cleanup_timeout_ms() + 500,
+        )
+      let assert Ok(Nil) = fs.remove_tree(workspace)
+      case recovered {
+        True -> Nil
+        False -> {
+          let message =
+            "watch did not recover from its initial source error:\n"
+            <> startup_output
+            <> recovery_output
+          panic as message
+        }
+      }
+    }
+    _ -> {
+      let _ = fs.remove_tree(workspace)
+      panic as compiled.output
+    }
+  }
+}
+
 fn await_output(
   handle: Int,
   expected: String,

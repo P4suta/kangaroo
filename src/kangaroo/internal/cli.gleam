@@ -235,14 +235,8 @@ fn watch_tui_project(
   use selectors <- result.try(parse_selectors(options.selectors))
   let roots = watcher.roots(configured.test_paths, configured.watch.extra_paths)
   use snapshot <- result.try(watcher.snapshot_project(project_dir, roots))
-  use index_state <- result.try(
-    watch_plan.initialise(
-      watch_plan.sources(snapshot),
-      configured.test_paths,
-      configured.exclude,
-    )
-    |> result.map_error(format_index_errors),
-  )
+  let index_state =
+    initial_watch_state(snapshot, configured.test_paths, configured.exclude)
   let child_options = command.RunOptions(..options, reporter: Ndjson)
   let ui = tui.initial() |> tui.with_status("running initial generation")
   let state = TuiWatchState(index_state, ui, NoTuiRequest)
@@ -1101,14 +1095,8 @@ fn watch_plain_project(
   use selectors <- result.try(parse_selectors(options.selectors))
   let roots = watcher.roots(configured.test_paths, configured.watch.extra_paths)
   use snapshot <- result.try(watcher.snapshot_project(project_dir, roots))
-  use index_state <- result.try(
-    watch_plan.initialise(
-      watch_plan.sources(snapshot),
-      configured.test_paths,
-      configured.exclude,
-    )
-    |> result.map_error(format_index_errors),
-  )
+  let index_state =
+    initial_watch_state(snapshot, configured.test_paths, configured.exclude)
   fs.write_stderr_line("kangaroo: watching " <> project_dir)
   // Compile and execute the initial generation through the same cancellable
   // process boundaries as later generations. The original snapshot is then
@@ -1205,6 +1193,19 @@ fn initial_plain_generation(
           PlainWatchState(index_state, change_paths(changes))
       })
     }
+  }
+}
+
+fn initial_watch_state(
+  snapshot: Dict(String, String),
+  test_paths: List(String),
+  exclude: List(String),
+) -> watch_plan.State {
+  case
+    watch_plan.initialise(watch_plan.sources(snapshot), test_paths, exclude)
+  {
+    Ok(state) -> state
+    Error(_) -> watch_plan.empty()
   }
 }
 

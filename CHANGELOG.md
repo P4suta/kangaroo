@@ -45,6 +45,8 @@ versioning.
 - Ran JavaScript module batches in parallel outer Workers up to the configured
   worker limit, while preserving deterministic event order and merging each
   Worker's isolated coverage probes through the parent.
+- Kept watch coordinators alive when their initial saved source has a syntax or
+  metadata error, rebuilding the complete incremental index after a valid save.
 - Reported a closed Erlang command stdin pipe immediately and terminated its
   complete live tree instead of discarding the write error and waiting for the
   command timeout.
