@@ -527,6 +527,17 @@ local ok, lifecycle_error = pcall(function()
   assert(#vim.api.nvim_buf_get_extmarks(
     stopped_coverage_buffer, test.coverage_namespace, 0, -1, {}
   ) == 1)
+
+  local manual_root = "/tmp/kangaroo-nvim-manual-stop-start"
+  local manual_session = test.start_root(manual_root)
+  local manual_job = jobs[#jobs]
+  local jobs_before_restart = #jobs
+  assert(test.stop_root(manual_root))
+  assert(test.start_root(manual_root) == manual_session)
+  assert(#jobs == jobs_before_restart)
+  running[manual_job.id] = false
+  manual_job.options.on_exit(manual_job.id)
+  assert(#jobs == jobs_before_restart + 1)
 end)
 
 kangaroo.stop_all()

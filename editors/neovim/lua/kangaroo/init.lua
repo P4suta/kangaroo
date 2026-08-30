@@ -3,6 +3,7 @@ local M = {}
 local namespace = vim.api.nvim_create_namespace("kangaroo")
 local coverage_namespace = vim.api.nvim_create_namespace("kangaroo-coverage")
 local sessions = {}
+local stopping_sessions = {}
 local coverage_processes = {}
 local configured = false
 local stable_daemon_ms = 10000
@@ -623,6 +624,21 @@ local function schedule_restart(session, root, reset_attempts)
 end
 
 start_root = function(root, restarting)
+  local stopping = stopping_sessions[root]
+  if stopping ~= nil then
+    if not stopping.restart_queued then
+      stopping.restart_queued = true
+      local after_stop = stopping.after_stop
+      stopping.after_stop = function()
+        if after_stop ~= nil then after_stop() end
+        if not stopping.restart_queued then return end
+        stopping.restart_queued = false
+        stopping_sessions[root] = nil
+        start_root(root)
+      end
+    end
+    return stopping
+  end
   local existing = sessions[root]
   if alive(existing) then return existing end
   local session = existing or {
@@ -644,6 +660,7 @@ start_root = function(root, restarting)
     after_stop = nil,
     restart_attempt = 0,
     started_at_ms = 0,
+    restart_queued = false,
   }
   sessions[root] = session
   if not restarting then session.restart_attempt = 0 end
@@ -817,17 +834,29 @@ local function stop_session(session, after_stop)
   end
 end
 
+local function stop_root(root)
+  local session = sessions[root] or stopping_sessions[root]
+  if session == nil then return false end
+  session.restart_queued = false
+  sessions[root] = nil
+  stopping_sessions[root] = session
+  stop_session(session, function()
+    if stopping_sessions[root] == session then
+      stopping_sessions[root] = nil
+    end
+  end)
+  return true
+end
+
 function M.stop()
-  local session = session_for_current_buffer()
-  if session ~= nil then
-    stop_session(session)
-    sessions[session.root] = nil
-  end
+  stop_root(project_root(0))
 end
 
 function M.stop_all()
-  for _, session in pairs(sessions) do stop_session(session) end
-  sessions = {}
+  local roots = {}
+  for root, _ in pairs(sessions) do roots[#roots + 1] = root end
+  for root, _ in pairs(stopping_sessions) do roots[#roots + 1] = root end
+  for _, root in ipairs(roots) do stop_root(root) end
 end
 
 local function same_path(left, right)
@@ -1211,6 +1240,7 @@ M._test = {
   run_selectors = run_selectors,
   select_test = select_test,
   start_root = start_root,
+  stop_root = stop_root,
   stop_coverage = stop_coverage,
   stdout_callback = stdout_callback,
   take_lines = take_lines,

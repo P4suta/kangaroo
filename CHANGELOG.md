@@ -90,6 +90,8 @@ versioning.
 - Serialized editor manifest and configuration restarts behind the old
   daemon and coverage process exits so replacement compiler trees cannot
   overlap in one package.
+- Serialized Neovim's manual stop-then-start path behind the exiting daemon,
+  matching the manifest and configuration restart barrier.
 - Kept the Gleam, VS Code manifest, and both package-lock versions synchronized
   in release PRs, verified the exact Hex tarball lifecycle offline before
   upload, and made registry publication safe to retry independently.
