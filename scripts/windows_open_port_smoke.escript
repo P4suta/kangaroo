@@ -88,7 +88,7 @@ wait_for_exit(Label, Port, Deadline) ->
     end.
 
 probe_helper_preparation() ->
-    PowerShell = require_executable("powershell.exe"),
+    PowerShell = require_powershell(),
     Script = filename:absname("priv/kangaroo_windows_job.ps1"),
     CacheDirectory = filename:join(
       temporary_directory(),
@@ -97,23 +97,18 @@ probe_helper_preparation() ->
     case file:make_dir(CacheDirectory) of
         ok ->
             Helper = filename:join(
-              CacheDirectory, "windows-job-v5-20260831.exe"),
+              CacheDirectory, "windows-job-v6-20260831.exe"),
             Arguments = [
                 "-NoLogo", "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-File", Script,
-                "-Prepare"
-            ],
-            HelperPathEnvironment = [
-                {"__KANGAROO_INTERNAL_WINDOWS_JOB_V1_HELPER_PATH",
-                 encoded(Helper)}
+                "-HelperPathBase64", encoded(Helper), "-Prepare"
             ],
             Result = try
                 case probe(
                        "isolated helper preparation", PowerShell,
                        [binary, use_stdio, stderr_to_stdout, exit_status,
-                        {args, Arguments},
-                        {env, HelperPathEnvironment}],
-                       20000) of
+                        {args, Arguments}],
+                       60000) of
                     ok ->
                         case filelib:is_regular(Helper) of
                             true ->
@@ -156,6 +151,12 @@ temporary_directory() ->
                 Value -> Value
             end;
         Value -> Value
+    end.
+
+require_powershell() ->
+    case os:find_executable("pwsh.exe") of
+        false -> require_executable("powershell.exe");
+        Path -> Path
     end.
 
 safe_delete(Path) ->

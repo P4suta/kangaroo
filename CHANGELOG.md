@@ -45,6 +45,9 @@ versioning.
 - Reported a closed Erlang command stdin pipe immediately and terminated its
   complete live tree instead of discarding the write error and waiting for the
   command timeout.
+- Made Windows helper preparation use an explicit base64 cache path, prefer
+  PowerShell 7, invalidate changed helper binaries, and terminate remaining
+  Job Object descendants without racing the enclosing test timeout.
 - Preserved UTF-8 command arguments, environment values, executables, and
   working directories at the Erlang port boundary instead of double-encoding
   non-ASCII text.

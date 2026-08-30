@@ -289,7 +289,7 @@ prepare_windows_job_helper() ->
                       io_lib:format(
                         "Windows process isolation preparation failed: ~tp",
                         [Reason]))}
-    after 17000 ->
+    after 65000 ->
         exit(Pid, kill),
         erlang:demonitor(Monitor, [flush]),
         {error, <<"Windows process isolation preparation timed out">>}
@@ -297,8 +297,10 @@ prepare_windows_job_helper() ->
 
 prepare_windows_job_helper_worker() ->
     process_flag(trap_exit, true),
-    case os:find_executable("powershell.exe") of
-        false -> {error, <<"could not find executable: powershell.exe">>};
+    case find_windows_powershell() of
+        false ->
+            {error, <<"could not find executable: pwsh.exe or "
+                      "powershell.exe">>};
         PowerShell ->
             Helper = windows_job_executable(),
             Arguments = [
@@ -306,17 +308,15 @@ prepare_windows_job_helper_worker() ->
                 "-ExecutionPolicy", "Bypass", "-File",
                 filename:join(windows_priv_directory(),
                               "kangaroo_windows_job.ps1"),
+                "-HelperPathBase64", encode_windows_job_value(Helper),
                 "-Prepare"
             ],
             try open_port(
                   {spawn_executable, PowerShell},
                   [binary, use_stdio, stderr_to_stdout, exit_status,
-                   {args, Arguments},
-                   {env, [port_environment_pair(
-                            {?WINDOWS_JOB_PREFIX ++ "HELPER_PATH",
-                             encode_windows_job_value(Helper)})]}]) of
+                   {args, Arguments}]) of
                 Port -> collect_windows_job_preparation(
-                          Port, [], erlang:monotonic_time(millisecond) + 15000,
+                          Port, [], erlang:monotonic_time(millisecond) + 60000,
                           Helper)
             catch
                 Class:Reason:Stack ->
@@ -372,7 +372,13 @@ windows_job_executable() ->
             end;
         Value -> Value
     end,
-    filename:join([Temp, "kangaroo", "windows-job-v5-20260831.exe"]).
+    filename:join([Temp, "kangaroo", "windows-job-v6-20260831.exe"]).
+
+find_windows_powershell() ->
+    case os:find_executable("pwsh.exe") of
+        false -> os:find_executable("powershell.exe");
+        Path -> Path
+    end.
 
 async_collect(Parent, OwnerMonitor, Id, Port, OsPid, Output, PendingUtf8,
               OutputBytes, Deadline, Streaming) ->

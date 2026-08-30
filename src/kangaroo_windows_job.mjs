@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_";
@@ -19,29 +19,43 @@ const powershellArguments = [
   script,
 ];
 const prepareWindowsJob = execFileSync;
-const preparedKey = Symbol.for("kangaroo.windowsJobPrepared.v5.20260831");
+const preparedKey = Symbol.for("kangaroo.windowsJobPrepared.v6.20260831");
 const cachedExecutable = join(
   tmpdir(),
   "kangaroo",
-  "windows-job-v5-20260831.exe",
+  "windows-job-v6-20260831.exe",
 );
+
+function executableOnPath(name) {
+  const path = String(globalThis.process.env.PATH || "");
+  for (const rawDirectory of path.split(delimiter)) {
+    const directory = rawDirectory.replace(/^"|"$/g, "");
+    const candidate = join(directory, name);
+    if (directory && existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function findPowerShell() {
+  return executableOnPath("pwsh.exe") || "powershell.exe";
+}
 
 export function ensureWindowsJobHelper() {
   if (globalThis.process.platform !== "win32") return;
   if (globalThis[preparedKey] === true && existsSync(cachedExecutable)) return;
   if (!existsSync(cachedExecutable)) {
     prepareWindowsJob(
-      "powershell.exe",
+      findPowerShell(),
       [
         ...powershellArguments,
-        "-HelperPath",
-        cachedExecutable,
+        "-HelperPathBase64",
+        Buffer.from(cachedExecutable, "utf8").toString("base64"),
         "-Prepare",
       ],
       {
         env: globalThis.process.env,
         stdio: "ignore",
-        timeout: 15_000,
+        timeout: 60_000,
         windowsHide: true,
       },
     );

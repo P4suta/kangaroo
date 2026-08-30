@@ -2,7 +2,8 @@ param(
     [switch] $Prepare,
     [switch] $SmokeTest,
     [switch] $CheckSource,
-    [string] $HelperPath
+    [string] $HelperPath,
+    [string] $HelperPathBase64
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,7 +22,6 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
 
 public static class KangarooWindowsJob
 {
@@ -335,7 +335,7 @@ public static class KangarooWindowsJob
             Check(GetExitCodeProcess(process.hProcess, out exitCode),
                 "GetExitCodeProcess");
 
-            DrainRemainingProcesses(job);
+            TerminateRemainingProcesses(job);
             return unchecked((int)exitCode);
         }
         catch
@@ -376,21 +376,13 @@ public static class KangarooWindowsJob
         return duplicate;
     }
 
-    private static void DrainRemainingProcesses(IntPtr job)
+    private static void TerminateRemainingProcesses(IntPtr job)
     {
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting =
             QueryAccounting(job);
         if (accounting.ActiveProcesses == 0) return;
 
         Check(TerminateJobObject(job, 2), "TerminateJobObject");
-        DateTime deadline = DateTime.UtcNow.AddSeconds(5);
-        while (QueryAccounting(job).ActiveProcesses != 0)
-        {
-            if (DateTime.UtcNow >= deadline)
-                throw new TimeoutException(
-                    "Windows Job Object did not drain within 5000 ms");
-            Thread.Sleep(1);
-        }
     }
 
     private static JOBOBJECT_BASIC_ACCOUNTING_INFORMATION QueryAccounting(
@@ -544,7 +536,7 @@ public static class KangarooWindowsJob
 '@
 
 $prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_"
-$executableName = "windows-job-v5-20260831.exe"
+$executableName = "windows-job-v6-20260831.exe"
 
 function Decode-Value([string] $name) {
     $encoded = [Environment]::GetEnvironmentVariable(
@@ -561,6 +553,10 @@ function Encode-Value([string] $value) {
 }
 
 function Get-Helper-Path {
+    if (-not [string]::IsNullOrWhiteSpace($HelperPathBase64)) {
+        return [Text.Encoding]::UTF8.GetString(
+            [Convert]::FromBase64String($HelperPathBase64))
+    }
     if (-not [string]::IsNullOrWhiteSpace($HelperPath)) {
         return $HelperPath
     }
