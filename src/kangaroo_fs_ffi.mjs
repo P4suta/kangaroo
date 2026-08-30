@@ -520,12 +520,20 @@ function writeAll(fileDescriptor, value) {
       if (written <= 0) throw new Error("stdout accepted zero bytes");
       offset += written;
     } catch (error) {
+      if (error?.code === "EPIPE") exitAfterClosedOutput();
       if (error?.code !== "EAGAIN" && error?.code !== "EWOULDBLOCK") {
         throw error;
       }
       Atomics.wait(writePause, 0, 0, 1);
     }
   }
+}
+
+function exitAfterClosedOutput() {
+  // A downstream command such as `head` has accepted all the output it needs.
+  // Exit synchronously so no later framework write exposes a runtime stack.
+  if (typeof globalThis.Deno?.exit === "function") globalThis.Deno.exit(0);
+  globalThis.process.exit(0);
 }
 
 export function halt(code) {

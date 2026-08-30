@@ -61,6 +61,9 @@ versioning.
 - Distinguished synchronous coverage preparation from the cancellable child
   run in the watch TUI, so its running state is a reliable cancellation
   boundary even on a loaded JavaScript host.
+- Treated a downstream stdout/stderr consumer closing its pipe as a clean CLI
+  termination on every runtime instead of exposing an Erlang or JavaScript
+  stack trace.
 - Preserved UTF-8 command arguments, environment values, executables, and
   working directories at the Erlang port boundary instead of double-encoding
   non-ASCII text.

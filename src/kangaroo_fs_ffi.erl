@@ -13,20 +13,29 @@
 -define(MAX_DAEMON_LINE_BYTES, 1048576).
 
 write_stdout_line(Line) ->
-    io:put_chars(standard_io, [Line, <<"\n">>]),
-    nil.
+    write_output(standard_io, [Line, <<"\n">>]).
 
 write_stdout(Contents) ->
-    io:put_chars(standard_io, Contents),
-    nil.
+    write_output(standard_io, Contents).
 
 write_stderr_line(Line) ->
-    io:put_chars(standard_error, [Line, <<"\n">>]),
-    nil.
+    write_output(standard_error, [Line, <<"\n">>]).
 
 write_stderr(Contents) ->
-    io:put_chars(standard_error, Contents),
-    nil.
+    write_output(standard_error, Contents).
+
+write_output(Device, Contents) ->
+    try io:put_chars(Device, Contents) of
+        ok -> nil;
+        {error, Reason} -> handle_output_error(Reason)
+    catch
+        error:Reason -> handle_output_error(Reason);
+        exit:Reason -> handle_output_error(Reason)
+    end.
+
+handle_output_error(terminated) -> erlang:halt(0);
+handle_output_error(epipe) -> erlang:halt(0);
+handle_output_error(Reason) -> erlang:error(Reason).
 
 list_files_recursive(Directory) ->
     case file:list_dir(Directory) of

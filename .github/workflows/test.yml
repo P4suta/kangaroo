@@ -76,6 +76,9 @@ jobs:
       - name: Validate Windows OTP port options
         if: runner.os == 'Windows'
         run: escript scripts/windows_open_port_smoke.escript
+      - name: Exit cleanly when a stdout consumer closes
+        if: runner.os != 'Windows'
+        run: python3 scripts/output_pipe_test.py erlang
       - run: gleam test --target erlang
 
   windows-process-wrapper:
@@ -144,6 +147,9 @@ jobs:
         run: |
           gleam test --target javascript --runtime nodejs -- test/helper_test.gleam
           gleam test --target javascript --runtime nodejs -- test/process_output_limit_test.gleam
+      - name: Exit cleanly when a stdout consumer closes
+        if: runner.os != 'Windows'
+        run: python3 scripts/output_pipe_test.py ${{ matrix.runtime }}
       - run: gleam test --target javascript --runtime ${{ matrix.runtime }}
 
   process-stress:
