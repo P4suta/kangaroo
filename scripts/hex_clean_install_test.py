@@ -29,6 +29,7 @@ REQUIRED_PACKAGE_FILES = {
     "src/kangaroo_isolate_ffi.erl",
     "src/kangaroo_isolate_ffi.mjs",
     "src/kangaroo_daemon_child.mjs",
+    "src/kangaroo_batch_worker.mjs",
     "src/kangaroo_key_worker.mjs",
     "src/kangaroo_process_tree.mjs",
     "src/kangaroo_windows_job.mjs",

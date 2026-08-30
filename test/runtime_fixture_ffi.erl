@@ -12,7 +12,8 @@
          spawn_synchronous_descendant/0,
          native_output_timeout/0, synchronous_timeout/0,
          reset_descendant_marker/0, descendant_marker_exists/0,
-         run_all_crash_cancels_sibling/0]).
+         run_all_crash_cancels_sibling/0, reset_parallel_barrier/0,
+         parallel_barrier/1]).
 
 promise_pass() -> nil.
 promise_reject() -> erlang:error(<<"async rejected">>).
@@ -140,6 +141,10 @@ run_all_crash_cancels_sibling() ->
     after 0 ->
         true
     end.
+
+reset_parallel_barrier() -> nil.
+
+parallel_barrier(_Side) -> nil.
 
 descendant_marker() ->
     Temp = temporary_directory(),

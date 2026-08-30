@@ -1,4 +1,5 @@
 import gleam/int
+import kangaroo/internal/scheduler.{type Batch}
 
 /// Runs closures concurrently on BEAM and collects their values in input
 /// order. JavaScript executes closures in order; each indexed test itself is
@@ -6,6 +7,18 @@ import gleam/int
 @external(erlang, "kangaroo_vm_ffi", "run_all")
 @external(javascript, "../../kangaroo_vm_ffi.mjs", "run_all")
 pub fn run_all(functions: List(fn() -> value)) -> List(value)
+
+/// Runs independent JavaScript module batches in outer runtime Workers and
+/// returns their strictly encoded event envelopes in input order. Single
+/// batches stay in-process to avoid adding a worker hop to serial waves.
+@external(erlang, "kangaroo_vm_ffi", "run_batches")
+@external(javascript, "../../kangaroo_vm_ffi.mjs", "run_batches")
+pub fn run_batches(
+  batches: List(Batch),
+  default_timeout_ms: Int,
+  fail_fast: Bool,
+  retry: Int,
+) -> List(String)
 
 @external(erlang, "kangaroo_vm_ffi", "worker_count")
 @external(javascript, "../../kangaroo_vm_ffi.mjs", "worker_count")

@@ -11,6 +11,7 @@ import kangaroo/failure.{
 import kangaroo/internal/event_buffer
 import kangaroo/internal/executor
 import kangaroo/internal/index.{type IndexedTest, IndexedTest}
+import kangaroo/internal/vm
 import kangaroo/report
 
 fn fixture(name: String) -> IndexedTest {
@@ -46,6 +47,10 @@ fn discard(_event: Event) {
 @external(erlang, "kangaroo_cli_test_ffi", "reset_flaky")
 @external(javascript, "./kangaroo_cli_test_ffi.mjs", "reset_flaky")
 fn reset_flaky() -> Nil
+
+@external(erlang, "runtime_fixture_ffi", "reset_parallel_barrier")
+@external(javascript, "./runtime_fixture_ffi.mjs", "reset_parallel_barrier")
+fn reset_parallel_barrier() -> Nil
 
 pub fn indexed_results_use_stable_ids_test() {
   let assert Ok(result) =
@@ -156,6 +161,31 @@ pub fn scheduled_modules_emit_one_deterministic_run_test() {
   let events = event_buffer.take()
   assert count_run_started(events) == 1
   assert count_run_finished(events) == 1
+}
+
+pub fn javascript_worker_limit_runs_module_batches_concurrently_test() {
+  case vm.target() {
+    "javascript" -> {
+      reset_parallel_barrier()
+      let result =
+        executor.run_scheduled(
+          [
+            fixture("parallel_left_fixture"),
+            second_fixture("parallel_right_fixture"),
+          ],
+          discard,
+          10_000,
+          False,
+          0,
+          2,
+          [],
+        )
+      reset_parallel_barrier()
+      let assert Ok(report) = result
+      assert !report.has_failures(report)
+    }
+    _ -> Nil
+  }
 }
 
 pub fn fail_fast_skips_modules_after_the_first_failing_batch_test() {

@@ -1,5 +1,5 @@
 import { Error as GleamError } from "./gleam.mjs";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -8,6 +8,33 @@ const descendantMarker = join(
   tmpdir(),
   `kangaroo-isolate-descendant-${globalThis.process.pid}.marker`,
 );
+const parallelBarrierPrefix = join(
+  tmpdir(),
+  `kangaroo-parallel-batch-${globalThis.process.pid}`,
+);
+
+function parallelMarker(side) {
+  return `${parallelBarrierPrefix}-${side}.marker`;
+}
+
+export function reset_parallel_barrier() {
+  for (const side of ["left", "right"]) {
+    const marker = parallelMarker(side);
+    if (existsSync(marker)) unlinkSync(marker);
+  }
+}
+
+export async function parallel_barrier(side) {
+  const other = side === "left" ? "right" : "left";
+  writeFileSync(parallelMarker(side), "ready");
+  const deadline = Date.now() + 5000;
+  while (!existsSync(parallelMarker(other))) {
+    if (Date.now() >= deadline) {
+      throw new Error("scheduled JavaScript modules did not overlap");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
 
 export function promise_pass() {
   return Promise.resolve(undefined);

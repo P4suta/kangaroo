@@ -42,6 +42,9 @@ versioning.
 - Added a Bun-native process backend with a complete descriptor-write fallback
   for Bun 1.4.0 piped-stdin failures, and made coverage clones reuse nested
   dependency caches for offline builds.
+- Ran JavaScript module batches in parallel outer Workers up to the configured
+  worker limit, while preserving deterministic event order and merging each
+  Worker's isolated coverage probes through the parent.
 - Reported a closed Erlang command stdin pipe immediately and terminated its
   complete live tree instead of discarding the write error and waiting for the
   command timeout.

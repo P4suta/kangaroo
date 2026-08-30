@@ -23,6 +23,7 @@ pub fn required_release_files_test() {
     "scripts/test_publish_hex_tarball.py",
     "priv/kangaroo_windows_job.ps1",
     "src/kangaroo_daemon_child.mjs",
+    "src/kangaroo_batch_worker.mjs",
     "src/kangaroo_windows_job.mjs",
   ]
   |> list.each(fn(path) {
@@ -264,6 +265,8 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   let erlang_fs = string.replace(erlang_fs, each: "\r\n", with: "\n")
   let assert Ok(process_worker) =
     fs.read_file("src/kangaroo_process_worker.mjs")
+  let assert Ok(batch_worker) = fs.read_file("src/kangaroo_batch_worker.mjs")
+  let assert Ok(javascript_vm) = fs.read_file("src/kangaroo_vm_ffi.mjs")
   let assert Ok(daemon_source) =
     fs.read_file("src/kangaroo/internal/daemon.gleam")
   let assert Ok(process_tree) = fs.read_file("src/kangaroo_process_tree.mjs")
@@ -296,6 +299,10 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
     "collect(Directory, Rest, Files);\n        {ok, _Other} ->",
   )
   assert string.contains(process_worker, "child.stdin.on(\"error\"")
+  assert string.contains(batch_worker, "run_batch_wire")
+  assert string.contains(batch_worker, "KANGAROO_COVERAGE_FILE")
+  assert string.contains(javascript_vm, "export function run_batches")
+  assert string.contains(javascript_vm, "appendFileSync")
   assert string.contains(process_worker, "child.stdin.on(\"close\"")
   assert string.contains(process_worker, "globalThis.Bun.spawn")
   assert string.contains(process_worker, "new TextDecoder()")

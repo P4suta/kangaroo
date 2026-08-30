@@ -1,5 +1,5 @@
 -module(kangaroo_vm_ffi).
--export([run_all/1, worker_count/0, target/0, runtime_name/0,
+-export([run_all/1, run_batches/4, worker_count/0, target/0, runtime_name/0,
          runtime_version/0, operating_system/0, daemon_runner_path/0,
          shuffle_seed/0]).
 
@@ -12,6 +12,10 @@ run_all(Funs) ->
                    {Index, Pid, Ref}
                end || {Index, F} <- lists:enumerate(Funs)],
     collect(Workers, #{}).
+
+%% JavaScript alone uses its serialisation-aware outer Worker implementation.
+%% The executor keeps BEAM on run_all/1, where closures are native values.
+run_batches(_Batches, _DefaultTimeout, _FailFast, _Retry) -> [].
 
 collect([], Results) ->
     [maps:get(Index, Results)

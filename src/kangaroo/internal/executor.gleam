@@ -3,6 +3,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import kangaroo/encode
 import kangaroo/event.{
   type Event, CaseFinished, CaseOutput, CaseStarted, RunFinished, RunStarted,
   SuiteFinished, SuiteStarted,
@@ -14,7 +15,7 @@ import kangaroo/failure.{
 import kangaroo/internal/event_buffer
 import kangaroo/internal/index.{type IndexedTest}
 import kangaroo/internal/runtime
-import kangaroo/internal/scheduler.{type Wave}
+import kangaroo/internal/scheduler.{type Batch, type Wave}
 import kangaroo/internal/vm
 import kangaroo/isolate.{
   type Isolated, CapturedIsolation, Completed, Crashed, SkippedIsolation,
@@ -134,14 +135,12 @@ fn run_waves(
   case waves {
     [] -> Ok(accumulated)
     [scheduler.Wave(batches), ..rest] -> {
-      let tasks =
-        list.map(batches, fn(batch) {
-          fn() { run_batch(batch.tests, default_timeout_ms, fail_fast, retry) }
-        })
-      use completed <- result.try(
-        vm.run_all(tasks)
-        |> list.try_map(fn(item) { item }),
-      )
+      use completed <- result.try(run_wave_batches(
+        batches,
+        default_timeout_ms,
+        fail_fast,
+        retry,
+      ))
       completed
       |> list.flat_map(fn(batch) { without_run_brackets(batch.events) })
       |> list.each(sink)
@@ -161,6 +160,27 @@ fn run_waves(
             accumulated,
           )
       }
+    }
+  }
+}
+
+fn run_wave_batches(
+  batches: List(Batch),
+  default_timeout_ms: Int,
+  fail_fast: Bool,
+  retry: Int,
+) -> Result(List(BatchExecution), String) {
+  case vm.target(), batches {
+    "javascript", [_, _, ..] ->
+      vm.run_batches(batches, default_timeout_ms, fail_fast, retry)
+      |> list.try_map(decode_batch_wire)
+    _, _ -> {
+      let tasks =
+        list.map(batches, fn(batch) {
+          fn() { run_batch(batch.tests, default_timeout_ms, fail_fast, retry) }
+        })
+      vm.run_all(tasks)
+      |> list.try_map(fn(item) { item })
     }
   }
 }
@@ -186,6 +206,46 @@ fn run_batch(
       retry,
     )
   Ok(BatchExecution(report, event_buffer.take_batch()))
+}
+
+/// Executes one JavaScript module batch in an outer runtime Worker and returns
+/// an internal, line-safe event envelope. The parent decodes every event with
+/// the same strict codec used by watch and daemon boundaries.
+pub fn run_batch_wire(
+  tests: List(IndexedTest),
+  default_timeout_ms: Int,
+  fail_fast: Bool,
+  retry: Int,
+) -> String {
+  case run_batch(tests, default_timeout_ms, fail_fast, retry) {
+    Error(message) -> "error\n" <> message
+    Ok(BatchExecution(_, events)) ->
+      "ok\n" <> string.join(list.map(events, encode.encode), "\n")
+  }
+}
+
+fn decode_batch_wire(source: String) -> Result(BatchExecution, String) {
+  case string.split_once(source, on: "\n") {
+    Ok(#("error", message)) -> Error(message)
+    Ok(#("ok", payload)) -> {
+      use events <- result.try(
+        payload
+        |> string.split("\n")
+        |> list.filter(fn(line) { line != "" })
+        |> list.try_map(encode.decode),
+      )
+      let cases =
+        list.filter_map(events, fn(event) {
+          case event {
+            CaseFinished(suite, case_name, outcome, duration_ms) ->
+              Ok(CaseResult(suite, case_name, outcome, duration_ms))
+            _ -> Error(Nil)
+          }
+        })
+      Ok(BatchExecution(Report(cases), events))
+    }
+    _ -> Error("parallel JavaScript batch returned an invalid result")
+  }
 }
 
 fn without_run_brackets(events: List(Event)) -> List(Event) {
