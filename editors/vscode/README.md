@@ -36,7 +36,9 @@ gleam run --target javascript --runtime bun -m kangaroo -- daemon
 Multi-root workspaces and monorepos are supported; creating, changing, or
 deleting a `gleam.toml` adds, restarts, or removes the corresponding
 independent test tree and daemon lifecycle. A nested `gleam.toml` activates
-the extension even before a Gleam source file is opened.
+the extension even before a Gleam source file is opened. Disposable
+`.kangaroo-coverage-*` package clones are excluded from workspace discovery,
+so coverage in a nested package cannot start a second daemon for its clone.
 
 Only the newest discovery response may replace a package's Testing tree.
 If discovery fails or its daemon exits, stale test IDs are removed until a

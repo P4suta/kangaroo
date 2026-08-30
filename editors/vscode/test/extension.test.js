@@ -432,6 +432,7 @@ test("failed Windows taskkill falls back to direct SIGKILL", () => {
 function fakeExtensionHostVscode(workspaceFolders, manifests, settings = {}) {
   const vscode = fakeVscode(settings);
   const controllers = [];
+  const findFileExcludes = [];
   const workspaceListeners = [];
   const configurationListeners = [];
   const watcherListeners = { change: [], create: [], delete: [] };
@@ -460,12 +461,18 @@ function fakeExtensionHostVscode(workspaceFolders, manifests, settings = {}) {
     constructor(base, pattern) { Object.assign(this, { base, pattern }); }
   };
   vscode.workspace.workspaceFolders = workspaceFolders;
-  vscode.workspace.findFiles = async (pattern) => {
+  vscode.workspace.findFiles = async (pattern, exclude) => {
     const root = pattern.base.uri.fsPath.replaceAll("\\", "/");
+    findFileExcludes.push(exclude);
     return manifests
       .filter((manifest) => manifest.replaceAll("\\", "/").startsWith(`${root}/`))
+      .filter((manifest) =>
+        !String(exclude).includes(".kangaroo-coverage-*") ||
+        !manifest.replaceAll("\\", "/").split("/").some((part) =>
+          part.startsWith(".kangaroo-coverage-")))
       .map((manifest) => vscode.Uri.file(manifest));
   };
+  vscode.findFileExcludes = findFileExcludes;
   vscode.workspace.onDidChangeWorkspaceFolders = (listener) => {
     workspaceListeners.push(listener);
     return disposable();
@@ -1635,6 +1642,35 @@ test("one workspace folder starts one daemon per nested Gleam package", async ()
       "/repo/packages/alpha",
       "/repo/packages/beta",
     ]);
+  } finally {
+    extension.deactivate();
+  }
+});
+
+test("temporary coverage clones are excluded from monorepo package discovery", async () => {
+  const seed = fakeVscode();
+  const vscode = fakeExtensionHostVscode(
+    [{ name: "repo", uri: seed.Uri.file("/repo") }],
+    [
+      "/repo/packages/alpha/gleam.toml",
+      "/repo/packages/.kangaroo-coverage-123/gleam.toml",
+    ],
+  );
+  vscode.workspace.workspaceFolders = [
+    { name: "repo", uri: vscode.Uri.file("/repo") },
+  ];
+  const starts = [];
+  const extension = createExtension(vscode, (_executable, _arguments, options) => {
+    starts.push(options.cwd);
+    return fakeChild();
+  });
+  try {
+    await extension.activate({ subscriptions: [] });
+    assert.deepEqual(Array.from(extension.sessions.keys()), [
+      "/repo/packages/alpha",
+    ]);
+    assert.deepEqual(starts, ["/repo/packages/alpha"]);
+    assert.match(vscode.findFileExcludes.at(-1), /\.kangaroo-coverage-\*/);
   } finally {
     extension.deactivate();
   }

@@ -880,7 +880,7 @@ async function discoverPackageFolders(vscode, workspaceFolder) {
   const pattern = new vscode.RelativePattern(workspaceFolder, "**/gleam.toml");
   const manifests = await vscode.workspace.findFiles(
     pattern,
-    "**/{.git,build,node_modules}/**",
+    "**/{.git,build,node_modules,.kangaroo-coverage-*}/**",
     10_000,
   );
   const packages = new Map();
