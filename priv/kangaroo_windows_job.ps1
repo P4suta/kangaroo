@@ -627,7 +627,8 @@ function Ensure-Job-Launcher([string] $executable) {
         [IO.Path]::GetDirectoryName($executable),
         $launcherName)
     $contents = "@echo off`r`n" +
-        "`"%~dp0$executableName`" --kangaroo-job-helper`r`n" +
+        "3<&0 4>&1 5>&2 `"%~dp0$executableName`" " +
+        "--kangaroo-job-helper 0<&3 1>&4 2>&5`r`n" +
         "exit /b %errorlevel%`r`n"
     if ([IO.File]::Exists($launcher)) {
         if ([IO.File]::ReadAllText($launcher, [Text.Encoding]::ASCII) -ne

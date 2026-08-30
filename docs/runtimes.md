@@ -48,7 +48,8 @@ back to PowerShell 7. JavaScript runtimes execute it directly, while Erlang
 opens native `cmd.exe` with AutoRun disabled and invokes the fixed helper
 through a fixed ASCII batch trampoline in its own cache directory around OTP's
 managed-executable boundary. The trampoline makes `cmd.exe` wait for helper
-completion, so both paths preserve raw redirected handles and child exit
+completion and explicitly rebinds its port-backed descriptors to the helper's
+standard slots, so both paths preserve raw redirected handles and child exit
 status. Each runtime creates its absolute per-user temporary cache directory
 first and pins that directory as PowerShell's working directory. Because supported Windows
 OTP releases do not preserve the direct PowerShell argument vector, Erlang

@@ -227,9 +227,10 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
     ],
     %% spawn_executable accepts cmd.exe but rejects both the managed helper
     %% image and batch files on supported Windows OTP releases. A fixed batch
-    %% trampoline makes cmd wait for the console helper before publishing its
-    %% status, preserving the port's redirected handles and child exit code.
-    %% No user-controlled value is parsed by the command processor.
+    %% trampoline explicitly duplicates cmd's port-backed descriptors into the
+    %% helper's standard slots and makes cmd wait before publishing its status,
+    %% preserving redirected handles and the child exit code. No user-controlled
+    %% value is parsed by the command processor.
     {filename:dirname(Launcher), CommandProcessor,
      ["/D", "/Q", "/C", filename:basename(Launcher)],
      InternalEnvironment}.

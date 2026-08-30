@@ -407,6 +407,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_job, "[Text.Encoding]::ASCII")
   assert string.contains(
     windows_job,
+    "3<&0 4>&1 5>&2 `\"%~dp0$executableName`\" ",
+  )
+  assert string.contains(windows_job, "0<&3 1>&4 2>&5")
+  assert string.contains(
+    windows_job,
     "Windows process launcher has unexpected contents",
   )
   assert string.contains(windows_job_bridge, "windows-job-v6-20260831.exe")
