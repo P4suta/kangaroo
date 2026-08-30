@@ -424,9 +424,14 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
     windows_open_port_smoke,
     "{cd, filename:dirname(Helper)}",
   )
+  let assert [_, helper_path_body] =
+    string.split(windows_job, "function Get-Helper-Path {")
+  let assert [helper_path_body, ..] =
+    string.split(helper_path_body, "function Ensure-Job-Executable")
   assert !string.contains(windows_job, "GetTempPath")
-  assert string.contains(windows_job, "if ($Prepare)")
-  assert string.contains(windows_job, "(Get-Location).ProviderPath")
+  assert string.contains(helper_path_body, "if ($Prepare)")
+  assert string.contains(helper_path_body, "[Environment]::CurrentDirectory")
+  assert !string.contains(helper_path_body, "(Get-Location).ProviderPath")
   assert string.contains(windows_job, "DuplicateHandle")
   assert string.contains(process_ffi, "activityBuffer")
   assert string.contains(process_worker, "workerData.activityBuffer")

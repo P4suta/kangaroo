@@ -560,7 +560,7 @@ function Get-Helper-Path {
     # options, or redirected PowerShell output.
     if ($Prepare) {
         return [IO.Path]::Combine(
-            (Get-Location).ProviderPath,
+            [Environment]::CurrentDirectory,
             $executableName)
     }
     $tempRoot = [Environment]::GetEnvironmentVariable(
