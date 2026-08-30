@@ -32,12 +32,14 @@ export function ensureWindowsJobHelper() {
   if (!existsSync(cachedExecutable)) {
     prepareWindowsJob(
       "powershell.exe",
-      [...powershellArguments, "-Prepare"],
+      [
+        ...powershellArguments,
+        "-HelperPath",
+        cachedExecutable,
+        "-Prepare",
+      ],
       {
-        env: {
-          ...globalThis.process.env,
-          [variableName("HELPER_PATH")]: encode(cachedExecutable),
-        },
+        env: globalThis.process.env,
         stdio: "ignore",
         timeout: 15_000,
         windowsHide: true,

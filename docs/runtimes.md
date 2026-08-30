@@ -42,11 +42,14 @@ allows it to execute. Completion is not published until the Job Object has no
 active descendants. This ownership boundary also applies when a command exits
 successfully after starting background work, and to asynchronous subprocesses
 started by an isolated JavaScript test. PowerShell compiles the immutable
-console helper once; it is not retained between Kangaroo and the command, so
-redirected handles and exit status have a single owner. The helper's private
-environment namespace is removed case-insensitively before user code starts,
-matching Windows environment semantics and preventing inherited values from
-changing or leaking its launch metadata.
+console helper once. JavaScript runtimes execute it directly; Erlang loads the
+same assembly in a non-interactive PowerShell compatibility host because OTP's
+Windows port driver rejects the managed executable as a direct port target.
+That host remains only until the Job Object has drained and preserves the raw
+redirected handles and child exit status. The helper's private environment
+namespace is removed case-insensitively before user code starts, matching
+Windows environment semantics and preventing inherited values from changing
+or leaking its launch metadata.
 
 ## Deno permissions
 

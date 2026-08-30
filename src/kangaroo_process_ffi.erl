@@ -191,8 +191,6 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
         {Name, encode_windows_job_value(Argument)}
     end, lists:seq(0, length(Arguments) - 1), Arguments),
     InternalEnvironment = [
-        {?WINDOWS_JOB_PREFIX ++ "HELPER_PATH",
-         encode_windows_job_value(Helper)},
         {?WINDOWS_JOB_PREFIX ++ "EXECUTABLE", encode_windows_job_value(Path)},
         {?WINDOWS_JOB_PREFIX ++ "DIRECTORY",
          encode_windows_job_value(WorkingDirectory)},
@@ -201,30 +199,18 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
          encode_windows_job_value(integer_to_list(length(Arguments)))}
         | ArgumentEnvironment
     ],
-    InheritedRemovals = inherited_windows_job_removals(),
     PowerShellArguments = [
         "-NoLogo", "-NoProfile", "-NonInteractive",
-        "-ExecutionPolicy", "Bypass", "-File", Script, "-Run"
+        "-ExecutionPolicy", "Bypass", "-File", Script,
+        "-HelperPath", Helper, "-Run"
     ],
     {PowerShell, PowerShellArguments,
-     InheritedRemovals ++ InternalEnvironment ++ CleanEnvironment}.
+     InternalEnvironment ++ CleanEnvironment}.
 
 internal_windows_job_name(Name) ->
     lists:prefix(
       ?WINDOWS_JOB_PREFIX,
       string:uppercase(to_list(Name))).
-
-inherited_windows_job_removals() ->
-    lists:filtermap(fun(Entry) ->
-        case string:split(Entry, "=", leading) of
-            [Name, _Value] ->
-                case internal_windows_job_name(Name) of
-                    true -> {true, {Name, false}};
-                    false -> false
-                end;
-            _ -> false
-        end
-    end, os:getenv()).
 
 windows_priv_directory() ->
     case code:priv_dir(kangaroo) of
@@ -284,14 +270,12 @@ prepare_windows_job_helper_worker() ->
                 "-ExecutionPolicy", "Bypass", "-File",
                 filename:join(windows_priv_directory(),
                               "kangaroo_windows_job.ps1"),
-                "-Prepare"
+                "-HelperPath", Helper, "-Prepare"
             ],
             try open_port(
                   {spawn_executable, PowerShell},
                   [binary, use_stdio, stderr_to_stdout, exit_status,
-                   {args, Arguments},
-                   {env, [{?WINDOWS_JOB_PREFIX ++ "HELPER_PATH",
-                           encode_windows_job_value(Helper)}]}]) of
+                   {args, Arguments}]) of
                 Port -> collect_windows_job_preparation(
                           Port, [], erlang:monotonic_time(millisecond) + 15000,
                           Helper)

@@ -296,7 +296,7 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_job_bridge, "kangaroo_windows_job.ps1")
   assert string.contains(windows_job_bridge, "windowsJobSpawnOptions")
   assert string.contains(windows_job_bridge, "ensureWindowsJobHelper")
-  assert string.contains(erlang_process_ffi, "{Name, false}")
+  assert string.contains(windows_job, "RemoveInternalVariables")
   assert string.contains(windows_job, "OrdinalIgnoreCase")
   assert string.contains(windows_job, "CREATE_SUSPENDED")
   assert string.contains(windows_job, "AssignProcessToJobObject")

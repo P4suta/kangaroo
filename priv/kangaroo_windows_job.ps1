@@ -2,7 +2,8 @@ param(
     [switch] $Prepare,
     [switch] $Run,
     [switch] $SmokeTest,
-    [switch] $CheckSource
+    [switch] $CheckSource,
+    [string] $HelperPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -534,12 +535,8 @@ function Encode-Value([string] $value) {
 }
 
 function Get-Helper-Path {
-    $encoded = [Environment]::GetEnvironmentVariable(
-        $prefix + "HELPER_PATH",
-        [EnvironmentVariableTarget]::Process)
-    if ($null -ne $encoded) {
-        return [Text.Encoding]::UTF8.GetString(
-            [Convert]::FromBase64String($encoded))
+    if (-not [string]::IsNullOrWhiteSpace($HelperPath)) {
+        return $HelperPath
     }
     return [IO.Path]::Combine(
         [IO.Path]::GetTempPath(),
@@ -617,7 +614,9 @@ try {
     }
 
     if ($Run) {
-        Add-Type -Path $helper
+        # Windows PowerShell 5's Add-Type rejects a ConsoleApplication .exe,
+        # while the CLR can load the same managed assembly directly.
+        [Reflection.Assembly]::LoadFrom($helper) | Out-Null
         $exitCode = [KangarooWindowsJob]::Main()
         [Environment]::Exit($exitCode)
     }
