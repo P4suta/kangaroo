@@ -95,7 +95,14 @@ spawn_native_descendant() -> spawn_descendant().
 spawn_synchronous_descendant() -> spawn_descendant().
 
 native_output_timeout() ->
-    spawn_descendant(),
+    %% Keep the side effect well beyond the 40 ms isolation timeout. A loaded
+    %% scheduler can start this descendant late; the assertion must prove it
+    %% was killed, not depend on it writing inside a narrow 210 ms window.
+    Marker = descendant_marker(),
+    spawn(fun() ->
+              timer:sleep(1000),
+              file:write_file(Marker, <<"survived">>)
+          end),
     timer:sleep(1000),
     nil.
 

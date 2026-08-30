@@ -108,6 +108,9 @@ versioning.
   kill-on-close Job Object before its first instruction runs, and waited for
   that object to drain before reporting completion, so successful, cancelled,
   and timed-out work cannot leave descendants behind.
+- Compiled the Windows Job Object launcher once and executed it directly,
+  preserving redirected stdin/stdout and child exit status without a
+  long-lived PowerShell intermediary.
 - Made daemon output draining fair to stdin across both large chunks and line
   bursts, retained unterminated output as linear-time fragments, and bounded
   Erlang request allocation while discarding an overlong line; both stdin

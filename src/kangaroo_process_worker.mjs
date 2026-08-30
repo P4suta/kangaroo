@@ -22,7 +22,12 @@ let inputRequested = false;
 let terminationPids = [];
 let outputBytes = 0;
 const terminationPause = new Int32Array(new SharedArrayBuffer(4));
-const usingBunSpawn = typeof globalThis.Bun !== "undefined";
+// Bun 1.4 needs its native FileSink bridge on Unix, while its Windows
+// node:child_process compatibility stream is the only variant that exposes a
+// stable writable pipe contract. Both paths still launch the same Job helper.
+const usingBunSpawn =
+  typeof globalThis.Bun !== "undefined" &&
+  globalThis.process.platform !== "win32";
 const inherited = workerData.inherited === true;
 
 function commandLaunch() {
@@ -117,31 +122,35 @@ function writeBunInput(value) {
   if (typeof child.stdin?._getFd === "function") {
     const bytes = Buffer.from(value, "utf8");
     const descriptor = child.stdin._getFd();
-    const deadline = Date.now() + 1000;
-    let offset = 0;
-    while (offset < bytes.length) {
-      let written;
-      try {
-        written = writeSync(
-          descriptor,
-          bytes,
-          offset,
-          bytes.length - offset,
-        );
-      } catch (error) {
-        if (
-          ["EAGAIN", "EWOULDBLOCK", "EINTR"].includes(error?.code) &&
-          Date.now() < deadline
-        ) {
-          Atomics.wait(terminationPause, 0, 0, 1);
-          continue;
+    if (Number.isInteger(descriptor) && descriptor >= 0) {
+      const deadline = Date.now() + 1000;
+      let offset = 0;
+      while (offset < bytes.length) {
+        let written;
+        try {
+          written = writeSync(
+            descriptor,
+            bytes,
+            offset,
+            bytes.length - offset,
+          );
+        } catch (error) {
+          if (
+            ["EAGAIN", "EWOULDBLOCK", "EINTR"].includes(error?.code) &&
+            Date.now() < deadline
+          ) {
+            Atomics.wait(terminationPause, 0, 0, 1);
+            continue;
+          }
+          throw error;
         }
-        throw error;
+        if (written <= 0) {
+          throw new Error("process stdin write made no progress");
+        }
+        offset += written;
       }
-      if (written <= 0) throw new Error("process stdin write made no progress");
-      offset += written;
+      return;
     }
-    return;
   }
   child.stdin.write(value);
   const flushed = child.stdin.flush();

@@ -291,7 +291,10 @@ pub fn native_runtime_output_is_cancelled_at_the_test_timeout_test() {
     runtime.resolve(fixture("native_output_timeout_fixture"))
   let assert Crashed(error) = runtime.run(loaded, Some(40))
   assert error.name == "timeout"
-  fs.sleep(250)
+  fs.sleep(case vm.target() {
+    "erlang" -> 1250
+    _ -> 250
+  })
   let survived = descendant_marker_exists()
   reset_descendant_marker()
   assert !survived
@@ -317,7 +320,10 @@ pub fn synchronous_process_is_bounded_or_rejected_before_it_can_leak_test() {
       assert error.name == "timeout"
     }
   }
-  fs.sleep(250)
+  fs.sleep(case vm.target() {
+    "erlang" -> 1250
+    _ -> 250
+  })
   let survived = descendant_marker_exists()
   reset_descendant_marker()
   assert !survived

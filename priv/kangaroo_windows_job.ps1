@@ -1,15 +1,22 @@
-param([switch] $Prepare)
+param(
+    [switch] $Prepare,
+    [switch] $SmokeTest,
+    [switch] $CheckSource
+)
 
 $ErrorActionPreference = "Stop"
 
-# The command and its arguments arrive through process-scoped environment
-# variables so PowerShell never reparses user arguments. The native launcher
-# starts the command suspended, assigns it to a kill-on-close Job Object, and
-# only then lets user code run. This closes the race where a fast command could
-# fork and exit before Kangaroo acquired ownership of its descendants.
+# PowerShell is used only to compile an immutable native launcher. Commands run
+# through that executable directly, so PowerShell never retains a copy of a
+# redirected stdio handle or reparses user arguments. The launcher starts the
+# command suspended, assigns it to a kill-on-close Job Object, and only then
+# lets user code run. This closes the race where a fast command could fork and
+# exit before Kangaroo acquired ownership of its descendants.
 $source = @'
 using System;
+using System.Collections;
 using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -17,6 +24,7 @@ using System.Threading;
 
 public static class KangarooWindowsJob
 {
+    private const string Prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_";
     private const uint CREATE_SUSPENDED = 0x00000004;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
@@ -28,6 +36,41 @@ public static class KangarooWindowsJob
     private const int STD_INPUT_HANDLE = -10;
     private const int STD_OUTPUT_HANDLE = -11;
     private const int STD_ERROR_HANDLE = -12;
+
+    public static int Main()
+    {
+        try
+        {
+            string executable = DecodeValue("EXECUTABLE");
+            string directory = DecodeValue("DIRECTORY");
+            string argv0 = DecodeValue("ARGV0");
+            string countText = DecodeValue("ARGUMENT_COUNT");
+            int count;
+            if (!Int32.TryParse(
+                    countText,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out count) || count < 0 || count > 65535)
+                throw new InvalidOperationException(
+                    "invalid internal argument count");
+
+            string[] arguments = new string[count];
+            for (int index = 0; index < count; index++)
+            {
+                arguments[index] = DecodeValue(
+                    "ARGUMENT_" + index.ToString("D6"));
+            }
+            RemoveInternalVariables();
+            return Run(executable, directory, argv0, arguments);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(
+                "kangaroo: Windows process wrapper failed: " +
+                CompleteMessage(error));
+            return 2;
+        }
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct STARTUPINFO
@@ -416,6 +459,40 @@ public static class KangarooWindowsJob
         return quoted.ToString();
     }
 
+    private static string DecodeValue(string name)
+    {
+        string encoded = Environment.GetEnvironmentVariable(Prefix + name);
+        if (encoded == null)
+            throw new InvalidOperationException(
+                "missing internal process value: " + name);
+        return Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+    }
+
+    private static void RemoveInternalVariables()
+    {
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            string name = Convert.ToString(
+                entry.Key,
+                CultureInfo.InvariantCulture);
+            if (name.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase))
+                Environment.SetEnvironmentVariable(name, null);
+        }
+    }
+
+    private static string CompleteMessage(Exception error)
+    {
+        StringBuilder message = new StringBuilder();
+        Exception current = error;
+        while (current != null)
+        {
+            if (message.Length != 0) message.Append(": ");
+            message.Append(current.Message);
+            current = current.InnerException;
+        }
+        return message.ToString();
+    }
+
     private static void Check(bool succeeded, string operation)
     {
         if (!succeeded) throw LastError(operation);
@@ -437,47 +514,7 @@ public static class KangarooWindowsJob
 '@
 
 $prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_"
-$assemblyName = "windows-job-v1-20260831.dll"
-
-function Ensure-Job-Type {
-    $cacheDirectory = [IO.Path]::Combine(
-        [IO.Path]::GetTempPath(),
-        "kangaroo")
-    [IO.Directory]::CreateDirectory($cacheDirectory) | Out-Null
-    $assembly = [IO.Path]::Combine($cacheDirectory, $assemblyName)
-
-    if ([IO.File]::Exists($assembly)) {
-        try {
-            Add-Type -Path $assembly
-            return
-        }
-        catch {
-            [IO.File]::Delete($assembly)
-        }
-    }
-
-    $candidate = [IO.Path]::Combine(
-        $cacheDirectory,
-        ([Guid]::NewGuid().ToString("N") + ".dll"))
-    try {
-        Add-Type -TypeDefinition $source -Language CSharp `
-            -OutputAssembly $candidate
-        try {
-            [IO.File]::Move($candidate, $assembly)
-        }
-        catch {
-            if (-not [IO.File]::Exists($assembly)) {
-                throw
-            }
-            [IO.File]::Delete($candidate)
-        }
-    }
-    finally {
-        if ([IO.File]::Exists($candidate)) {
-            [IO.File]::Delete($candidate)
-        }
-    }
-}
+$executableName = "windows-job-v2-20260831.exe"
 
 function Decode-Value([string] $name) {
     $encoded = [Environment]::GetEnvironmentVariable(
@@ -489,49 +526,118 @@ function Decode-Value([string] $name) {
     return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
 }
 
+function Encode-Value([string] $value) {
+    return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($value))
+}
+
+function Get-Helper-Path {
+    $encoded = [Environment]::GetEnvironmentVariable(
+        $prefix + "HELPER_PATH",
+        [EnvironmentVariableTarget]::Process)
+    if ($null -ne $encoded) {
+        return [Text.Encoding]::UTF8.GetString(
+            [Convert]::FromBase64String($encoded))
+    }
+    return [IO.Path]::Combine(
+        [IO.Path]::GetTempPath(),
+        "kangaroo",
+        $executableName)
+}
+
+function Ensure-Job-Executable {
+    $executable = Get-Helper-Path
+    if (-not [IO.Path]::IsPathRooted($executable)) {
+        throw "Windows process helper path must be absolute"
+    }
+    $cacheDirectory = [IO.Path]::GetDirectoryName($executable)
+    [IO.Directory]::CreateDirectory($cacheDirectory) | Out-Null
+
+    if ([IO.File]::Exists($executable)) {
+        return $executable
+    }
+
+    $candidate = [IO.Path]::Combine(
+        $cacheDirectory,
+        ([Guid]::NewGuid().ToString("N") + ".exe"))
+    try {
+        Add-Type -TypeDefinition $source -Language CSharp `
+            -OutputAssembly $candidate -OutputType ConsoleApplication
+        try {
+            [IO.File]::Move($candidate, $executable)
+        }
+        catch {
+            if (-not [IO.File]::Exists($executable)) {
+                throw
+            }
+            [IO.File]::Delete($candidate)
+        }
+    }
+    finally {
+        if ([IO.File]::Exists($candidate)) {
+            [IO.File]::Delete($candidate)
+        }
+    }
+    return $executable
+}
+
+function Set-Smoke-Launch(
+    [string] $executable,
+    [string[]] $arguments
+) {
+    $values = @{
+        "EXECUTABLE" = $executable
+        "DIRECTORY" = (Get-Location).ProviderPath
+        "ARGV0" = $executable
+        "ARGUMENT_COUNT" = $arguments.Length.ToString(
+            [Globalization.CultureInfo]::InvariantCulture)
+    }
+    for ($index = 0; $index -lt $arguments.Length; $index++) {
+        $values["ARGUMENT_{0:D6}" -f $index] = $arguments[$index]
+    }
+    foreach ($entry in $values.GetEnumerator()) {
+        [Environment]::SetEnvironmentVariable(
+            $prefix + $entry.Key,
+            (Encode-Value $entry.Value),
+            [EnvironmentVariableTarget]::Process)
+    }
+}
+
 try {
-    Ensure-Job-Type
+    if ($CheckSource) {
+        Add-Type -TypeDefinition $source -Language CSharp
+        [Environment]::Exit(0)
+    }
+
+    $helper = Ensure-Job-Executable
     if ($Prepare) {
         [Environment]::Exit(0)
     }
 
-    $executable = Decode-Value "EXECUTABLE"
-    $directory = Decode-Value "DIRECTORY"
-    $argv0 = Decode-Value "ARGV0"
-    $countText = Decode-Value "ARGUMENT_COUNT"
-    $count = [Int32]::Parse(
-        $countText,
-        [Globalization.CultureInfo]::InvariantCulture)
-    if ($count -lt 0 -or $count -gt 65535) {
-        throw "invalid internal argument count"
+    if (-not $SmokeTest) {
+        throw "specify -Prepare or -SmokeTest"
     }
 
-    $arguments = New-Object 'string[]' $count
-    for ($index = 0; $index -lt $count; $index++) {
-        $name = "ARGUMENT_{0:D6}" -f $index
-        $arguments[$index] = Decode-Value $name
+    $find = (Get-Command "findstr.exe" -ErrorAction Stop).Source
+    Set-Smoke-Launch $find @("kangaroo")
+    $output = "kangaroo" | & $helper
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "Windows process helper smoke test exited $exitCode"
+    }
+    if (($output -join "`n").Trim() -ne "kangaroo") {
+        throw "Windows process helper did not preserve redirected stdio"
     }
 
-    foreach ($key in [Environment]::GetEnvironmentVariables(
-        [EnvironmentVariableTarget]::Process).Keys) {
-        $name = [string] $key
-        if ($name.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
-            [Environment]::SetEnvironmentVariable(
-                $name,
-                $null,
-                [EnvironmentVariableTarget]::Process)
-        }
+    Set-Smoke-Launch $find @("not-present")
+    $null = "kangaroo" | & $helper
+    if ($LASTEXITCODE -ne 1) {
+        throw "Windows process helper did not preserve the child exit code"
     }
-
-    $exitCode = [KangarooWindowsJob]::Run(
-        $executable,
-        $directory,
-        $argv0,
-        $arguments)
-    [Environment]::Exit($exitCode)
+    [Environment]::Exit(0)
 }
 catch {
     [Console]::Error.WriteLine(
-        "kangaroo: Windows process wrapper failed: " + $_.Exception.Message)
+        "kangaroo: Windows process helper preparation failed: " +
+        $_.Exception.Message)
     [Environment]::Exit(2)
 }

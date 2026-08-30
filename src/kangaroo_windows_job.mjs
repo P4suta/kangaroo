@@ -19,26 +19,33 @@ const powershellArguments = [
   script,
 ];
 const prepareWindowsJob = execFileSync;
-const preparedKey = Symbol.for("kangaroo.windowsJobPrepared.v1.20260831");
-const cachedAssembly = join(
+const preparedKey = Symbol.for("kangaroo.windowsJobPrepared.v2.20260831");
+const cachedExecutable = join(
   tmpdir(),
   "kangaroo",
-  "windows-job-v1-20260831.dll",
+  "windows-job-v2-20260831.exe",
 );
 
 export function ensureWindowsJobHelper() {
   if (globalThis.process.platform !== "win32") return;
-  if (globalThis[preparedKey] === true && existsSync(cachedAssembly)) return;
-  if (!existsSync(cachedAssembly)) {
+  if (globalThis[preparedKey] === true && existsSync(cachedExecutable)) return;
+  if (!existsSync(cachedExecutable)) {
     prepareWindowsJob(
       "powershell.exe",
       [...powershellArguments, "-Prepare"],
       {
+        env: {
+          ...globalThis.process.env,
+          [variableName("HELPER_PATH")]: encode(cachedExecutable),
+        },
         stdio: "ignore",
         timeout: 15_000,
         windowsHide: true,
       },
     );
+  }
+  if (!existsSync(cachedExecutable)) {
+    throw new Error("Windows process helper was not created");
   }
   globalThis[preparedKey] = true;
 }
@@ -99,8 +106,8 @@ export function windowsJobLaunch(
     ),
   );
   return {
-    executable: "powershell.exe",
-    arguments: powershellArguments,
+    executable: cachedExecutable,
+    arguments: [],
     environment: cleanEnvironment,
   };
 }
@@ -136,8 +143,8 @@ export function windowsJobSpawnOptions(options) {
   }
   return {
     ...options,
-    file: "powershell.exe",
-    args: ["powershell.exe", ...powershellArguments],
+    file: cachedExecutable,
+    args: [cachedExecutable],
     envPairs: environmentPairs,
     windowsVerbatimArguments: false,
   };

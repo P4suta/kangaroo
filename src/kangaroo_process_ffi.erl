@@ -172,13 +172,7 @@ process_launch(Directory, Path, Arguments, Environment) ->
     end.
 
 windows_job_launch(Directory, Path, Arguments, Environment) ->
-    PowerShell = case os:find_executable("powershell.exe") of
-        false -> erlang:error(
-                   {missing_windows_process_wrapper, powershell_exe});
-        Value -> Value
-    end,
-    Script = filename:join(windows_priv_directory(),
-                           "kangaroo_windows_job.ps1"),
+    Helper = windows_job_executable(),
     CleanEnvironment = [
         {Key, Value} || {Key, Value} <- Environment,
         not internal_windows_job_name(Key)
@@ -197,11 +191,7 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
         | ArgumentEnvironment
     ],
     InheritedRemovals = inherited_windows_job_removals(),
-    PowerShellArguments = [
-        "-NoLogo", "-NoProfile", "-NonInteractive",
-        "-ExecutionPolicy", "Bypass", "-File", Script
-    ],
-    {PowerShell, PowerShellArguments,
+    {Helper, [],
      InheritedRemovals ++ InternalEnvironment ++ CleanEnvironment}.
 
 internal_windows_job_name(Name) ->
@@ -273,6 +263,7 @@ prepare_windows_job_helper_worker() ->
     case os:find_executable("powershell.exe") of
         false -> {error, <<"could not find executable: powershell.exe">>};
         PowerShell ->
+            Helper = windows_job_executable(),
             Arguments = [
                 "-NoLogo", "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-File",
@@ -283,16 +274,19 @@ prepare_windows_job_helper_worker() ->
             try open_port(
                   {spawn_executable, PowerShell},
                   [binary, use_stdio, stderr_to_stdout, exit_status,
-                   {args, Arguments}]) of
+                   {args, Arguments},
+                   {env, [{?WINDOWS_JOB_PREFIX ++ "HELPER_PATH",
+                           encode_windows_job_value(Helper)}]}]) of
                 Port -> collect_windows_job_preparation(
-                          Port, [], erlang:monotonic_time(millisecond) + 15000)
+                          Port, [], erlang:monotonic_time(millisecond) + 15000,
+                          Helper)
             catch
                 Class:Reason ->
                     {error, format_exception(Class, Reason)}
             end
     end.
 
-collect_windows_job_preparation(Port, Output, Deadline) ->
+collect_windows_job_preparation(Port, Output, Deadline, Helper) ->
     Remaining = erlang:max(
         0, Deadline - erlang:monotonic_time(millisecond)),
     receive
@@ -304,9 +298,15 @@ collect_windows_job_preparation(Port, Output, Deadline) ->
                     {error, <<"Windows process isolation preparation output "
                               "exceeded 1048576 bytes">>};
                 false ->
-                    collect_windows_job_preparation(Port, Next, Deadline)
+                    collect_windows_job_preparation(
+                      Port, Next, Deadline, Helper)
             end;
-        {Port, {exit_status, 0}} -> ok;
+        {Port, {exit_status, 0}} ->
+            case filelib:is_regular(Helper) of
+                true -> ok;
+                false ->
+                    {error, <<"Windows process helper was not created">>}
+            end;
         {Port, {exit_status, Code}} ->
             Message = iolist_to_binary(lists:reverse(Output)),
             {error, <<"Windows process isolation preparation exited ",
@@ -320,6 +320,21 @@ collect_windows_job_preparation(Port, Output, Deadline) ->
         close_port(Port),
         {error, <<"Windows process isolation preparation timed out">>}
     end.
+
+windows_job_executable() ->
+    Temp = case os:getenv("TEMP") of
+        false ->
+            case os:getenv("TMP") of
+                false ->
+                    case os:getenv("TMPDIR") of
+                        false -> ".";
+                        Value -> Value
+                    end;
+                Value -> Value
+            end;
+        Value -> Value
+    end,
+    filename:join([Temp, "kangaroo", "windows-job-v2-20260831.exe"]).
 
 async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8, OutputBytes,
               Deadline) ->

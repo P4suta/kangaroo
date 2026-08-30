@@ -41,10 +41,12 @@ suspended, assigns it to a private kill-on-close Job Object, and only then
 allows it to execute. Completion is not published until the Job Object has no
 active descendants. This ownership boundary also applies when a command exits
 successfully after starting background work, and to asynchronous subprocesses
-started by an isolated JavaScript test. The wrapper's private environment
-namespace is removed case-insensitively before user code starts, matching
-Windows environment semantics and preventing inherited values from changing
-or leaking its launch metadata.
+started by an isolated JavaScript test. PowerShell compiles the immutable
+console helper once; it is not retained between Kangaroo and the command, so
+redirected handles and exit status have a single owner. The helper's private
+environment namespace is removed case-insensitively before user code starts,
+matching Windows environment semantics and preventing inherited values from
+changing or leaking its launch metadata.
 
 ## Deno permissions
 

@@ -75,6 +75,16 @@ jobs:
         run: gleam deps download
       - run: gleam test --target erlang
 
+  windows-process-wrapper:
+    name: Windows process helper smoke test
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Preserve arguments, stdio, and exit status
+        shell: powershell
+        run: ./priv/kangaroo_windows_job.ps1 -SmokeTest
+
   javascript:
     name: ${{ matrix.runtime }} ${{ matrix.version }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

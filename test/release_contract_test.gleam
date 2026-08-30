@@ -249,6 +249,7 @@ pub fn first_release_runbook_is_fail_closed_and_rerunnable_test() {
 pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   let assert Ok(runtime_docs) = fs.read_file("docs/runtimes.md")
   let assert Ok(readme) = fs.read_file("README.md")
+  let assert Ok(workflow) = fs.read_file(".github/workflows/test.yml")
   let assert Ok(erlang_fs) = fs.read_file("src/kangaroo_fs_ffi.erl")
   let erlang_fs = string.replace(erlang_fs, each: "\r\n", with: "\n")
   let assert Ok(process_worker) =
@@ -301,7 +302,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_job, "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE")
   assert string.contains(windows_job, "DrainRemainingProcesses(job)")
   assert string.contains(windows_job, "-OutputAssembly")
-  assert string.contains(windows_job, "windows-job-v1-20260831.dll")
+  assert string.contains(windows_job, "windows-job-v2-20260831.exe")
+  assert string.contains(windows_job_bridge, "windows-job-v2-20260831.exe")
+  assert string.contains(erlang_process_ffi, "windows-job-v2-20260831.exe")
+  assert string.contains(windows_job, "ConsoleApplication")
+  assert string.contains(workflow, "kangaroo_windows_job.ps1 -SmokeTest")
   assert string.contains(windows_job, "DuplicateHandle")
   assert string.contains(process_ffi, "activityBuffer")
   assert string.contains(process_worker, "workerData.activityBuffer")
