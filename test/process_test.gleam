@@ -169,7 +169,13 @@ pub fn closed_stdin_terminates_process_tree_test() {
 
 pub fn child_process_completion_captures_output_test() {
   let assert Ok(handle) =
-    process.start(".", sleeper_executable(), sleeper_arguments(10), [], 2000)
+    process.start(
+      ".",
+      sleeper_executable(),
+      sleeper_arguments(10),
+      [],
+      completion_timeout_ms(),
+    )
   let assert ProcessFinished(completed) =
     await_terminal(handle, launch_poll_timeout_ms())
   assert completed.exit_code == 0
@@ -183,7 +189,7 @@ pub fn relative_working_directory_is_applied_once_test() {
       sleeper_executable(),
       sleeper_arguments(10),
       [],
-      2000,
+      completion_timeout_ms(),
     )
   assert completed.exit_code == 0
   assert completed.output == "ready"
@@ -273,19 +279,37 @@ pub fn child_process_streams_output_before_completion_test() {
 
 pub fn child_process_decodes_utf8_across_output_chunks_test() {
   let assert Ok(handle) =
-    process.start(".", sleeper_executable(), split_utf8_arguments(), [], 2000)
+    process.start(
+      ".",
+      sleeper_executable(),
+      split_utf8_arguments(),
+      [],
+      completion_timeout_ms(),
+    )
   await_utf8_terminal(handle, sys.now_ms(), launch_poll_timeout_ms(), "")
 }
 
 pub fn foreground_process_replaces_invalid_utf8_in_order_test() {
   let assert Ok(completed) =
-    process.run(".", sleeper_executable(), invalid_utf8_arguments(), [], 2000)
+    process.run(
+      ".",
+      sleeper_executable(),
+      invalid_utf8_arguments(),
+      [],
+      completion_timeout_ms(),
+    )
   assert completed.output == "A�B"
 }
 
 pub fn child_process_replaces_invalid_utf8_in_order_test() {
   let assert Ok(handle) =
-    process.start(".", sleeper_executable(), invalid_utf8_arguments(), [], 2000)
+    process.start(
+      ".",
+      sleeper_executable(),
+      invalid_utf8_arguments(),
+      [],
+      completion_timeout_ms(),
+    )
   await_invalid_utf8_terminal(
     handle,
     sys.now_ms(),
@@ -296,10 +320,16 @@ pub fn child_process_replaces_invalid_utf8_in_order_test() {
 
 pub fn child_process_accepts_stdin_without_closing_its_tree_test() {
   let assert Ok(handle) =
-    process.start(".", sleeper_executable(), echo_arguments(), [], 2000)
+    process.start(
+      ".",
+      sleeper_executable(),
+      echo_arguments(),
+      [],
+      completion_timeout_ms(),
+    )
   process.write(handle, "kangaroo protocol\n")
   // Erlang schedules port creation in the process worker after start returns.
-  // Keep the child itself bounded by the 2 second product timeout above, but
+  // Keep the child itself bounded by the completion deadline above, but
   // allow the black-box poller enough launch-scheduling margin to observe its
   // terminal result on a loaded host. A broken stdin path still reports
   // ProcessFailed("process timed out") and fails this assertion.
@@ -435,6 +465,17 @@ fn await_terminal(handle: Int, timeout_ms: Int) -> process.ProcessPoll {
 // dedicated cancellation assertions and benchmark gates.
 fn launch_poll_timeout_ms() -> Int {
   5000
+}
+
+// A cold erl.exe needs a hidden console before it can retain redirected port
+// handles on Windows and takes over two seconds on the supported CI images.
+// This fixture deadline covers launch and completion; cancellation latency and
+// descendant cleanup retain their independent sub-second assertions.
+fn completion_timeout_ms() -> Int {
+  case vm.operating_system() {
+    "windows" -> 5000
+    _ -> 2000
+  }
 }
 
 fn await_utf8_terminal(

@@ -48,7 +48,12 @@ echo_arguments() ->
 argument_echo_arguments(Value) ->
     [<<"-noshell">>, <<"-eval">>,
      <<"[Argument]=init:get_plain_arguments(), "
-       "io:put_chars([Argument,\"|\",os:getenv(\"KANGAROO_PROCESS_TEST_ENV\")]), "
+       "Environment=os:getenv(\"KANGAROO_PROCESS_TEST_ENV\"), "
+       "Normalized=case os:type() of {win32,_} -> "
+       "Utf16 = << <<Unit:16/little>> || Unit <- Environment >>, "
+       "unicode:characters_to_binary(Utf16,{utf16,little},utf8); "
+       "_ -> Environment end, "
+       "io:put_chars([Argument,\"|\",Normalized]), "
        "halt().">>,
      <<"-extra">>, Value].
 

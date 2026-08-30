@@ -46,8 +46,11 @@ internal_environment(Directory) ->
     Arguments = [
       "-noshell", "-eval",
       "[Argument]=init:get_plain_arguments(), "
-      "io:put_chars([Argument,\"|\","
-      "os:getenv(\"KANGAROO_PROCESS_TEST_ENV\")]), halt().",
+      "Environment=os:getenv(\"KANGAROO_PROCESS_TEST_ENV\"), "
+      "Utf16 = << <<Unit:16/little>> || Unit <- Environment >>, "
+      "Normalized=unicode:characters_to_binary("
+      "Utf16,{utf16,little},utf8), "
+      "io:put_chars([Argument,\"|\",Normalized]), halt().",
       "-extra", Argument
     ],
     Values = [

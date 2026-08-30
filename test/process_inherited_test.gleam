@@ -1,4 +1,5 @@
 import kangaroo/internal/process
+import kangaroo/internal/vm
 
 @external(erlang, "kangaroo_cli_test_ffi", "sleeper_executable")
 @external(javascript, "./kangaroo_cli_test_ffi.mjs", "sleeper_executable")
@@ -15,8 +16,15 @@ pub fn inherited_process_returns_exit_status_without_captured_output_test() {
       sleeper_executable(),
       silent_exit_arguments(7),
       [],
-      2000,
+      completion_timeout_ms(),
     )
   assert completed.exit_code == 7
   assert completed.output == ""
+}
+
+fn completion_timeout_ms() -> Int {
+  case vm.operating_system() {
+    "windows" -> 5000
+    _ -> 2000
+  }
 }
