@@ -291,8 +291,9 @@ prepare_windows_job_helper_worker() ->
                   {spawn_executable, PowerShell},
                   [binary, use_stdio, stderr_to_stdout, exit_status,
                    {args, Arguments},
-                   {env, [{?WINDOWS_JOB_PREFIX ++ "HELPER_PATH",
-                           encode_windows_job_value(Helper)}]}]) of
+                   {env, [port_environment_pair(
+                            {?WINDOWS_JOB_PREFIX ++ "HELPER_PATH",
+                             encode_windows_job_value(Helper)})]}]) of
                 Port -> collect_windows_job_preparation(
                           Port, [], erlang:monotonic_time(millisecond) + 15000,
                           Helper)

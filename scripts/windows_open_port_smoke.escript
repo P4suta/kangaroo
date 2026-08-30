@@ -9,20 +9,15 @@ main(_Arguments) ->
             CommandArguments = ["/D", "/Q", "/C", "exit", "0"],
             Base = [binary, use_stdio, stderr_to_stdout, exit_status,
                     {args, CommandArguments}],
-            InternalListEnvironment = internal_environment(Directory, false),
-            InternalBinaryEnvironment = internal_environment(Directory, true),
+            InternalEnvironment = internal_environment(Directory),
             Results = [
                 probe("base", CommandProcessor, Base),
                 probe("working directory", CommandProcessor,
                       Base ++ [{cd, Directory}]),
                 probe("list environment", CommandProcessor,
                       Base ++ [{env, [{"KANGAROO_PORT_SMOKE", "1"}]}]),
-                probe("binary environment", CommandProcessor,
-                      Base ++ [{env, [{"KANGAROO_PORT_SMOKE", <<"1">>}]}]),
                 probe("internal list environment", CommandProcessor,
-                      Base ++ [{env, InternalListEnvironment}]),
-                probe("internal binary environment", CommandProcessor,
-                      Base ++ [{env, InternalBinaryEnvironment}])
+                      Base ++ [{env, InternalEnvironment}])
             ],
             case lists:all(fun(Result) -> Result =:= ok end, Results) of
                 true -> halt(0);
@@ -39,7 +34,7 @@ require_executable(Name) ->
         Path -> Path
     end.
 
-internal_environment(Directory, BinaryValues) ->
+internal_environment(Directory) ->
     Executable = require_executable("cmd.exe"),
     Values = [
         {"EXECUTABLE", Executable},
@@ -49,11 +44,9 @@ internal_environment(Directory, BinaryValues) ->
         {"ENVIRONMENT_COUNT", "0"}
     ],
     [{"__KANGAROO_INTERNAL_WINDOWS_JOB_V1_" ++ Name,
-      encoded(Value, BinaryValues)} || {Name, Value} <- Values].
+      encoded(Value)} || {Name, Value} <- Values].
 
-encoded(Value, true) ->
-    base64:encode(unicode:characters_to_binary(Value));
-encoded(Value, false) ->
+encoded(Value) ->
     binary_to_list(base64:encode(unicode:characters_to_binary(Value))).
 
 probe(Label, Executable, Options) ->

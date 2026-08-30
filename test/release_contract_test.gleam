@@ -307,6 +307,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(erlang_process_ffi, "filename:basename(Launcher)")
   assert string.contains(erlang_process_ffi, "ENVIRONMENT_NAME_")
   assert string.contains(erlang_process_ffi, "ENVIRONMENT_VALUE_")
+  let assert [_, preparation_body] =
+    string.split(erlang_process_ffi, "\nprepare_windows_job_helper_worker() ->")
+  let assert [preparation_body, ..] =
+    string.split(preparation_body, "collect_windows_job_preparation(")
+  assert string.contains(preparation_body, "port_environment_pair")
   assert string.contains(process_worker, "windowsJobLaunch")
   assert string.contains(test_worker, "windowsJobSpawnOptions")
   assert string.contains(test_worker, "windowsJobLaunch")

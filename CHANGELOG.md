@@ -125,6 +125,8 @@ versioning.
   immutable trampoline basename. Unicode environment overrides travel as
   private base64 metadata for the helper to restore without exposing them to
   OTP's port options or the command interpreter.
+- Normalised the helper-preparation environment to OTP's Windows string
+  contract, avoiding a first-launch `open_port badopt` on OTP 27 through 29.
 - Made daemon output draining fair to stdin across both large chunks and line
   bursts, retained unterminated output as linear-time fragments, and bounded
   Erlang request allocation while discarding an overlong line; both stdin
