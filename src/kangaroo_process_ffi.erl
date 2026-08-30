@@ -193,6 +193,7 @@ process_launch(Directory, Path, Arguments, Environment) ->
 
 windows_job_launch(Directory, Path, Arguments, Environment) ->
     Helper = windows_job_executable(),
+    Launcher = windows_job_launcher(Helper),
     {ok, CommandProcessor} = windows_command_processor(),
     WorkingDirectory = filename:absname(to_list(Directory)),
     CleanEnvironment = [
@@ -224,13 +225,13 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
          encode_windows_job_value(integer_to_list(length(CleanEnvironment)))}
         | ArgumentEnvironment ++ EnvironmentEnvironment
     ],
-    %% spawn_executable accepts cmd.exe but rejects the managed helper image
-    %% on supported Windows OTP releases. Keep cmd's command string to a fixed
-    %% executable basename and fixed marker in the helper's own directory; no
-    %% user-controlled value is ever parsed by the command processor.
-    {filename:dirname(Helper), CommandProcessor,
-     ["/D", "/Q", "/C", filename:basename(Helper),
-      "--kangaroo-job-helper"],
+    %% spawn_executable accepts cmd.exe but rejects both the managed helper
+    %% image and batch files on supported Windows OTP releases. A fixed batch
+    %% trampoline makes cmd wait for the console helper before publishing its
+    %% status, preserving the port's redirected handles and child exit code.
+    %% No user-controlled value is parsed by the command processor.
+    {filename:dirname(Launcher), CommandProcessor,
+     ["/D", "/Q", "/C", filename:basename(Launcher)],
      InternalEnvironment}.
 
 windows_command_processor() ->
@@ -264,7 +265,9 @@ ensure_windows_job_helper() ->
                     Key = {?MODULE, windows_job_helper_path},
                     case persistent_term:get(Key, undefined) of
                         Path when Path =/= undefined ->
-                            case filelib:is_regular(Path) of
+                            case filelib:is_regular(Path) andalso
+                                 filelib:is_regular(
+                                   windows_job_launcher(Path)) of
                                 true -> ok;
                                 false -> prepare_and_store_windows_helper(Key)
                             end;
@@ -380,11 +383,17 @@ collect_windows_job_preparation(Port, Helper, Output, Deadline) ->
                       Port, Helper, Next, Deadline)
             end;
         {Port, {exit_status, 0}} ->
-            case filelib:is_regular(Helper) of
-                true -> {ok, Helper};
-                false ->
+            Launcher = windows_job_launcher(Helper),
+            case {filelib:is_regular(Helper),
+                  filelib:is_regular(Launcher)} of
+                {true, true} -> {ok, Helper};
+                State ->
                     Message = iolist_to_binary(lists:reverse(Output)),
-                    {error, <<"Windows process helper was not created: ",
+                    {error, <<"Windows process helper artifacts were not "
+                              "created (",
+                              (unicode:characters_to_binary(
+                                 io_lib:format("~tp", [State])))/binary,
+                              "): ",
                               Message/binary>>}
             end;
         {Port, {exit_status, Code}} ->
@@ -404,6 +413,9 @@ collect_windows_job_preparation(Port, Helper, Output, Deadline) ->
 windows_job_executable() ->
     persistent_term:get(
       {?MODULE, windows_job_helper_path}, default_windows_job_executable()).
+
+windows_job_launcher(Helper) ->
+    filename:rootname(Helper) ++ ".cmd".
 
 default_windows_job_executable() ->
     Temp = first_nonempty_environment(["TEMP", "TMP", "TMPDIR"], "."),

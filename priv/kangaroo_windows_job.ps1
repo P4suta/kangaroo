@@ -536,6 +536,7 @@ public static class KangarooWindowsJob
 
 $prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_"
 $executableName = "windows-job-v6-20260831.exe"
+$launcherName = "windows-job-v6-20260831.cmd"
 
 function Decode-Value([string] $name) {
     $encoded = [Environment]::GetEnvironmentVariable(
@@ -621,6 +622,49 @@ function Ensure-Job-Executable {
     return $executable
 }
 
+function Ensure-Job-Launcher([string] $executable) {
+    $launcher = [IO.Path]::Combine(
+        [IO.Path]::GetDirectoryName($executable),
+        $launcherName)
+    $contents = "@echo off`r`n" +
+        "`"%~dp0$executableName`" --kangaroo-job-helper`r`n" +
+        "exit /b %errorlevel%`r`n"
+    if ([IO.File]::Exists($launcher)) {
+        if ([IO.File]::ReadAllText($launcher, [Text.Encoding]::ASCII) -ne
+            $contents) {
+            throw "Windows process launcher has unexpected contents"
+        }
+        return $launcher
+    }
+
+    $candidate = [IO.Path]::Combine(
+        [IO.Path]::GetDirectoryName($executable),
+        ([Guid]::NewGuid().ToString("N") + ".cmd"))
+    try {
+        [IO.File]::WriteAllText($candidate, $contents, [Text.Encoding]::ASCII)
+        try {
+            [IO.File]::Move($candidate, $launcher)
+        }
+        catch {
+            if (-not [IO.File]::Exists($launcher)) {
+                throw
+            }
+            [IO.File]::Delete($candidate)
+            if ([IO.File]::ReadAllText(
+                    $launcher,
+                    [Text.Encoding]::ASCII) -ne $contents) {
+                throw "Windows process launcher has unexpected contents"
+            }
+        }
+    }
+    finally {
+        if ([IO.File]::Exists($candidate)) {
+            [IO.File]::Delete($candidate)
+        }
+    }
+    return $launcher
+}
+
 function Set-Smoke-Launch(
     [string] $executable,
     [string[]] $arguments
@@ -651,6 +695,7 @@ try {
     }
 
     $helper = Ensure-Job-Executable
+    $launcher = Ensure-Job-Launcher $helper
     if ($Prepare) {
         [Environment]::Exit(0)
     }
@@ -670,10 +715,25 @@ try {
         throw "Windows process helper did not preserve redirected stdio"
     }
 
+    Set-Smoke-Launch $find @("kangaroo")
+    $output = "kangaroo" | & $launcher
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "Windows process launcher smoke test exited $exitCode"
+    }
+    if (($output -join "`n").Trim() -ne "kangaroo") {
+        throw "Windows process launcher did not preserve redirected stdio"
+    }
+
     Set-Smoke-Launch $find @("not-present")
     $null = "kangaroo" | & $helper
     if ($LASTEXITCODE -ne 1) {
         throw "Windows process helper did not preserve the child exit code"
+    }
+    Set-Smoke-Launch $find @("not-present")
+    $null = "kangaroo" | & $launcher
+    if ($LASTEXITCODE -ne 1) {
+        throw "Windows process launcher did not preserve the child exit code"
     }
     [Environment]::Exit(0)
 }

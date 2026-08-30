@@ -334,11 +334,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(erlang_process_ffi, "taskkill /PID")
   assert string.contains(erlang_process_ffi, "windows_job_launch")
   assert string.contains(erlang_process_ffi, "windows_job_executable")
+  assert string.contains(erlang_process_ffi, "windows_job_launcher")
   assert string.contains(erlang_process_ffi, "windows_command_processor")
   assert string.contains(erlang_process_ffi, "os:find_executable(\"cmd.exe\")")
-  assert string.contains(erlang_process_ffi, "filename:dirname(Helper)")
-  assert string.contains(erlang_process_ffi, "filename:basename(Helper)")
-  assert string.contains(erlang_process_ffi, "\"--kangaroo-job-helper\"")
+  assert string.contains(erlang_process_ffi, "filename:dirname(Launcher)")
+  assert string.contains(erlang_process_ffi, "filename:basename(Launcher)")
   assert string.contains(erlang_process_ffi, "ENVIRONMENT_NAME_")
   assert string.contains(erlang_process_ffi, "ENVIRONMENT_VALUE_")
   let assert [_, preparation_body] =
@@ -402,7 +402,13 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert !string.contains(windows_job, "DateTime.UtcNow.AddSeconds")
   assert string.contains(windows_job, "-OutputAssembly")
   assert string.contains(windows_job, "windows-job-v6-20260831.exe")
-  assert !string.contains(windows_job, "windows-job-v6-20260831.cmd")
+  assert string.contains(windows_job, "windows-job-v6-20260831.cmd")
+  assert string.contains(windows_job, "function Ensure-Job-Launcher")
+  assert string.contains(windows_job, "[Text.Encoding]::ASCII")
+  assert string.contains(
+    windows_job,
+    "Windows process launcher has unexpected contents",
+  )
   assert string.contains(windows_job_bridge, "windows-job-v6-20260831.exe")
   assert string.contains(erlang_process_ffi, "windows-job-v6-20260831.exe")
   assert string.contains(windows_job_bridge, "findPowerShell")
@@ -441,6 +447,8 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
     "require_executable(\"where.exe\")",
   )
   assert string.contains(windows_open_port_smoke, "Arguments = [\"cmd.exe\"]")
+  assert string.contains(windows_open_port_smoke, "probe_output(")
+  assert string.contains(windows_open_port_smoke, "<<\"cmd.exe\">>")
   assert !string.contains(
     windows_open_port_smoke,
     "{spawn_executable, PowerShell}",

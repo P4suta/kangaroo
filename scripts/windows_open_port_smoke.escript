@@ -72,6 +72,20 @@ probe(Label, Executable, Options, Timeout) ->
             error
     end.
 
+probe_output(Label, Executable, Options, Expected, Timeout) ->
+    try open_port({spawn_executable, Executable}, Options) of
+        Port ->
+            wait_for_expected_exit(
+              Label, Port, Expected, [],
+              erlang:monotonic_time(millisecond) + Timeout)
+    catch
+        Class:Reason:Stack ->
+            io:format(
+              "open_port ~s: ~tp:~tp ~tp~n",
+              [Label, Class, Reason, Stack]),
+            error
+    end.
+
 wait_for_exit(Label, Port, Deadline) ->
     Remaining = erlang:max(
       0, Deadline - erlang:monotonic_time(millisecond)),
@@ -90,11 +104,43 @@ wait_for_exit(Label, Port, Deadline) ->
         error
     end.
 
+wait_for_expected_exit(Label, Port, Expected, Output, Deadline) ->
+    Remaining = erlang:max(
+      0, Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {Port, {data, Data}} ->
+            wait_for_expected_exit(
+              Label, Port, Expected, [Data | Output], Deadline);
+        {Port, {exit_status, 0}} ->
+            Actual = iolist_to_binary(lists:reverse(Output)),
+            case binary:match(Actual, Expected) of
+                nomatch ->
+                    io:format(
+                      "open_port ~s: missing output ~tp in ~tp~n",
+                      [Label, Expected, Actual]),
+                    error;
+                _ ->
+                    io:format("open_port ~s: ok~n", [Label]),
+                    ok
+            end;
+        {Port, {exit_status, Code}} ->
+            io:format(
+              "open_port ~s: exit ~B ~ts~n",
+              [Label, Code,
+               iolist_to_binary(lists:reverse(Output))]),
+            error
+    after Remaining ->
+        safe_close(Port),
+        io:format("open_port ~s: timeout~n", [Label]),
+        error
+    end.
+
 probe_helper_preparation() ->
     PowerShell = require_powershell(),
     CommandProcessor = require_executable("cmd.exe"),
     Script = filename:absname("priv/kangaroo_windows_job.ps1"),
     Helper = default_helper_path(),
+    Launcher = filename:rootname(Helper) ++ ".cmd",
     Unique = integer_to_list(erlang:unique_integer([positive, monotonic])),
     Preparation = filename:join(
       filename:dirname(Helper),
@@ -121,13 +167,14 @@ probe_helper_preparation() ->
                     case Result of
                         error -> error;
                         ok ->
-                            case filelib:is_regular(Helper) of
-                                true ->
+                            case {filelib:is_regular(Helper),
+                                  filelib:is_regular(Launcher)} of
+                                {true, true} ->
                                     io:format(
                                       "open_port helper preparation: ok~n"),
                                     io:format(
-                                      "open_port helper artifact: ok~n"),
-                                    probe(
+                                      "open_port helper artifacts: ok~n"),
+                                    probe_output(
                                       "production helper execution",
                                       CommandProcessor,
                                       [binary, use_stdio, stderr_to_stdout,
@@ -135,21 +182,23 @@ probe_helper_preparation() ->
                                        {cd, filename:dirname(Helper)},
                                        {args, [
                                          "/D", "/Q", "/C",
-                                         filename:basename(Helper),
-                                         "--kangaroo-job-helper"
+                                         filename:basename(Launcher)
                                        ]},
                                        {env, internal_environment(
                                          filename:absname("."))}],
+                                      <<"cmd.exe">>,
                                       5000);
-                                false ->
+                                State ->
                                     io:format(
-                                      "open_port helper artifact: missing~n"),
+                                      "open_port helper artifacts: missing "
+                                      "~tp~n", [State]),
                                     error
                             end
                     end
                 after
                     _ = safe_delete(Preparation),
-                    _ = safe_delete(Helper)
+                    _ = safe_delete(Helper),
+                    _ = safe_delete(Launcher)
                 end
             end
     end.

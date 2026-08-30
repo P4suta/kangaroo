@@ -46,10 +46,11 @@ started by an isolated JavaScript test. PowerShell compiles the immutable
 console helper once, preferring the Windows PowerShell compiler host and falling
 back to PowerShell 7. JavaScript runtimes execute it directly, while Erlang
 opens native `cmd.exe` with AutoRun disabled and invokes the fixed helper
-basename from its own cache directory around OTP's managed-executable boundary;
-both paths preserve the raw redirected handles and child exit status. Each
-runtime creates its absolute per-user temporary cache directory first and pins
-that directory as PowerShell's working directory. Because supported Windows
+through a fixed ASCII batch trampoline in its own cache directory around OTP's
+managed-executable boundary. The trampoline makes `cmd.exe` wait for helper
+completion, so both paths preserve raw redirected handles and child exit
+status. Each runtime creates its absolute per-user temporary cache directory
+first and pins that directory as PowerShell's working directory. Because supported Windows
 OTP releases do not preserve the direct PowerShell argument vector, Erlang
 stages the bundled preparation script there under a process-owned basename and
 invokes it through native `cmd.exe` with AutoRun disabled. The script writes
@@ -57,8 +58,9 @@ only the fixed versioned helper basename, and the caller validates that exact
 artifact after exit zero. Helper preparation therefore never transports a
 Windows path through OTP script arguments or environment options and never
 parses locale-sensitive redirected PowerShell output.
-The command processor receives only the immutable helper basename and marker—never
-a user executable, argument, environment value, or working directory.
+The command processor receives only the immutable trampoline basename, whose
+contents name only the immutable helper and marker—never a user executable,
+argument, environment value, or working directory.
 Erlang transports Unicode environment overrides as private base64 metadata and
 the helper restores them before launching user code, avoiding OTP port option
 encoding differences. The helper's private environment
