@@ -20,6 +20,7 @@ public static class KangarooWindowsJob
     private const uint CREATE_SUSPENDED = 0x00000004;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
     private const int JobObjectBasicAccountingInformation = 1;
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint INFINITE = 0xFFFFFFFF;
@@ -164,6 +165,19 @@ public static class KangarooWindowsJob
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr GetStdHandle(int standardHandle);
 
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool DuplicateHandle(
+        IntPtr sourceProcess,
+        IntPtr sourceHandle,
+        IntPtr targetProcess,
+        out IntPtr targetHandle,
+        uint desiredAccess,
+        bool inheritHandle,
+        uint options);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint SearchPath(
         string path,
@@ -180,6 +194,9 @@ public static class KangarooWindowsJob
         string[] arguments)
     {
         IntPtr job = IntPtr.Zero;
+        IntPtr standardInput = IntPtr.Zero;
+        IntPtr standardOutput = IntPtr.Zero;
+        IntPtr standardError = IntPtr.Zero;
         PROCESS_INFORMATION process = new PROCESS_INFORMATION();
         bool created = false;
         try
@@ -202,9 +219,12 @@ public static class KangarooWindowsJob
             STARTUPINFO startup = new STARTUPINFO();
             startup.cb = Marshal.SizeOf(typeof(STARTUPINFO));
             startup.dwFlags = STARTF_USESTDHANDLES;
-            startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-            startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-            startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+            standardInput = DuplicateStandardHandle(STD_INPUT_HANDLE);
+            standardOutput = DuplicateStandardHandle(STD_OUTPUT_HANDLE);
+            standardError = DuplicateStandardHandle(STD_ERROR_HANDLE);
+            startup.hStdInput = standardInput;
+            startup.hStdOutput = standardOutput;
+            startup.hStdError = standardError;
 
             string resolvedExecutable = ResolveExecutable(executable);
             StringBuilder commandLine = BuildCommandLine(argv0, arguments);
@@ -222,6 +242,13 @@ public static class KangarooWindowsJob
                     out process),
                 "CreateProcess");
             created = true;
+
+            CloseHandle(standardInput);
+            standardInput = IntPtr.Zero;
+            CloseHandle(standardOutput);
+            standardOutput = IntPtr.Zero;
+            CloseHandle(standardError);
+            standardError = IntPtr.Zero;
 
             Check(AssignProcessToJobObject(job, process.hProcess),
                 "AssignProcessToJobObject");
@@ -250,10 +277,32 @@ public static class KangarooWindowsJob
         }
         finally
         {
+            if (standardInput != IntPtr.Zero) CloseHandle(standardInput);
+            if (standardOutput != IntPtr.Zero) CloseHandle(standardOutput);
+            if (standardError != IntPtr.Zero) CloseHandle(standardError);
             if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread);
             if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess);
             if (job != IntPtr.Zero) CloseHandle(job);
         }
+    }
+
+    private static IntPtr DuplicateStandardHandle(int standardHandle)
+    {
+        IntPtr source = GetStdHandle(standardHandle);
+        CheckHandle(source, "GetStdHandle");
+        IntPtr duplicate;
+        IntPtr currentProcess = GetCurrentProcess();
+        Check(
+            DuplicateHandle(
+                currentProcess,
+                source,
+                currentProcess,
+                out duplicate,
+                0,
+                true,
+                DUPLICATE_SAME_ACCESS),
+            "DuplicateHandle");
+        return duplicate;
     }
 
     private static void DrainRemainingProcesses(IntPtr job)
@@ -388,7 +437,7 @@ public static class KangarooWindowsJob
 '@
 
 $prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_"
-$assemblyName = "windows-job-v1-20260830.dll"
+$assemblyName = "windows-job-v1-20260831.dll"
 
 function Ensure-Job-Type {
     $cacheDirectory = [IO.Path]::Combine(

@@ -30,9 +30,9 @@ minimum.
 
 JavaScript tests may start asynchronous Node, Bun, or Deno child processes;
 Kangaroo tracks and terminates their complete trees at completion, failure, or
-timeout. Node/Bun synchronous subprocess calls are bounded and placed in an
-isolated process group on Unix. Deno synchronous subprocess APIs, and
-synchronous subprocess APIs on Windows, fail before launch because those
+timeout. Node synchronous subprocess calls are bounded and placed in an
+isolated process group on Unix. Bun and Deno synchronous subprocess APIs, and
+all synchronous subprocess APIs on Windows, fail before launch because those
 runtimes cannot expose a live process tree to the test-timeout boundary. Use
 the corresponding asynchronous API in portable test FFI.
 

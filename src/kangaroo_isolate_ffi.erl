@@ -83,7 +83,10 @@ isolate_captured_with_limit(Body, Timeout, OutputLimit) ->
               Collector, Pid, OwnerMonitor,
               owner_terminated_result(Reason), OutputLimit)
     after TimeoutMs ->
-        exit(Pid, kill),
+        %% Keep the owner alive until cleanup has established its
+        %% trace-delivery barrier. Killing it here can let the monitor DOWN
+        %% overtake a preceding spawn trace, causing cleanup to return before
+        %% it learns about a test-owned descendant.
         Result =
           {crashed, {caught_error, <<"timeout">>,
                      <<"Test case timed out after ",

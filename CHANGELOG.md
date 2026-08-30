@@ -51,8 +51,9 @@ versioning.
 - Made cancellation fail closed, terminate Unix process groups, and retain
   daemon operation ownership until cancellation reaches a terminal state.
 - Tracked test-owned Node, Bun, and Deno subprocesses across completion and
-  timeout, bounded safe synchronous calls, and rejected sync boundaries that
-  cannot expose a live tree before launching them.
+  timeout, bounded safe Node.js synchronous calls on Unix, and rejected Bun,
+  Deno, and Windows sync boundaries that cannot expose a live tree before
+  launching them.
 - Bound per-test captured output and external command output to 16 MiB, and
   daemon request lines to 1 MiB, and concurrent daemon operations to 32,
   returning explicit infrastructure errors so malformed clients and noisy

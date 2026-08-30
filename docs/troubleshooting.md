@@ -55,9 +55,9 @@ Use the `[javascript.deno]` capability table in
 [runtimes.md](runtimes.md). Kangaroo does not silently broaden Deno authority.
 
 If a JavaScript FFI test reports that a synchronous subprocess cannot be
-safely isolated, replace `Deno.Command.outputSync` or a Windows sync child call
-with its asynchronous form. Kangaroo rejects the call before launch rather
-than letting a timed-out test leave a process behind.
+safely isolated, replace a Bun/Deno synchronous subprocess or a Windows sync
+child call with its asynchronous form. Kangaroo rejects the call before launch
+rather than letting a timed-out test leave a process behind.
 
 ## Coverage failed before reporting
 

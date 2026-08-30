@@ -257,7 +257,10 @@ pub fn synchronous_process_descendants_are_cleaned_after_a_test_test() {
     runtime.resolve(fixture("synchronous_descendant_fixture"))
   let outcome = runtime.run(loaded, Some(functional_isolation_timeout_ms()))
   case vm.target(), vm.runtime_name(), vm.operating_system() {
-    "javascript", "deno", _ | "javascript", _, "windows" -> {
+    "javascript", "bun", _
+    | "javascript", "deno", _
+    | "javascript", _, "windows"
+    -> {
       let assert Crashed(error) = outcome
       assert string.contains(
         error.message,
@@ -301,7 +304,10 @@ pub fn synchronous_process_is_bounded_or_rejected_before_it_can_leak_test() {
     runtime.resolve(fixture("synchronous_timeout_fixture"))
   let assert Crashed(error) = runtime.run(loaded, Some(40))
   case vm.target(), vm.runtime_name(), vm.operating_system() {
-    "javascript", "deno", _ | "javascript", _, "windows" -> {
+    "javascript", "bun", _
+    | "javascript", "deno", _
+    | "javascript", _, "windows"
+    -> {
       assert string.contains(
         error.message,
         "use an asynchronous subprocess API",

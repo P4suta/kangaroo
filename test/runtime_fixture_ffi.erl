@@ -130,5 +130,19 @@ run_all_crash_cancels_sibling() ->
     end.
 
 descendant_marker() ->
-    Temp = case os:getenv("TMPDIR") of false -> "/tmp"; Value -> Value end,
+    Temp = temporary_directory(),
     filename:join(Temp, "kangaroo-isolate-descendant-" ++ os:getpid() ++ ".marker").
+
+temporary_directory() ->
+    case os:getenv("TMPDIR") of
+        false ->
+            case os:getenv("TEMP") of
+                false ->
+                    case os:getenv("TMP") of
+                        false -> "/tmp";
+                        Value -> Value
+                    end;
+                Value -> Value
+            end;
+        Value -> Value
+    end.

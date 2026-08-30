@@ -20,7 +20,7 @@ begin_probe_capture() ->
     stop_writer(),
     Original = os:getenv("KANGAROO_COVERAGE_FILE"),
     put(kangaroo_probe_original_environment, Original),
-    Temp = case os:getenv("TMPDIR") of false -> "/tmp"; Value -> Value end,
+    Temp = temporary_directory(),
     Path = filename:join(
              Temp,
              "kangaroo-probe-causal-" ++
@@ -28,6 +28,20 @@ begin_probe_capture() ->
     ok = file:write_file(Path, <<>>),
     true = os:putenv("KANGAROO_COVERAGE_FILE", Path),
     unicode:characters_to_binary(Path).
+
+temporary_directory() ->
+    case os:getenv("TMPDIR") of
+        false ->
+            case os:getenv("TEMP") of
+                false ->
+                    case os:getenv("TMP") of
+                        false -> "/tmp";
+                        Value -> Value
+                    end;
+                Value -> Value
+            end;
+        Value -> Value
+    end.
 
 complete_probe_capture(Path) ->
     stop_writer(),

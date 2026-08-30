@@ -58,10 +58,10 @@ outcome; double failures retain both causes.
 
 Test-owned asynchronous subprocesses are registered in shared memory before
 control returns to the test. Timeout cleanup can therefore freeze and kill the
-tree even while the runtime Worker is unresponsive. Safe Unix synchronous
-calls receive an earlier bounded deadline and their process group remains
-registered through test completion; unsupported synchronous boundaries are
-rejected before launch.
+tree even while the runtime Worker is unresponsive. Safe Node.js synchronous
+calls on Unix receive an earlier bounded deadline and their process group
+remains registered through test completion; Bun, Deno, and Windows synchronous
+boundaries are rejected before launch.
 
 ## Failures and events
 

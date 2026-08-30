@@ -177,6 +177,7 @@ const originalNodeSpawnSync = childProcess.spawnSync;
 function trackedNodeSpawnSync(command, arguments_ = [], options = {}) {
   if (
     globalThis.process.platform === "win32" ||
+    typeof globalThis.Bun !== "undefined" ||
     typeof globalThis.Deno !== "undefined"
   ) {
     throw synchronousIsolationError("node:child_process synchronous APIs");
