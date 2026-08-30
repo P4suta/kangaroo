@@ -95,6 +95,9 @@ versioning.
 - Kept editor coverage package-serial until the prior process reaches a
   terminal state, ignored all late cancelled output, and stopped Neovim from
   retaining an entire coverage command's stdout and stderr in memory.
+- Waited for VS Code coverage stdout and stderr to close before decoding the
+  final event fragment or publishing LCOV, preventing process exit from
+  dropping late test results.
 - Suppressed completed editor coverage when a newer test generation has taken
   ownership, preventing an older LCOV snapshot from restoring stale line data.
 - Serialized editor manifest and configuration restarts behind the old

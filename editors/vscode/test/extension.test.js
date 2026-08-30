@@ -1085,7 +1085,7 @@ test("coverage profile publishes summaries and one-based LCOV details", async ()
     "--reporter", "ndjson",
     "--coverage-reporter", "lcov",
   ]);
-  child.emit("exit", 0, null);
+  child.emit("close", 0, null);
   await completed;
 
   assert.equal(run.ended, true);
@@ -1096,6 +1096,61 @@ test("coverage profile publishes summaries and one-based LCOV details", async ()
   assert.equal(details[0].executed, 3);
   assert.equal(details[0].location.line, 1);
   assert.equal(details[1].executed, 0);
+  session.dispose();
+});
+
+test("coverage waits for stdout to close before publishing its final result", async () => {
+  const vscode = fakeVscode();
+  const child = fakeChild();
+  const run = {
+    ended: false,
+    passedCount: 0,
+    enqueued() {}, started() {}, skipped() {}, failed() {}, appendOutput() {},
+    passed() { this.passedCount += 1; },
+    addCoverage() {},
+    end() { this.ended = true; },
+  };
+  vscode.controller.createTestRun = () => run;
+  const session = new WorkspaceSession(
+    vscode,
+    { name: "project", uri: new vscode.Uri("/project") },
+    {
+      diagnostics: { set() {}, delete() {} },
+      output: { append() {}, appendLine() {} },
+      status: { text: "", show() {} },
+    },
+    () => child,
+    async () => "",
+  );
+  session.replaceTests([{
+    id: "test/math.gleam::addition_test",
+    name: "addition_test",
+    path: "test/math.gleam",
+    line: 1,
+    column: 1,
+    end_line: 1,
+    end_column: 2,
+    tags: [],
+  }]);
+
+  const completed = session.runCoverage({ include: [] }, {
+    onCancellationRequested() {},
+  });
+  child.emit("exit", 0, null);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(run.ended, false);
+  child.stdout.emit("data", `${JSON.stringify({
+    type: "case_finished",
+    suite: "math",
+    case: "test/math.gleam::addition_test",
+    outcome: { kind: "passed" },
+    duration_ms: 1,
+  })}\n`);
+  child.emit("close", 0, null);
+  await completed;
+
+  assert.equal(run.passedCount, 1);
+  assert.equal(run.ended, true);
   session.dispose();
 });
 
@@ -1136,7 +1191,7 @@ test("cancelled coverage never republishes an older LCOV file", async () => {
   // Windows taskkill reports a normal non-zero exit without a signal. The
   // cancellation flag, not the platform-specific exit shape, must suppress
   // the previous LCOV file.
-  child.emit("exit", 1, null);
+  child.emit("close", 1, null);
   await completed;
   assert.equal(run.coverage.length, 0);
   assert.equal(session.coverageProcesses.size, 0);
@@ -1175,7 +1230,7 @@ test("a newer test generation suppresses completed stale coverage", async () => 
     state: { beginRun() {} },
     generation: 0,
   });
-  child.emit("exit", 0, null);
+  child.emit("close", 0, null);
   await completed;
 
   assert.equal(run.coverage.length, 0);
@@ -1226,7 +1281,7 @@ test("coverage runs are package-serial until prior process ownership ends", asyn
   assert.match(runs[1].output[0], /already running or stopping/);
   cancel();
   assert.equal(session.coverageProcesses.size, 1);
-  child.emit("exit", 1, null);
+  child.emit("close", 1, null);
   await first;
   assert.equal(session.coverageProcesses.size, 0);
   session.dispose();
@@ -1262,7 +1317,7 @@ test("coverage remains cancellable while the LCOV file is being read", async () 
     onCancellationRequested(callback) { cancel = callback; },
   });
 
-  child.emit("exit", 0, null);
+  child.emit("close", 0, null);
   assert.equal(typeof finishRead, "function");
   cancel();
   finishRead("SF:src/stale.gleam\nDA:1,1\nend_of_record\n");
@@ -1545,7 +1600,7 @@ test("disposing waits for both daemon and coverage process exits", async () => {
     daemon.emit("exit", 0, null);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(disposed, false);
-    coverage.emit("exit", 1, null);
+    coverage.emit("close", 1, null);
     await disposal;
     assert.equal(disposed, true);
   } finally {

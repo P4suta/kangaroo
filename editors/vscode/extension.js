@@ -563,7 +563,10 @@ class WorkspaceSession {
         }
         finishOperation();
       });
-      child.on("exit", async (code, signal) => {
+      // Node may emit `exit` while stdout and stderr are still draining. Use
+      // `close` so the final NDJSON fragment is complete before the run and
+      // LCOV snapshot are published.
+      child.on("close", async (code, signal) => {
         if (!claimTerminal()) return;
         const process = this.coverageProcesses.get(child);
         process?.resolveExit();
