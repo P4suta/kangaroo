@@ -2,7 +2,8 @@ param(
     [switch] $Prepare,
     [switch] $SmokeTest,
     [switch] $CheckSource,
-    [string] $HelperPath
+    [string] $HelperPath,
+    [string] $EncodedHelperPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -566,10 +567,14 @@ function Get-Helper-Path {
     if (-not [string]::IsNullOrWhiteSpace($HelperPath)) {
         return $HelperPath
     }
+    if (-not [string]::IsNullOrWhiteSpace($EncodedHelperPath)) {
+        return [Text.Encoding]::UTF8.GetString(
+            [Convert]::FromBase64String($EncodedHelperPath))
+    }
     $encoded = [Environment]::GetEnvironmentVariable(
         $prefix + "HELPER_PATH",
         [EnvironmentVariableTarget]::Process)
-    if ($null -ne $encoded) {
+    if (-not [string]::IsNullOrWhiteSpace($encoded)) {
         return [Text.Encoding]::UTF8.GetString(
             [Convert]::FromBase64String($encoded))
     }

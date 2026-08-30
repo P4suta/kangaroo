@@ -53,7 +53,8 @@
   "scripts": {
     "test": "npm run test:unit",
     "test:unit": "node --test test/*.test.js",
-    "test:integration": "vscode-test",
+    "download:test-host": "node download-test-host.js",
+    "test:integration": "vscode-test --code-version 1.95.3",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {

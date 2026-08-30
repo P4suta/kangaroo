@@ -304,6 +304,14 @@ jobs:
       - name: Install VS Code test and packaging tools
         working-directory: editors/vscode
         run: npm ci
+      - name: Cache pinned VS Code test host
+        uses: actions/cache@v4
+        with:
+          path: editors/vscode/.vscode-test
+          key: vscode-test-${{ runner.os }}-${{ runner.arch }}-1.95.3
+      - name: Download pinned VS Code test host
+        working-directory: editors/vscode
+        run: npm run download:test-host
       - name: Download VS Code fixture dependencies
         working-directory: editors/vscode/test/workspace
         run: gleam deps download

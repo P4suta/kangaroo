@@ -303,15 +303,13 @@ prepare_windows_job_helper_worker() ->
                 "-ExecutionPolicy", "Bypass", "-File",
                 filename:join(windows_priv_directory(),
                               "kangaroo_windows_job.ps1"),
-                "-Prepare"
+                "-Prepare", "-EncodedHelperPath",
+                binary_to_list(encode_windows_job_value(Helper))
             ],
             try open_port(
                   {spawn_executable, PowerShell},
                   [binary, use_stdio, stderr_to_stdout, exit_status,
-                   {args, Arguments},
-                   {env, [port_environment_pair(
-                            {?WINDOWS_JOB_PREFIX ++ "HELPER_PATH",
-                             encode_windows_job_value(Helper)})]}]) of
+                   {args, Arguments}]) of
                 Port -> collect_windows_job_preparation(
                           Port, [], erlang:monotonic_time(millisecond) + 15000,
                           Helper)
@@ -337,10 +335,16 @@ collect_windows_job_preparation(Port, Output, Deadline, Helper) ->
                       Port, Next, Deadline, Helper)
             end;
         {Port, {exit_status, 0}} ->
-            case filelib:is_regular(Helper) andalso
-                 filelib:is_regular(windows_job_launcher()) of
-                true -> ok;
-                false ->
+            Launcher = filename:rootname(Helper) ++ ".cmd",
+            case {filelib:is_regular(Helper),
+                  filelib:is_regular(Launcher)} of
+                {true, true} -> ok;
+                {false, false} ->
+                    {error, <<"Windows process helper and launcher were not "
+                              "created">>};
+                {false, true} ->
+                    {error, <<"Windows process helper was not created">>};
+                {true, false} ->
                     {error, <<"Windows process launcher was not created">>}
             end;
         {Port, {exit_status, Code}} ->

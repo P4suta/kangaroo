@@ -128,8 +128,12 @@ versioning.
   immutable trampoline basename. Unicode environment overrides travel as
   private base64 metadata for the helper to restore without exposing them to
   OTP's port options or the command interpreter.
-- Normalised the helper-preparation environment to OTP's Windows string
-  contract, avoiding a first-launch `open_port badopt` on OTP 27 through 29.
+- Passed the helper preparation path as an explicit base64 argument instead of
+  relying on OTP's replacement-environment semantics, and smoke-tested the
+  exact first-launch artifacts on Windows OTP 27 through 29.
+- Pinned, cached, and retried the minimum supported VS Code Extension
+  Development Host so editor integration gates are reproducible and tolerate
+  transient download failures.
 - Made daemon output draining fair to stdin across both large chunks and line
   bursts, retained unterminated output as linear-time fragments, and bounded
   Erlang request allocation while discarding an overlong line; both stdin
