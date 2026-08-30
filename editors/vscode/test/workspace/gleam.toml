@@ -1,0 +1,7 @@
+name = "kangaroo_vscode_fixture"
+version = "1.0.0"
+target = "javascript"
+gleam = ">= 1.18.0"
+
+[dependencies]
+kangaroo = { path = "../../../.." }

@@ -10,9 +10,23 @@
           "jsonpath": "$.version"
         },
         {
-          "type": "toml",
-          "path": "cli/gleam.toml",
+          "type": "json",
+          "path": "editors/vscode/package.json",
           "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "editors/vscode/package-lock.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "editors/vscode/package-lock.json",
+          "jsonpath": "$.packages[''].version"
+        },
+        {
+          "type": "generic",
+          "path": "src/kangaroo/internal/command.gleam"
         }
       ]
     }

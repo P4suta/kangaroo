@@ -1,53 +1,95 @@
-import gleam/option.{None, Some}
-import kangaroo/encode
-import kangaroo/format
-import kangaroo/report
-import kangaroo/runner
-import kangaroo/suite.{type Suite}
+import kangaroo/internal/cli
+import kangaroo/internal/command
+import kangaroo/internal/fs
+import kangaroo/internal/watcher
 import kangaroo/sys
 
-/// The entry point used by `gleam test`.
+/// Discovers and runs every public, zero-argument function ending in `_test`
+/// below the configured test roots.
 ///
-/// Test modules expose their suites through a `suites` function and delegate
-/// to this in `main`:
+/// A project's complete test entry point is:
 ///
 /// ```gleam
+/// import kangaroo
+///
 /// pub fn main() {
-///   kangaroo.main(suites())
+///   kangaroo.main()
 /// }
 ///
-/// pub fn suites() {
-///   [
-///     suite("math", [
-///       it("adds numbers", fn() {
-///         expect(1 + 1) |> to_equal(2)
-///       }),
-///     ]),
-///   ]
+/// pub fn addition_test() {
+///   assert 1 + 1 == 2
 /// }
 /// ```
 ///
-/// When the `KANGAROO_JSON` environment variable is set, results are emitted
-/// as newline-delimited JSON events instead of plain text.
-///
-/// When `KANGAROO_COMPILE_ONLY` is set the runner does not execute any tests
-/// and exits immediately; the continuous runner uses this to compile the
-/// project without running it.
-pub fn main(suites: List(Suite)) -> Nil {
-  case sys.env("KANGAROO_COMPILE_ONLY") {
-    Some(_) -> sys.halt(0)
-    None -> {
-      let sink = case sys.env("KANGAROO_JSON") {
-        None -> format.print_sink
-        Some(_) -> encode.json_sink
-      }
-
-      let report = runner.run(suites, sink)
-
-      case report.has_failures(report) {
-        True -> sys.halt(1)
-        False -> sys.halt(0)
-      }
-    }
+/// `gleam test` remains the one-shot command. Continuous and integration
+/// commands are selected from this same module with
+/// `gleam run -m kangaroo -- <command>`.
+pub fn main() -> Nil {
+  case watcher.compile_only_requested(sys.env("KANGAROO_COMPILE_ONLY")) {
+    True -> fs.halt(0)
+    False -> dispatch(fs.args())
   }
 }
+
+fn dispatch(args: List(String)) -> Nil {
+  case command.parse(args), fs.current_dir() {
+    Error(message), _ | _, Error(message) -> {
+      fs.write_stderr_line(message)
+      fs.halt(2)
+    }
+    Ok(command), Ok(project_dir) ->
+      case cli.execute(project_dir, command) {
+        Ok(code) -> fs.halt(code)
+        Error(message) -> {
+          fs.write_stderr_line("kangaroo: " <> message)
+          fs.halt(2)
+        }
+      }
+  }
+}
+
+/// Associates a literal tag with the containing test during source indexing.
+/// At runtime it is intentionally a no-op.
+@external(erlang, "kangaroo_helper_ffi", "metadata")
+@external(javascript, "./kangaroo_helper_ffi.mjs", "metadata")
+pub fn tag(name: String) -> Nil
+
+/// Associates literal tags with the containing test during source indexing.
+@external(erlang, "kangaroo_helper_ffi", "metadata")
+@external(javascript, "./kangaroo_helper_ffi.mjs", "metadata")
+pub fn tags(names: List(String)) -> Nil
+
+/// Overrides the containing test's timeout during source indexing.
+@external(erlang, "kangaroo_helper_ffi", "metadata")
+@external(javascript, "./kangaroo_helper_ffi.mjs", "metadata")
+pub fn timeout(milliseconds: Int) -> Nil
+
+/// Marks the containing test as requiring serial scheduling.
+@external(erlang, "kangaroo_helper_ffi", "serial")
+@external(javascript, "./kangaroo_helper_ffi.mjs", "serial")
+pub fn serial() -> Nil
+
+/// Skips the containing test. Literal calls are handled without invocation by
+/// source discovery; dynamic calls use a platform marker caught by isolation.
+@external(erlang, "kangaroo_helper_ffi", "skip")
+@external(javascript, "./kangaroo_helper_ffi.mjs", "skip")
+pub fn skip(reason: String) -> a
+
+/// Conditionally skips a test at runtime.
+pub fn skip_if(condition: Bool, reason: String) -> Nil {
+  case condition {
+    True -> skip(reason)
+    False -> Nil
+  }
+}
+
+/// Acquires a resource, runs a body, and guarantees teardown after every body
+/// outcome. If both body and teardown fail, the resulting failure retains both
+/// causes.
+@external(erlang, "kangaroo_helper_ffi", "fixture")
+@external(javascript, "./kangaroo_helper_ffi.mjs", "fixture")
+pub fn fixture(
+  setup setup: fn() -> resource,
+  teardown teardown: fn(resource) -> Nil,
+  body body: fn(resource) -> result,
+) -> result

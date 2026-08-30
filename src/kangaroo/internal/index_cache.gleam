@@ -1,0 +1,98 @@
+import gleam/dict.{type Dict}
+import gleam/list
+import gleam/set
+import gleam/string
+import kangaroo/internal/index.{type IndexError, type IndexedModule}
+
+pub type IndexCache {
+  IndexCache(
+    modules: Dict(String, IndexedModule),
+    sources: Dict(String, String),
+    test_paths: List(String),
+  )
+}
+
+pub type Update {
+  Updated(
+    cache: IndexCache,
+    modules: List(IndexedModule),
+    changed_paths: List(String),
+    reused: Int,
+  )
+}
+
+pub fn empty() -> IndexCache {
+  IndexCache(dict.new(), dict.new(), [])
+}
+
+/// Atomically refreshes an index. Unchanged content reuses its parsed AST
+/// result; a single parse error rejects the entire candidate generation.
+pub fn update(
+  cache: IndexCache,
+  sources: List(#(String, String)),
+  test_paths: List(String),
+) -> Result(Update, List(IndexError)) {
+  let sources =
+    sources
+    |> list.map(fn(source) { #(normalise(source.0), source.1) })
+    |> list.sort(fn(left, right) { string.compare(left.0, right.0) })
+  let current_paths = list.map(sources, fn(source) { source.0 })
+  let current_path_set = set.from_list(current_paths)
+  let roots_unchanged = cache.test_paths == test_paths
+  let removed =
+    dict.keys(cache.modules)
+    |> list.filter(fn(path) { !set.contains(current_path_set, path) })
+    |> list.sort(string.compare)
+  let initial = #(dict.new(), dict.new(), [], [], 0, [])
+  let #(modules_by_path, sources_by_path, modules, changed, reused, errors) =
+    list.fold(sources, initial, fn(state, source) {
+      let #(by_path, by_source, modules, changed, reused, errors) = state
+      let #(path, contents) = source
+      case dict.get(cache.modules, path), dict.get(cache.sources, path) {
+        Ok(module), Ok(previous) if roots_unchanged && previous == contents -> #(
+          dict.insert(by_path, path, module),
+          dict.insert(by_source, path, contents),
+          [module, ..modules],
+          changed,
+          reused + 1,
+          errors,
+        )
+        _, _ ->
+          case index.index(path, contents, test_paths) {
+            Ok(module) -> #(
+              dict.insert(by_path, path, module),
+              dict.insert(by_source, path, contents),
+              [module, ..modules],
+              [path, ..changed],
+              reused,
+              errors,
+            )
+            Error(error) -> #(
+              by_path,
+              by_source,
+              modules,
+              [path, ..changed],
+              reused,
+              [error, ..errors],
+            )
+          }
+      }
+    })
+  case errors {
+    [] ->
+      Ok(Updated(
+        cache: IndexCache(modules_by_path, sources_by_path, test_paths),
+        modules: list.reverse(modules),
+        changed_paths: list.append(list.reverse(changed), removed)
+          |> list.sort(string.compare),
+        reused:,
+      ))
+    _ -> Error(list.reverse(errors))
+  }
+}
+
+fn normalise(path: String) -> String {
+  path
+  |> string.replace(each: "\\", with: "/")
+  |> string.remove_prefix("./")
+}

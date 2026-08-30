@@ -1,4 +1,14 @@
 *.beam
 *.ez
-/build
+*.vsix
+**/build/
+**/coverage/
+**/.kangaroo-coverage-*/
+**/.kangaroo-benchmark-*/
 erl_crash.dump
+nvim.log
+benchmark-result.json
+package-interface.json
+**/__pycache__/
+**/node_modules/
+**/.vscode-test/

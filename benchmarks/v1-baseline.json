@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "allowed_regression_percent": 15,
+  "description": "Kangaroo v1 performance reference ceilings on Ubuntu",
+  "metrics": {
+    "save_detection_p95_ms": {
+      "baseline": 130,
+      "limit": 150,
+      "unit": "ms",
+      "statistic": "p95"
+    },
+    "cancellation_p95_ms": {
+      "baseline": 50,
+      "limit": 250,
+      "unit": "ms",
+      "statistic": "p95"
+    },
+    "idle_cpu_percent": {
+      "baseline": 0.8,
+      "limit": 1.0,
+      "unit": "percent_of_one_core",
+      "statistic": "ten_second_window"
+    },
+    "warm_discovery_10000_p95_ms": {
+      "baseline": 500,
+      "limit": 1000,
+      "unit": "ms",
+      "statistic": "p95"
+    }
+  }
+}

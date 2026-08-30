@@ -1,135 +1,148 @@
-# The kangaroo editor protocol
+# Kangaroo daemon protocol v1
 
-`kangaroo_cli watch --json` and the `KANGAROO_JSON` environment variable
-make the test runner emit a newline-delimited JSON stream. Each line is one
-event object. Consumers (editors, CI tooling, agents) parse the stream and
-receive every run of the test suite in real time.
+Start the daemon in a Gleam package root:
 
-The test runner itself uses the same protocol: setting `KANGAROO_JSON=1`
-when running `gleam test` produces the identical event stream.
-
-`kangaroo_cli run --json` runs once and emits the same stream, which makes
-it suitable for CI.
-
-## Events
-
-### Changed (watch mode only)
-
-Emitted by `kangaroo_cli watch --json` before a run that was triggered by
-file changes.
-
-```json
-{"type": "changed", "files": ["src/myapp.gleam"], "affected": 2}
+```sh
+gleam run -m kangaroo -- daemon
 ```
 
-- `files` lists the files that changed since the last poll.
-- `affected` is the number of test modules affected by the changes. It is
-  `null` when the affected computation failed.
+The protocol is bidirectional newline-delimited JSON (NDJSON). A client writes
+one request per stdin line and reads one response/event per stdout line.
+Stdout is protocol-only; compiler output and logs are written to stderr.
+Each request line is limited to 1 MiB of UTF-8. An overlong line produces one
+`error` record with an empty request ID, is discarded through its newline, and
+does not poison later requests on the same daemon.
 
-### CompileStarted / CompileFinished
+Every record has `"protocol_version": 1`. Unknown versions and commands return
+an `error` response. Request IDs are client-selected non-blank strings and
+correlate all operation records. Selector and tag array entries must also be
+non-blank. Paths are `/`-normalised and project-relative. Lines and columns are
+one-based; discovered end positions are exclusive.
 
-Emitted around the compile-only step that precedes every run, so editors
-can show progress while the project compiles. They appear on the same
-stream as the runner events, before `RunStarted`.
+The machine-readable schema is
+[`protocol-v1.schema.json`](protocol-v1.schema.json).
 
-```json
-{"type": "compile_started"}
-{"type": "compile_finished"}
-```
+## Requests
 
-A failed compile emits `compile_started` but no `compile_finished` and no
-run events.
-
-### RunStarted
-
-Emitted once per run.
+Discover the current index:
 
 ```json
-{"type": "run_started", "run_id": 1733279400000, "case_count": 2}
+{"protocol_version":1,"id":"discover-1","command":"discover"}
 ```
 
-- `run_id` correlates the events of one run (a monotonic millisecond clock
-  value).
-- `case_count` is the total number of selected cases, skipped cases
-  included.
-
-### SuiteStarted
-
-Emitted when a suite begins running, before its first `CaseStarted`.
-Suites without any runnable cases (e.g. all cases skipped or filtered out)
-never emit this. Suite-level hooks (`before_all` / `after_all`) run inside
-this window.
+Run once or start a continuous operation. Omitted selector/tag arrays default
+to empty arrays:
 
 ```json
-{"type": "suite_started", "suite": "math"}
+{"protocol_version":1,"id":"run-1","command":"run","selectors":["test/math_test.gleam::addition_test"],"include_tags":["unit"],"exclude_tags":["slow"]}
+{"protocol_version":1,"id":"watch-1","command":"watch","selectors":[]}
 ```
 
-### CaseStarted
+Multiple selectors form a union; include tags are ORed and excludes win. The
+request `id` is also the operation ID in v1 and must be unique while active.
+The daemon accepts at most 32 concurrent run/watch operations; an excess
+request receives an `error` response without starting a child process.
 
-Emitted when a case begins executing. Skipped cases never emit this.
+Cancel an active operation:
 
 ```json
-{"type": "case_started", "suite": "math", "case": "adds numbers"}
+{"protocol_version":1,"id":"cancel-1","command":"cancel","operation_id":"watch-1"}
 ```
 
-### CaseFinished
-
-Emitted when a case finishes.
+Shut down after terminating every active child process tree:
 
 ```json
-{"type": "case_finished", "suite": "math", "case": "adds numbers", "outcome": {"kind": "passed"}, "duration_ms": 1}
+{"protocol_version":1,"id":"shutdown-1","command":"shutdown"}
 ```
 
-`outcome` has one of three shapes:
+## Discovery response
 
 ```json
-{"kind": "passed"}
-{"kind": "skipped"}
-{"kind": "failed", "failures": [ ... ]}
+{"protocol_version":1,"type":"discovered","request_id":"discover-1","tests":[{"id":"test/math_test.gleam::addition_test","name":"addition_test","path":"test/math_test.gleam","module":"math_test","line":4,"column":1,"end_line":6,"end_column":2,"tags":["unit"],"timeout_ms":null,"serial":false}]}
 ```
 
-Failure kinds:
+Tests are in file-path and source-definition order. The stable `id`, not the
+display name, is the identity editors should persist.
 
-| kind | fields | meaning |
-| --- | --- | --- |
-| `equality_mismatch` | `expected`, `actual`, `diff`, `location` | values did not match; `diff` is a line diff when useful |
-| `assertion_failed` | `message`, `location` | a boolean condition was false |
-| `unexpected_error` | `name`, `message`, `location` | the case panicked or timed out |
+## Operation lifecycle
 
-`location` is either `null` or an object of the form
-`{"file": "test/foo_test.gleam", "line": 42, "column": null}`, pointing at
-the failure site in the source. `column` is a number when the platform
-reports it (JavaScript stacks do; Erlang stack traces carry only the
-line). Editors can use it to jump to the failing assertion.
-
-### SuiteFinished
-
-Emitted when a suite finishes, after its last `CaseFinished`. The outcome
-reflects the suite's `before_all` / `after_all` hooks: when a hook fails,
-the suite's cases are reported as `skipped` (before-all failure) or run
-normally (after-all failure), and the hook failures appear here.
+An accepted run/watch request first emits:
 
 ```json
-{"type": "suite_finished", "suite": "math", "outcome": {"kind": "passed"}}
+{"protocol_version":1,"type":"started","request_id":"run-1","operation_id":"run-1","operation":"run"}
 ```
 
-### RunFinished
-
-Emitted once per run, after the last `SuiteFinished` / `CaseFinished`.
+Each runner event is wrapped without changing its payload:
 
 ```json
-{"type": "run_finished", "run_id": 1733279400000, "summary": {"passed": 1, "failed": 1, "skipped": 0, "duration_ms": 42}}
+{"protocol_version":1,"type":"event","request_id":"run-1","event":{"type":"run_started","run_id":42,"case_count":1}}
+{"protocol_version":1,"type":"event","request_id":"run-1","event":{"type":"case_started","suite":"math_test","case":"test/math_test.gleam::addition_test"}}
+{"protocol_version":1,"type":"event","request_id":"run-1","event":{"type":"case_finished","suite":"math_test","case":"test/math_test.gleam::addition_test","outcome":{"kind":"passed"},"duration_ms":1}}
+{"protocol_version":1,"type":"event","request_id":"run-1","event":{"type":"run_finished","run_id":42,"summary":{"passed":1,"failed":0,"skipped":0,"duration_ms":4}}}
 ```
 
-Suite-level hook failures count towards `summary.failed`.
+Other event payloads are `suite_started`, `suite_finished`, and `case_output`.
+The `suite_finished.outcome` aggregates that module's selected cases, so a
+failed or flaky case can never produce a passing suite record.
+`case_output` carries captured `stdout`, `stderr`, and the case outcome.
 
-## Invariants
+Outcomes are:
 
-- Events for one run share a single `run_id`.
-- `RunStarted` and `RunFinished` bracket every run.
-- `SuiteStarted(s)` precedes every `CaseStarted(s, ...)` of that suite and
-  `SuiteFinished(s)` follows them.
-- `CaseStarted(s, c)` always precedes `CaseFinished(s, c, ...)` with the
-  same suite and case names.
-- `summary.passed + summary.failed + summary.skipped == case_count` from
-  `RunStarted`.
+```json
+{"kind":"passed"}
+{"kind":"skipped","reason":"not supported on this platform"}
+{"kind":"flaky","attempts":2,"failures":[]}
+{"kind":"failed","failures":[]}
+```
+
+Failures have kind `equality_mismatch`, `assertion_failed`, or
+`unexpected_error`. Locations are nullable and otherwise use this shape:
+
+```json
+{"file":"test/math_test.gleam","line":5,"column":3}
+```
+
+A finite run ends with its process exit status:
+
+```json
+{"protocol_version":1,"type":"completed","request_id":"run-1","exit_code":0}
+```
+
+Watch operations remain active until cancellation, shutdown, daemon exit, or
+an infrastructure error. A run or watch may stream more than 16 MiB over its
+lifetime when the client keeps up. Output waiting at either the child bridge or
+the daemon delivery buffer is independently limited to 16 MiB; exceeding a
+live buffer is an infrastructure error. A successful cancellation responds to
+the cancel request:
+
+```json
+{"protocol_version":1,"type":"cancelled","request_id":"cancel-1","operation_id":"watch-1"}
+```
+
+Shutdown acknowledgement:
+
+```json
+{"protocol_version":1,"type":"shutdown","request_id":"shutdown-1"}
+```
+
+Errors are non-terminal unless they belong to an active operation:
+
+```json
+{"protocol_version":1,"type":"error","request_id":"run-1","message":"description"}
+```
+
+## Client invariants
+
+- Parse stdout by complete lines and retain an incomplete trailing chunk.
+- Bound retained protocol lines above the maximum valid escaped event size and
+  restart fail-closed after malformed or oversized daemon stdout.
+- Ignore records whose protocol version is unsupported.
+- Clear diagnostics at `run_started`, then rebuild them from the matching
+  generation only.
+- End the editor run immediately after requesting cancellation and ignore any
+  late child output for that operation; the daemon retains process ownership
+  until its child reaches a terminal state.
+- On daemon exit, end active editor runs, clear stale diagnostics, restart the
+  package daemon, and rediscover the test tree.
+- Rediscover after a completed watch generation so added and removed test IDs
+  converge in long-lived clients.

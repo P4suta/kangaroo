@@ -2,9 +2,9 @@ import gleam/list
 import gleam/option.{type Option, Some}
 import kangaroo/location.{type Location}
 
-/// A failure recorded by a matcher or caused by an unexpected error while a
-/// test case was running. `location` is the source position the failure
-/// originates from, when it can be determined.
+/// A failure recovered from a standard assertion or caused by an unexpected
+/// error while a test case was running. `location` is the source position the
+/// failure originates from, when it can be determined.
 pub type Failure {
   /// The actual value did not equal the expected one. `diff` is a
   /// line-oriented diff of their printed representations, when useful.
@@ -24,7 +24,11 @@ pub type Failure {
 pub type Outcome {
   Passed
   Failed(failures: List(Failure))
+  /// Failed at least once and then passed within the retry budget.
+  /// A flaky outcome is intentionally considered a run failure.
+  Flaky(failures: List(Failure), attempts: Int)
   Skipped
+  SkippedWithReason(reason: String)
 }
 
 /// Counts a list of outcomes.
@@ -33,7 +37,10 @@ pub fn count(outcomes: List(Outcome)) -> Counts {
     case outcome {
       Passed -> Counts(counts.passed + 1, counts.failed, counts.skipped)
       Failed(_) -> Counts(counts.passed, counts.failed + 1, counts.skipped)
+      Flaky(_, _) -> Counts(counts.passed, counts.failed + 1, counts.skipped)
       Skipped -> Counts(counts.passed, counts.failed, counts.skipped + 1)
+      SkippedWithReason(_) ->
+        Counts(counts.passed, counts.failed, counts.skipped + 1)
     }
   })
 }

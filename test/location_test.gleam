@@ -1,170 +1,158 @@
 import gleam/option.{None, Some}
-import kangaroo/expect.{expect, to_be_false, to_be_true, to_equal}
 import kangaroo/failure.{
   AssertionFailed, EqualityMismatch, UnexpectedError, attach,
 }
 import kangaroo/location.{
   Location, from_erlang_stack, from_js_stack, is_framework_file,
 }
-import kangaroo/suite.{it, suite}
 
-pub fn suites() {
-  [
-    suite("location", [
-      it("flags framework files", fn() {
-        expect(is_framework_file("src/kangaroo/expect.gleam")) |> to_be_true()
-        expect(is_framework_file("src/kangaroo_isolate_ffi.erl"))
-        |> to_be_true()
-        expect(is_framework_file("src/gleam/list.gleam")) |> to_be_true()
-        expect(is_framework_file("gleam/list.gleam")) |> to_be_true()
-        expect(is_framework_file("node:internal/process/task_queues:7"))
-        |> to_be_true()
-        expect(is_framework_file("src/kangaroo/kangaroo/expect.mjs"))
-        |> to_be_true()
-        expect(is_framework_file("build/dev/javascript/gleam_stdlib/gleam.mjs"))
-        |> to_be_true()
-        expect(is_framework_file("test/foo_test.gleam")) |> to_be_false()
-        expect(is_framework_file("src/myapp/calculator.gleam"))
-        |> to_be_false()
-        expect(is_framework_file("/home/u/proj/runner_test.mjs"))
-        |> to_be_false()
-      }),
-      it("flags compiled artefact paths of framework modules", fn() {
-        // The CLI executes the project's tests in its own VM, where the
-        // framework's own modules are loaded from the CLI's build. Gleam
-        // emits `-file` attributes (the `.gleam` paths) only for the main
-        // package, so those frames appear as compiled `.erl` artefact
-        // paths and must still count as framework.
-        expect(is_framework_file(
-          "/home/u/proj/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo@expect.erl",
-        ))
-        |> to_be_true()
-        expect(is_framework_file(
-          "/home/u/proj/cli/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo@runner.erl",
-        ))
-        |> to_be_true()
-        expect(is_framework_file(
-          "/home/u/proj/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo_location_ffi.erl",
-        ))
-        |> to_be_true()
-        expect(is_framework_file(
-          "/home/u/proj/cli/build/dev/erlang/kangaroo_cli/_gleam_artefacts/kangaroo_cli@app.erl",
-        ))
-        |> to_be_true()
-        // A user dependency compiled without `-file` attributes is still
-        // user code, not framework code.
-        expect(is_framework_file(
-          "/home/u/proj/build/dev/erlang/myapp/_gleam_artefacts/myapp@thing.erl",
-        ))
-        |> to_be_false()
-      }),
-      it("does not mistake a checkout directory for the framework", fn() {
-        // A checkout under a directory named like the package (e.g. CI
-        // checks out into .../work/kangaroo/kangaroo) must not make user
-        // code look like framework code.
-        expect(is_framework_file(
-          "/home/runner/work/kangaroo/kangaroo/build/dev/javascript/kangaroo/expect_test.mjs",
-        ))
-        |> to_be_false()
-        // The framework's own compiled javascript modules still are.
-        expect(is_framework_file(
-          "/home/runner/work/kangaroo/kangaroo/build/dev/javascript/kangaroo/kangaroo/expect.mjs",
-        ))
-        |> to_be_true()
-      }),
-      it(
-        "skips compiled artefact frames when picking the first user frame",
-        fn() {
-          let stack =
-            "/home/u/proj/cli/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo_location_ffi.erl:8\n"
-            <> "/home/u/proj/cli/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo@expect.erl:11\n"
-            <> "test/foo_test.gleam:42"
-          expect(from_erlang_stack(stack))
-          |> to_equal(Some(Location("test/foo_test.gleam", 42, None)))
-        },
-      ),
-      it("picks the first user frame from an erlang stack", fn() {
-        let stack =
-          "src/kangaroo/expect.gleam:32\n"
-          <> "src/kangaroo_isolate_ffi.erl:11\n"
-          <> "test/foo_test.gleam:42"
-        expect(from_erlang_stack(stack))
-        |> to_equal(Some(Location("test/foo_test.gleam", 42, None)))
-      }),
-      it("returns none for an empty erlang stack", fn() {
-        expect(from_erlang_stack("")) |> to_equal(None)
-      }),
-      it("returns none when every erlang frame is framework code", fn() {
-        expect(from_erlang_stack("src/kangaroo/expect.gleam:3"))
-        |> to_equal(None)
-      }),
-      it("ignores lines without a line number", fn() {
-        let stack = "not a location\n" <> "test/foo_test.gleam:7"
-        expect(from_erlang_stack(stack))
-        |> to_equal(Some(Location("test/foo_test.gleam", 7, None)))
-      }),
-      it("parses a v8 stack with file:// and columns", fn() {
-        let stack =
-          "Error: expected True\n"
-          <> "    at toBeTrue (file:///home/u/proj/build/dev/javascript/kangaroo/kangaroo/expect.mjs:18:5)\n"
-          <> "    at main (file:///home/u/proj/build/dev/javascript/kangaroo/runner_test.mjs:12:7)"
-        expect(from_js_stack(stack))
-        |> to_equal(
-          Some(Location(
-            "/home/u/proj/build/dev/javascript/kangaroo/runner_test.mjs",
-            12,
-            Some(7),
-          )),
-        )
-      }),
-      it("parses a v8 stack without parens", fn() {
-        let stack =
-          "Error: boom\n"
-          <> "    at file:///home/u/proj/build/dev/javascript/myapp/foo_test.mjs:3:1"
-        expect(from_js_stack(stack))
-        |> to_equal(
-          Some(Location(
-            "/home/u/proj/build/dev/javascript/myapp/foo_test.mjs",
-            3,
-            Some(1),
-          )),
-        )
-      }),
-      it("parses an erlang stack with a column", fn() {
-        let stack =
-          "src/kangaroo/expect.gleam:32:5\n" <> "test/foo_test.gleam:42:9"
-        expect(from_erlang_stack(stack))
-        |> to_equal(Some(Location("test/foo_test.gleam", 42, Some(9))))
-      }),
-      it("skips node internals in v8 stacks", fn() {
-        let stack =
-          "Error: boom\n" <> "    at node:internal/main/run_main_module:12:1"
-        expect(from_js_stack(stack)) |> to_equal(None)
-      }),
-      it("attaches a location to an equality mismatch", fn() {
-        let location = Location("test/foo_test.gleam", 5, None)
-        case attach(EqualityMismatch("a", "b", None, None), location) {
-          EqualityMismatch(_, _, _, Some(got)) -> {
-            expect(got.file) |> to_equal("test/foo_test.gleam")
-            expect(got.line) |> to_equal(5)
-          }
-          _ -> panic as "expected equality mismatch with location"
-        }
-      }),
-      it("attaches a location to an assertion failure", fn() {
-        let location = Location("test/foo_test.gleam", 5, None)
-        case attach(AssertionFailed("boom", None), location) {
-          AssertionFailed(_, Some(got)) -> expect(got) |> to_equal(location)
-          _ -> panic as "expected assertion failure with location"
-        }
-      }),
-      it("attaches a location to an unexpected error", fn() {
-        let location = Location("test/foo_test.gleam", 5, None)
-        case attach(UnexpectedError("panic", "boom", None), location) {
-          UnexpectedError(_, _, Some(got)) -> expect(got) |> to_equal(location)
-          _ -> panic as "expected unexpected error with location"
-        }
-      }),
-    ]),
-  ]
+pub fn framework_files_are_classified_test() {
+  assert is_framework_file("src/kangaroo/internal/executor.gleam")
+  assert is_framework_file("src/kangaroo_isolate_ffi.erl")
+  assert is_framework_file("src/gleam/list.gleam")
+  assert is_framework_file("gleam/list.gleam")
+  assert is_framework_file("node:internal/process/task_queues:7")
+  assert is_framework_file("src/kangaroo/kangaroo/internal/executor.mjs")
+  assert is_framework_file("build/dev/javascript/gleam_stdlib/gleam.mjs")
+  assert !is_framework_file("test/foo_test.gleam")
+  assert !is_framework_file("src/myapp/calculator.gleam")
+  assert !is_framework_file("/home/u/proj/runtime_test.mjs")
+}
+
+pub fn compiled_framework_artefacts_are_classified_test() {
+  // Framework modules can appear as generated artefact paths when the
+  // project's tests execute in the CLI VM.
+  assert is_framework_file(
+    "/home/u/proj/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo@internal@executor.erl",
+  )
+  assert is_framework_file(
+    "/home/u/proj/cli/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo@isolate.erl",
+  )
+  assert is_framework_file(
+    "/home/u/proj/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo_location_ffi.erl",
+  )
+  assert is_framework_file(
+    "/home/u/proj/cli/build/dev/erlang/kangaroo_cli/_gleam_artefacts/kangaroo_cli@app.erl",
+  )
+  assert !is_framework_file(
+    "/home/u/proj/build/dev/erlang/myapp/_gleam_artefacts/myapp@thing.erl",
+  )
+}
+
+pub fn checkout_directory_name_is_not_mistaken_for_framework_test() {
+  assert !is_framework_file(
+    "/home/runner/work/kangaroo/kangaroo/build/dev/javascript/kangaroo/internal/executor_test.mjs",
+  )
+  assert is_framework_file(
+    "/home/runner/work/kangaroo/kangaroo/build/dev/javascript/kangaroo/kangaroo/internal/executor.mjs",
+  )
+}
+
+pub fn windows_stack_paths_are_normalised_before_classification_test() {
+  assert !is_framework_file("test\\runtime_fixture.gleam")
+  assert is_framework_file("src\\kangaroo\\isolate.gleam")
+  assert from_erlang_stack("test\\runtime_fixture.gleam:33")
+    == Some(Location("test/runtime_fixture.gleam", 33, None))
+}
+
+pub fn absolute_framework_paths_are_filtered_on_all_platforms_test() {
+  assert is_framework_file("/work/project/src/kangaroo/isolate.gleam")
+  assert is_framework_file("C:\\work\\project\\src\\kangaroo.gleam")
+  assert from_erlang_stack(
+      "C:\\work\\project\\src\\kangaroo\\isolate.gleam:20\n"
+      <> "C:\\work\\project\\test\\user_test.gleam:7",
+    )
+    == Some(Location("C:/work/project/test/user_test.gleam", 7, None))
+}
+
+pub fn compiled_artefacts_are_skipped_when_selecting_a_user_frame_test() {
+  let stack =
+    "/home/u/proj/cli/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo_location_ffi.erl:8\n"
+    <> "/home/u/proj/cli/build/dev/erlang/kangaroo/_gleam_artefacts/kangaroo@internal@executor.erl:11\n"
+    <> "test/foo_test.gleam:42"
+  assert from_erlang_stack(stack)
+    == Some(Location("test/foo_test.gleam", 42, None))
+}
+
+pub fn first_erlang_user_frame_is_selected_test() {
+  let stack =
+    "src/kangaroo/internal/executor.gleam:32\n"
+    <> "src/kangaroo_isolate_ffi.erl:11\n"
+    <> "test/foo_test.gleam:42"
+  assert from_erlang_stack(stack)
+    == Some(Location("test/foo_test.gleam", 42, None))
+}
+
+pub fn empty_erlang_stack_has_no_location_test() {
+  assert from_erlang_stack("") == None
+}
+
+pub fn all_framework_erlang_stack_has_no_location_test() {
+  assert from_erlang_stack("src/kangaroo/internal/executor.gleam:3") == None
+}
+
+pub fn stack_lines_without_line_numbers_are_ignored_test() {
+  let stack = "not a location\n" <> "test/foo_test.gleam:7"
+  assert from_erlang_stack(stack)
+    == Some(Location("test/foo_test.gleam", 7, None))
+}
+
+pub fn v8_file_url_stack_with_columns_is_parsed_test() {
+  let stack =
+    "Error: expected True\n"
+    <> "    at runResolved (file:///home/u/proj/build/dev/javascript/kangaroo/kangaroo/internal/executor.mjs:18:5)\n"
+    <> "    at main (file:///home/u/proj/build/dev/javascript/kangaroo/runtime_test.mjs:12:7)"
+  assert from_js_stack(stack)
+    == Some(Location(
+      "/home/u/proj/build/dev/javascript/kangaroo/runtime_test.mjs",
+      12,
+      Some(7),
+    ))
+}
+
+pub fn v8_stack_without_parentheses_is_parsed_test() {
+  let stack =
+    "Error: boom\n"
+    <> "    at file:///home/u/proj/build/dev/javascript/myapp/foo_test.mjs:3:1"
+  assert from_js_stack(stack)
+    == Some(Location(
+      "/home/u/proj/build/dev/javascript/myapp/foo_test.mjs",
+      3,
+      Some(1),
+    ))
+}
+
+pub fn erlang_stack_column_is_parsed_test() {
+  let stack =
+    "src/kangaroo/internal/executor.gleam:32:5\n" <> "test/foo_test.gleam:42:9"
+  assert from_erlang_stack(stack)
+    == Some(Location("test/foo_test.gleam", 42, Some(9)))
+}
+
+pub fn node_internal_v8_frames_are_skipped_test() {
+  let stack =
+    "Error: boom\n" <> "    at node:internal/main/run_main_module:12:1"
+  assert from_js_stack(stack) == None
+}
+
+pub fn location_attaches_to_equality_mismatch_test() {
+  let location = Location("test/foo_test.gleam", 5, None)
+  let assert EqualityMismatch(_, _, _, Some(got)) =
+    attach(EqualityMismatch("a", "b", None, None), location)
+  assert got.file == "test/foo_test.gleam"
+  assert got.line == 5
+}
+
+pub fn location_attaches_to_assertion_failure_test() {
+  let location = Location("test/foo_test.gleam", 5, None)
+  let assert AssertionFailed(_, Some(got)) =
+    attach(AssertionFailed("boom", None), location)
+  assert got == location
+}
+
+pub fn location_attaches_to_unexpected_error_test() {
+  let location = Location("test/foo_test.gleam", 5, None)
+  let assert UnexpectedError(_, _, Some(got)) =
+    attach(UnexpectedError("panic", "boom", None), location)
+  assert got == location
 }

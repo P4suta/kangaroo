@@ -29,7 +29,10 @@ pub fn capture() -> Option(Location)
 /// source attributes only for the main package, so those frames carry the
 /// compiled `_gleam_artefacts/*.erl` paths instead.
 pub fn is_framework_file(file: String) -> Bool {
+  let file = normalise_path(file)
   string.starts_with(file, "src/kangaroo")
+  || string.contains(file, "/src/kangaroo/")
+  || string.ends_with(file, "/src/kangaroo.gleam")
   || string.starts_with(file, "src/gleam/")
   || string.starts_with(file, "gleam/")
   || string.starts_with(file, "node:")
@@ -42,7 +45,6 @@ pub fn is_framework_file(file: String) -> Bool {
   || string.contains(file, "prelude.mjs")
   || string.contains(file, "/build/dev/javascript/kangaroo/kangaroo/")
   || string.contains(file, "kangaroo_isolate_ffi")
-  || string.contains(file, "kangaroo_context_ffi")
   || string.contains(file, "kangaroo_location_ffi")
   || string.contains(file, "kangaroo_print_ffi")
   || string.contains(file, "kangaroo_sys_ffi")
@@ -112,7 +114,7 @@ fn parse_file_line(line: String) -> Result(Location, Nil) {
             }
             _, _ -> Error(Nil)
           }
-        [line_text, ..rest] ->
+        [line_text, ..] ->
           case int.parse(line_text) {
             Ok(line) -> {
               let file =
@@ -136,10 +138,15 @@ fn valid_location(
   line: Int,
   column: Option(Int),
 ) -> Result(Location, Nil) {
+  let file = normalise_path(file)
   case file != "" && line > 0 {
     True -> Ok(Location(file, line, column))
     False -> Error(Nil)
   }
+}
+
+fn normalise_path(path: String) -> String {
+  string.replace(path, each: "\\", with: "/")
 }
 
 /// Parses one frame of a JavaScript stack: a line like

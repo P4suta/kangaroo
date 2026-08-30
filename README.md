@@ -1,180 +1,228 @@
-# kangaroo
+# Kangaroo
 
-[![Package Version](https://img.shields.io/hexpm/v/kangaroo)](https://hex.pm/packages/kangaroo)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/kangaroo/)
-
-A next-generation continuous test runner for Gleam, inspired by
-[Wallaby.js](https://wallabyjs.com/): a self-hosting test framework whose
-events power a watch-mode daemon that re-runs **only the tests affected by
-your changes** — in a hot-reloading Erlang VM — and presents the results in
-a rich terminal UI or a machine-readable stream for editors.
-
-## Features
-
-- **Test framework**: `suite` / `it` DSL with matchers, `before_all` /
-  `before_each` / `after_each` / `after_all` hooks, `focus` / `skip`,
-  per-case timeouts, and line-oriented diffs
-- **Failure locations**: matcher failures and panics carry the source
-  `file:line` they originate from (parsed from the stack, `.gleam` paths on
-  Erlang), shown in the terminal and streamed in the editor protocol
-- **Self-hosting**: kangaroo tests itself — 100+ tests across Erlang and
-  JavaScript
-- **Continuous runner** (`kangaroo_cli`): watches `src` and `test`, computes
-  the affected test modules from the import graph, and re-runs only those
-- **Hot reloading**: the daemon executes tests in its own VM — `code:load_file`
-  on Erlang, `require(esm)` on JavaScript — so re-runs never restart the
-  runtime
-- **Coverage**: line coverage on both targets — the Erlang `cover` tool
-  mapped back to `.gleam` sources, and V8 coverage (`NODE_V8_COVERAGE`)
-  on JavaScript
-- **Rich TUI**: full-screen ANSI rendering with per-case status marks,
-  colored numbered diffs, failure locations, run statistics (changed files,
-  affected modules, slowest case), and keyboard control (`r` rerun, `f`
-  failures-only, `q` / Ctrl+C quit) on both targets
-- **Editor protocol**: newline-delimited JSON events for editors and CI
-
-## Installation
-
-```sh
-gleam add kangaroo --dev
-gleam add kangaroo_cli --dev
-```
-
-## Writing tests
-
-Test files export a `suites` function; the main test module aggregates
-them:
+Kangaroo is a continuous test runner for Gleam. Tests are ordinary public
+functions, failures use Gleam's built-in `assert` and `let assert`, and the
+same package runs on Erlang, Node.js, Bun, and Deno.
 
 ```gleam
-// test/myapp_test.gleam
-import gleam/list
 import kangaroo
-import kangaroo/expect.{expect, to_equal, to_be_true}
-import kangaroo/suite.{it, suite}
-import myapp/calculator
-import math_test.{suites as math_suites}
 
 pub fn main() {
-  kangaroo.main(suites())
+  kangaroo.main()
 }
 
-pub fn suites() {
-  list.flatten([
-    [
-      suite("calculator", [
-        it("adds two numbers", fn() {
-          expect(calculator.add(1, 2)) |> to_equal(3)
-        }),
-        it("throws on division by zero", fn() {
-          expect(fn() { calculator.divide(1, 0) }) |> to_raise()
-        }),
-        it_focused("only this runs for now", fn() {
-          expect(calculator.add(2, 2)) |> to_equal(4)
-        }),
-        it_skipped("not ready yet", fn() {
-          expect(calculator.add(1, 1)) |> to_equal(3)
-        }),
-      ]),
-      suite_with_hooks(
-        "database",
-        [it("queries", fn() { query() |> to_be_true() })],
-        hooks(Some(open_connection), Some(close_connection)),
-      ),
-    ],
-    math_suites(),
-  ])
+pub fn addition_test() {
+  assert 1 + 1 == 2
 }
 ```
 
-Suites run under `gleam test` too, so CI keeps working unchanged.
-
-### Matchers
-
-`expect(value) |> matcher()` records failures without stopping the case,
-so every assertion in a body is reported:
-
-- `to_equal(expected)` — with a line-oriented diff for multi-line values
-- `to_be_true()` / `to_be_false()`
-- `to_be_none()` / `to_be_some()`
-- `to_be_ok()` / `to_be_error()` — Result matchers that name the
-  unexpected value
-- `to_be_empty()`
-- `to_contain(element)` / `to_contain_text(substring)`
-- `to_contain_key(key)`
-- `to_be_close_to(expected, tolerance)`
-- `to_be_less_than(n)` / `to_be_greater_than(n)`
-- `to_have_length(n)`
-- `to_start_with(prefix)` / `to_end_with(suffix)`
-- `to_raise()` / `to_raise_containing(substring)`
-
-## Continuous testing
+Run once with the standard Gleam command:
 
 ```sh
-gleam run -m kangaroo_cli            # watch mode: TUI on a terminal, streaming otherwise
-gleam run -m kangaroo_cli -- watch --tui       # force the TUI
-gleam run -m kangaroo_cli -- watch --no-tui    # streaming output
-gleam run -m kangaroo_cli -- watch --json      # editor protocol
-gleam run -m kangaroo_cli -- watch --coverage  # report line coverage after every run (Erlang)
-gleam run -m kangaroo_cli -- run               # run once
-gleam run -m kangaroo_cli -- run --name <substring>   # run matching tests only
-gleam run -m kangaroo_cli -- run --json              # run once, editor protocol (CI)
-gleam run -m kangaroo_cli -- run --fail-fast         # stop at the first failure
-gleam run -m kangaroo_cli -- run --coverage          # run once with coverage
-gleam run -m kangaroo_cli -- --help                  # usage
-gleam run -m kangaroo_cli -- --version               # version
+gleam test
 ```
 
-In the TUI, `r` forces a full re-run, `f` toggles the failures-only view,
-and `q` (or Ctrl+C) quits, restoring the terminal. Keyboard input works on
-both Erlang and JavaScript. When a run fails to compile, the TUI shows the
-compiler's report instead of the stale results, with `r` to retry.
+Keep the latest saved source under test:
 
-The runner compiles the project with a fast compile-only subprocess for the
-current target and then executes only the affected test modules in its own
-VM with hot module reloading — `code:load_file` on Erlang, loading the
-compiled `.mjs` files on JavaScript (when the CLI runs from the project's
-own build, i.e. as a dev dependency). When in-VM execution is not possible
-it falls back to a `gleam test` subprocess. Changes are detected from file
-metadata plus periodic content comparison, and rapid saves are debounced;
-test modules whose source files have been deleted are not re-run.
-Coverage uses Erlang's `cover` (mapped back to `.gleam` lines) or, on
-JavaScript, Node's V8 coverage of the generated `.mjs` files, reported per
-module.
-
-## Editor protocol
-
-`kangaroo_cli watch --json` emits one JSON object per line. The compile
-phase is reported too, so editors can show progress while the project
-compiles:
-
-```json
-{"type":"changed","files":["src/myapp.gleam"],"affected":2}
-{"type":"compile_started"}
-{"type":"compile_finished"}
-{"type":"run_started","run_id":...}
-{"type":"case_started","suite":"math","case":"adds"}
-{"type":"case_finished","suite":"math","case":"adds","outcome":{"kind":"passed"},"duration_ms":1}
-{"type":"run_finished","run_id":...,"summary":{"passed":1,"failed":0,"skipped":0,"duration_ms":5}}
+```sh
+gleam run -m kangaroo -- watch
 ```
 
-Failed cases carry their failures, with a source location for editors:
+Kangaroo 1.x is one Hex package. It does not require a separate executable or
+CLI package.
 
-```json
-{"type":"case_finished","suite":"math","case":"adds","outcome":{"kind":"failed","failures":[{"kind":"equality_mismatch","expected":"2","actual":"1","diff":null,"location":{"file":"test/foo_test.gleam","line":42,"column":null}}]},"duration_ms":2}
+## Requirements and installation
+
+- Gleam 1.18 or newer
+- Erlang/OTP 27–29, Node.js 22.12+/24/26, Bun 1.4.0 or newer, or Deno 2.9 or newer
+- Linux, macOS, or Windows
+
+Add Kangaroo as a development dependency:
+
+```sh
+gleam add --dev kangaroo
+gleam run -m kangaroo -- init
 ```
 
-Watch runs also emit `changed` events describing the files that triggered a
-run. See [docs/protocol.md](docs/protocol.md) for the full schema.
+`init` creates the package test entry point when it is absent. It replaces only
+an exact generated gleeunit or unitest entry point; custom files are never
+overwritten: the suggested contents are printed and `init` exits 2 so setup
+automation cannot mistake an unchanged custom entry point for success.
 
-## Architecture
+## Discovery and ordering
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the design: a pure event-driven
-core with ports for isolation, filesystem access, the Erlang VM, and
-coverage, and the CLI as a thin application layer.
+Kangaroo discovers public, zero-argument functions whose names end in `_test`
+below the configured test roots. A stable test ID is
+`test/path.gleam::function_test`.
+
+Files are ordered by normalised project-relative path and functions retain
+source definition order. Different modules may run concurrently; tests in one
+module always run in definition order. JavaScript Promise results are awaited.
+Panics, rejected Promises, and timeouts use one failure model.
+
+Tests can use source-indexed metadata and lifecycle helpers:
+
+```gleam
+import kangaroo
+
+pub fn database_test() {
+  kangaroo.tags(["integration", "database"])
+  kangaroo.timeout(5_000)
+  kangaroo.serial()
+
+  kangaroo.fixture(
+    setup: open_database,
+    teardown: close_database,
+    body: fn(database) {
+      let assert Ok(account) = find_account(database, 42)
+      assert account.active
+    },
+  )
+}
+```
+
+`tag`, `tags`, and `timeout` require literals; `serial` takes no arguments.
+This keeps scheduling and filtering available before a test is loaded.
+`skip("reason")` is indexed when literal and `skip_if(condition, "reason")`
+supports runtime decisions. `fixture` always attempts teardown and retains both
+failures if the body and teardown fail.
+
+Retries retain every failed attempt and its captured output. A later dynamic
+skip cannot erase an earlier failure; only an otherwise passing retry is
+reported as `flaky`.
+
+## Selection and reporting
+
+Selectors can be mixed; their result is a union in discovery order:
+
+```sh
+gleam test -- test/math_test.gleam
+gleam test -- test/math_test.gleam:24
+gleam test -- 'test/math_test.gleam::addition_test'
+gleam test -- tag:unit
+gleam run -m kangaroo -- watch test/math_test.gleam --tag fast
+```
+
+Repeated `--tag` values are ORed and filter the union of explicit selectors;
+use `tag:name` when a tag itself should be part of that selector union.
+`--exclude-tag` always wins. Other execution options are `--workers N`,
+`--timeout MS`, `--retry N`, `--shuffle`,
+`--no-shuffle`, and `--fail-fast`. CLI values override `gleam.toml`.
+
+Pretty output is the default. One-shot `run` supports `pretty`, `dot`,
+`ndjson`, and `junit`; `watch` and `coverage` support `pretty`, `dot`, and
+`ndjson`; `list` and `doctor` support `pretty` and `ndjson`. Captured stdout
+and stderr follow the configured `show_output` policy. Each test's captured
+output and each finite captured child command's combined stdout and stderr are
+limited to 16 MiB. Daemon operations may stream more than 16 MiB over their
+lifetime, but both output awaiting consumption and output awaiting delivery to
+the client retain independent 16 MiB limits. Exceeding a live memory boundary
+is an infrastructure error instead of allowing an unbounded runner process.
+
+Exit status is 0 for a clean run, including an all-skipped selection; 1 for a
+test failure, a retry that passes only after failing (`flaky`), or an unmet
+coverage threshold; and 2 for invalid configuration, no matched tests, compile
+errors, and runner infrastructure failures.
+
+## Configuration
+
+All configuration lives in Gleam's external-tool namespace:
+
+```toml
+[tools.kangaroo]
+test_paths = ["test"]
+exclude = []
+workers = "auto"
+timeout_ms = 30000
+ignored_tags = []
+serial_tags = []
+retry = 0
+shuffle = false
+show_output = "failures"
+
+[tools.kangaroo.watch]
+extra_paths = []
+debounce_ms = 50
+
+[tools.kangaroo.coverage]
+include = ["src/**/*.gleam"]
+exclude = []
+minimum = 0
+minimum_per_file = 0
+reporters = ["terminal"]
+```
+
+Unknown keys and empty path or tag entries are errors, so misspelled
+configuration is never silently ignored. Test-root spellings such as `test`,
+`test/`, and `./test` are equivalent; overlapping roots never duplicate a test.
+Every configured path or glob is project-relative. Absolute paths,
+Windows drive-qualified paths such as `C:outside`, and `..`
+components are rejected before discovery, watching, or build-cache cleanup.
+Test roots must be inside Gleam's compiled `src`, `dev`, or `test` source
+directories; narrower roots such as `test/integration` are supported.
+
+Coverage reporters are `terminal`, `lcov`, and `cobertura`. LCOV is written to
+`coverage/lcov.info`; Cobertura XML is written to
+`coverage/cobertura.xml`. Unexecuted selected sources are included at 0%.
+With `--reporter ndjson`, stdout contains protocol events only; compiler logs
+and a requested terminal coverage table are written to stderr.
+
+## Commands
+
+```sh
+gleam run -m kangaroo -- run [selectors] [options]
+gleam run -m kangaroo -- watch [selectors] [options]
+gleam run -m kangaroo -- coverage [selectors] [options]
+gleam run -m kangaroo -- list [selectors] [options]
+gleam run -m kangaroo -- doctor [--reporter pretty|ndjson]
+gleam run -m kangaroo -- init
+gleam run -m kangaroo -- daemon
+```
+
+Use `gleam run -m kangaroo -- COMMAND --help` for the exact options accepted by
+each command. `--coverage-reporter` is accepted only by `coverage`.
+
+`doctor` validates the compiler/runtime, discovery, platform, and exact
+coverage instrumentation path. `daemon` is the protocol-v1 integration entry
+point; stdout is NDJSON only, operational logs go to stderr, request lines are
+limited to 1 MiB, and at most 32 run/watch operations may be active.
+
+## Editors and integrations
+
+- [VS Code](https://github.com/P4suta/kangaroo/blob/main/editors/vscode/README.md): Testing API tree, individual/file/all
+  runs, continuous runs, diagnostics, status, coverage command, and multi-root
+  daemon lifecycles.
+- [Neovim](https://github.com/P4suta/kangaroo/blob/main/editors/neovim/README.md): automatic per-package daemon,
+  diagnostics, quickfix/test picker, individual/file runs, and LCOV signs.
+- [Protocol v1](https://github.com/P4suta/kangaroo/blob/main/docs/protocol.md): bidirectional NDJSON for other tools.
+- [Birdie and qcheck](https://github.com/P4suta/kangaroo/blob/main/docs/integrations.md): preserving snapshot and
+  property-test diagnostics.
+
+See the [runtime and Deno permission guide](https://github.com/P4suta/kangaroo/blob/main/docs/runtimes.md),
+[gleeunit migration guide](https://github.com/P4suta/kangaroo/blob/main/docs/migration-from-gleeunit.md), and
+[troubleshooting guide](https://github.com/P4suta/kangaroo/blob/main/docs/troubleshooting.md).
 
 ## Development
 
+The project is developed test-first. Keep the failing regression focused,
+implement the smallest coherent behaviour, then run every supported backend
+before refactoring.
+
 ```sh
-gleam test                      # kangaroo framework (both targets)
-cd cli && gleam test            # CLI, including integration tests
+gleam format --check src dev test fixtures
+gleam build --target erlang --warnings-as-errors
+gleam build --target javascript --warnings-as-errors
+gleam test --target erlang
+gleam test --target javascript --runtime nodejs
+gleam test --target javascript --runtime bun
+gleam test --target javascript --runtime deno
+(cd editors/vscode && npm test)
+(cd editors/vscode && npm run test:integration)
+nvim --headless -u NONE -l editors/neovim/test/headless.lua
 ```
+
+The internal design is described in [ARCHITECTURE.md](https://github.com/P4suta/kangaroo/blob/main/ARCHITECTURE.md).
+
+## Licence
+
+Apache-2.0. See [LICENSE](https://github.com/P4suta/kangaroo/blob/main/LICENSE).
