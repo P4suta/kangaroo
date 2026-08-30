@@ -7,11 +7,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# PowerShell compiles an immutable launcher which every runtime executes
-# directly. User arguments and environment overrides stay in process-scoped,
-# base64-encoded metadata and are never reparsed by PowerShell. The launcher
-# starts the command suspended, assigns it to a kill-on-close Job Object, and
-# only then lets user code run.
+# PowerShell compiles an immutable launcher. JavaScript runtimes execute it
+# directly; OTP uses a fixed batch trampoline because its Windows port driver
+# rejects managed ConsoleApplication images. User arguments and environment
+# overrides stay in process-scoped, base64-encoded metadata and never enter
+# that batch command. The launcher starts the command suspended, assigns it to
+# a kill-on-close Job Object, and only then lets user code run.
 $source = @'
 using System;
 using System.Collections;
@@ -543,7 +544,8 @@ public static class KangarooWindowsJob
 '@
 
 $prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_"
-$executableName = "windows-job-v4-20260831.exe"
+$executableName = "windows-job-v5-20260831.exe"
+$launcherName = "windows-job-v5-20260831.cmd"
 
 function Decode-Value([string] $name) {
     $encoded = [Environment]::GetEnvironmentVariable(
@@ -612,6 +614,40 @@ function Ensure-Job-Executable {
     return $executable
 }
 
+function Ensure-Job-Launcher([string] $executable) {
+    $launcher = [IO.Path]::Combine(
+        [IO.Path]::GetDirectoryName($executable),
+        $launcherName)
+    if ([IO.File]::Exists($launcher)) {
+        return $launcher
+    }
+
+    $candidate = [IO.Path]::Combine(
+        [IO.Path]::GetDirectoryName($executable),
+        ([Guid]::NewGuid().ToString("N") + ".cmd"))
+    $contents = "@echo off`r`n" +
+        "`"%~dp0$executableName`" --kangaroo-job-helper`r`n" +
+        "exit /b %errorlevel%`r`n"
+    try {
+        [IO.File]::WriteAllText($candidate, $contents, [Text.Encoding]::ASCII)
+        try {
+            [IO.File]::Move($candidate, $launcher)
+        }
+        catch {
+            if (-not [IO.File]::Exists($launcher)) {
+                throw
+            }
+            [IO.File]::Delete($candidate)
+        }
+    }
+    finally {
+        if ([IO.File]::Exists($candidate)) {
+            [IO.File]::Delete($candidate)
+        }
+    }
+    return $launcher
+}
+
 function Set-Smoke-Launch(
     [string] $executable,
     [string[]] $arguments
@@ -642,6 +678,7 @@ try {
     }
 
     $helper = Ensure-Job-Executable
+    $launcher = Ensure-Job-Launcher $helper
     if ($Prepare) {
         [Environment]::Exit(0)
     }
@@ -661,10 +698,25 @@ try {
         throw "Windows process helper did not preserve redirected stdio"
     }
 
+    Set-Smoke-Launch $find @("kangaroo")
+    $output = "kangaroo" | & $launcher
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "Windows process launcher smoke test exited $exitCode"
+    }
+    if (($output -join "`n").Trim() -ne "kangaroo") {
+        throw "Windows process launcher did not preserve redirected stdio"
+    }
+
     Set-Smoke-Launch $find @("not-present")
     $null = "kangaroo" | & $helper
     if ($LASTEXITCODE -ne 1) {
         throw "Windows process helper did not preserve the child exit code"
+    }
+    Set-Smoke-Launch $find @("not-present")
+    $null = "kangaroo" | & $launcher
+    if ($LASTEXITCODE -ne 1) {
+        throw "Windows process launcher did not preserve the child exit code"
     }
     [Environment]::Exit(0)
 }

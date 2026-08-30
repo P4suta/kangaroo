@@ -172,7 +172,7 @@ process_launch(Directory, Path, Arguments, Environment) ->
     end.
 
 windows_job_launch(Directory, Path, Arguments, Environment) ->
-    Helper = windows_job_executable(),
+    Launcher = windows_job_launcher(),
     WorkingDirectory = filename:absname(to_list(Directory)),
     CleanEnvironment = [
         {Key, Value} || {Key, Value} <- Environment,
@@ -203,7 +203,7 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
          encode_windows_job_value(integer_to_list(length(CleanEnvironment)))}
         | ArgumentEnvironment ++ EnvironmentEnvironment
     ],
-    {Helper, ["--kangaroo-job-helper"], InternalEnvironment}.
+    {Launcher, [], InternalEnvironment}.
 
 internal_windows_job_name(Name) ->
     lists:prefix(
@@ -301,10 +301,11 @@ collect_windows_job_preparation(Port, Output, Deadline, Helper) ->
                       Port, Next, Deadline, Helper)
             end;
         {Port, {exit_status, 0}} ->
-            case filelib:is_regular(Helper) of
+            case filelib:is_regular(Helper) andalso
+                 filelib:is_regular(windows_job_launcher()) of
                 true -> ok;
                 false ->
-                    {error, <<"Windows process helper was not created">>}
+                    {error, <<"Windows process launcher was not created">>}
             end;
         {Port, {exit_status, Code}} ->
             Message = iolist_to_binary(lists:reverse(Output)),
@@ -333,7 +334,10 @@ windows_job_executable() ->
             end;
         Value -> Value
     end,
-    filename:join([Temp, "kangaroo", "windows-job-v4-20260831.exe"]).
+    filename:join([Temp, "kangaroo", "windows-job-v5-20260831.exe"]).
+
+windows_job_launcher() ->
+    filename:rootname(windows_job_executable()) ++ ".cmd".
 
 async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8, OutputBytes,
               Deadline) ->

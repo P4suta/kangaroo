@@ -42,8 +42,11 @@ allows it to execute. Completion is not published until the Job Object has no
 active descendants. This ownership boundary also applies when a command exits
 successfully after starting background work, and to asynchronous subprocesses
 started by an isolated JavaScript test. PowerShell compiles the immutable
-console helper once and every runtime executes it directly, preserving the raw
-redirected handles and child exit status without an intermediary process.
+console helper once. JavaScript runtimes execute it directly, while Erlang
+uses a fixed, argument-free batch trampoline around OTP's managed-executable
+boundary; both paths preserve the raw redirected handles and child exit
+status. The trampoline contains only the immutable helper filename, never a
+user executable, argument, environment value, or working directory.
 Erlang transports Unicode environment overrides as private base64 metadata and
 the helper restores them before launching user code, avoiding OTP port option
 encoding differences. The helper's private environment

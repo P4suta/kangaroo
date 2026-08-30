@@ -19,11 +19,11 @@ const powershellArguments = [
   script,
 ];
 const prepareWindowsJob = execFileSync;
-const preparedKey = Symbol.for("kangaroo.windowsJobPrepared.v4.20260831");
+const preparedKey = Symbol.for("kangaroo.windowsJobPrepared.v5.20260831");
 const cachedExecutable = join(
   tmpdir(),
   "kangaroo",
-  "windows-job-v4-20260831.exe",
+  "windows-job-v5-20260831.exe",
 );
 
 export function ensureWindowsJobHelper() {
