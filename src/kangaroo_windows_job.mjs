@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,8 +18,13 @@ const powershellArguments = [
 ];
 const prepareWindowsJob = execFileSync;
 const preparedKey = Symbol.for("kangaroo.windowsJobPrepared.v6.20260831");
+const temporaryDirectory = [
+  globalThis.process.env.TEMP,
+  globalThis.process.env.TMP,
+  globalThis.process.env.TMPDIR,
+].find((value) => value !== undefined && String(value).trim() !== "") || ".";
 const cachedExecutable = join(
-  tmpdir(),
+  resolve(temporaryDirectory),
   "kangaroo",
   "windows-job-v6-20260831.exe",
 );

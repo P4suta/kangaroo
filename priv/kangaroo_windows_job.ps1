@@ -555,16 +555,24 @@ function Get-Helper-Path {
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         return [IO.Path]::GetFullPath($OutputPath)
     }
-    $encodedOutputPath = [Environment]::GetEnvironmentVariable(
-        $prefix + "OUTPUT_PATH",
+    $tempRoot = [Environment]::GetEnvironmentVariable(
+        "TEMP",
         [EnvironmentVariableTarget]::Process)
-    if (-not [string]::IsNullOrWhiteSpace($encodedOutputPath)) {
-        $decodedOutputPath = [Text.Encoding]::UTF8.GetString(
-            [Convert]::FromBase64String($encodedOutputPath))
-        return [IO.Path]::GetFullPath($decodedOutputPath)
+    if ([string]::IsNullOrWhiteSpace($tempRoot)) {
+        $tempRoot = [Environment]::GetEnvironmentVariable(
+            "TMP",
+            [EnvironmentVariableTarget]::Process)
+    }
+    if ([string]::IsNullOrWhiteSpace($tempRoot)) {
+        $tempRoot = [Environment]::GetEnvironmentVariable(
+            "TMPDIR",
+            [EnvironmentVariableTarget]::Process)
+    }
+    if ([string]::IsNullOrWhiteSpace($tempRoot)) {
+        $tempRoot = "."
     }
     return [IO.Path]::Combine(
-        [IO.Path]::GetTempPath(),
+        [IO.Path]::GetFullPath($tempRoot),
         "kangaroo",
         $executableName)
 }

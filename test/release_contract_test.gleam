@@ -347,11 +347,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
     string.split(preparation_body, "collect_windows_job_preparation(")
   assert string.contains(preparation_body, "\"-Prepare\"")
   assert !string.contains(preparation_body, "\"-OutputPath\"")
-  assert string.contains(
+  assert !string.contains(
     preparation_body,
-    "{env, windows_job_output_path_environment(Helper)}",
+    "windows_job_output_path_environment",
   )
-  assert string.contains(
+  assert !string.contains(
     erlang_process_ffi,
     "windows_job_output_path_environment(Helper)",
   )
@@ -371,6 +371,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_job_bridge, "kangaroo_windows_job.ps1")
   assert string.contains(windows_job_bridge, "windowsJobSpawnOptions")
   assert string.contains(windows_job_bridge, "ensureWindowsJobHelper")
+  assert string.contains(windows_job_bridge, "globalThis.process.env.TEMP")
+  assert string.contains(windows_job_bridge, "globalThis.process.env.TMP")
+  assert string.contains(windows_job_bridge, "globalThis.process.env.TMPDIR")
+  assert string.contains(windows_job_bridge, "String(value).trim() !== \"\"")
+  assert !string.contains(windows_job_bridge, "tmpdir()")
   assert string.contains(windows_job, "RemoveInternalVariables")
   assert string.contains(windows_job, "OrdinalIgnoreCase")
   assert string.contains(windows_job, "EnvironmentVariableTarget.Process")
@@ -388,17 +393,29 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_job_bridge, "pwsh.exe")
   assert !string.contains(windows_job_bridge, "HelperPath")
   assert string.contains(windows_job, "[string] $OutputPath")
-  assert string.contains(windows_job, "$prefix + \"OUTPUT_PATH\"")
+  assert !string.contains(windows_job, "$prefix + \"OUTPUT_PATH\"")
+  assert string.contains(
+    windows_job,
+    "[Environment]::GetEnvironmentVariable(\n        \"TEMP\"",
+  )
+  assert string.contains(
+    windows_job,
+    "[Environment]::GetEnvironmentVariable(\n            \"TMP\"",
+  )
+  assert string.contains(
+    windows_job,
+    "[Environment]::GetEnvironmentVariable(\n            \"TMPDIR\"",
+  )
   assert !string.contains(windows_job, "[switch] $PrintHelperPath")
   assert !string.contains(windows_job, "function Write-Ascii-Line")
   assert string.contains(windows_job, "ConsoleApplication")
   assert string.contains(workflow, "kangaroo_windows_job.ps1 -SmokeTest")
   assert string.contains(workflow, "windows_open_port_smoke.escript")
-  assert string.contains(
+  assert !string.contains(
     windows_open_port_smoke,
-    "{env, windows_job_output_path_environment(Helper)}",
+    "windows_job_output_path_environment(Helper)",
   )
-  assert string.contains(windows_job, "GetTempPath")
+  assert !string.contains(windows_job, "GetTempPath")
   assert string.contains(windows_job, "DuplicateHandle")
   assert string.contains(process_ffi, "activityBuffer")
   assert string.contains(process_worker, "workerData.activityBuffer")

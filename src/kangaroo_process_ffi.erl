@@ -319,8 +319,7 @@ prepare_windows_job_helper_worker() ->
             try open_port(
                   {spawn_executable, PowerShell},
                   [binary, use_stdio, stderr_to_stdout, exit_status,
-                   {args, Arguments},
-                   {env, windows_job_output_path_environment(Helper)}]) of
+                   {args, Arguments}]) of
                 Port -> collect_windows_job_preparation(
                           Port, Helper, [],
                           erlang:monotonic_time(millisecond) + 60000)
@@ -372,24 +371,20 @@ windows_job_executable() ->
       {?MODULE, windows_job_helper_path}, default_windows_job_executable()).
 
 default_windows_job_executable() ->
-    Temp = case os:getenv("TEMP") of
-        false ->
-            case os:getenv("TMP") of
-                false ->
-                    case os:getenv("TMPDIR") of
-                        false -> ".";
-                        Value -> Value
-                    end;
-                Value -> Value
-            end;
-        Value -> Value
-    end,
+    Temp = first_nonempty_environment(["TEMP", "TMP", "TMPDIR"], "."),
     filename:absname(
       filename:join([Temp, "kangaroo", "windows-job-v6-20260831.exe"])).
 
-windows_job_output_path_environment(Helper) ->
-    [{"__KANGAROO_INTERNAL_WINDOWS_JOB_V1_OUTPUT_PATH",
-      binary_to_list(encode_windows_job_value(Helper))}].
+first_nonempty_environment([], Fallback) -> Fallback;
+first_nonempty_environment([Name | Rest], Fallback) ->
+    case os:getenv(Name) of
+        false -> first_nonempty_environment(Rest, Fallback);
+        Value ->
+            case string:trim(Value) of
+                [] -> first_nonempty_environment(Rest, Fallback);
+                _ -> Value
+            end
+    end.
 
 find_windows_powershell() ->
     case os:find_executable("powershell.exe") of
