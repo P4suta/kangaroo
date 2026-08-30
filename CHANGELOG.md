@@ -62,7 +62,9 @@ versioning.
 - Made Erlang invoke a fixed ASCII script through the native PowerShell host and
   load the compiled Job Object helper in-process, preserving the port-backed
   stdin/stdout and child exit code across OTP 27–29 without recompiling per
-  command.
+  command. OTP receives a quoted fixed command line because its Windows
+  argument-vector form drops the PowerShell host arguments; user launch data
+  remains isolated in private environment metadata.
 - Made `doctor` reject Erlang/OTP outside the documented 27–29 range instead
   of reporting untested future major releases as supported.
 - Distinguished synchronous coverage preparation from the cancellable child

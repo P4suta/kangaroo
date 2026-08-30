@@ -166,20 +166,24 @@ async_run_port(Parent, OwnerMonitor, Id, Port, TimeoutMs, Streaming) ->
     end.
 
 open_process_port(Directory, Path, Arguments, Environment, Mode) ->
-    {LaunchDirectory, LaunchPath, LaunchArguments, LaunchEnvironment} =
+    {LaunchDirectory, LaunchSpec, LaunchArguments, LaunchEnvironment} =
         process_launch(Directory, Path, Arguments, Environment),
     Stdio = case Mode of
         captured -> [binary, use_stdio, stderr_to_stdout];
         inherited -> [nouse_stdio]
     end,
+    ArgumentOptions = case LaunchSpec of
+        {spawn, _Command} -> [];
+        {spawn_executable, _Executable} ->
+            [{args, [to_list(Argument)
+                     || Argument <- LaunchArguments]}]
+    end,
     open_port(
-      {spawn_executable, LaunchPath},
+      LaunchSpec,
       Stdio ++ [exit_status,
                 {cd, to_list(LaunchDirectory)},
-                {args, [to_list(Argument)
-                        || Argument <- LaunchArguments]},
                 {env, [port_environment_pair(Pair)
-                       || Pair <- LaunchEnvironment]}]).
+                       || Pair <- LaunchEnvironment]}] ++ ArgumentOptions).
 
 port_environment_pair({Key, false}) -> {to_list(Key), false};
 port_environment_pair({Key, Value}) -> {to_list(Key), to_list(Value)}.
@@ -188,7 +192,7 @@ process_launch(Directory, Path, Arguments, Environment) ->
     case os:type() of
         {win32, _} ->
             windows_job_launch(Directory, Path, Arguments, Environment);
-        _ -> {Directory, Path, Arguments, Environment}
+        _ -> {Directory, {spawn_executable, Path}, Arguments, Environment}
     end.
 
 windows_job_launch(Directory, Path, Arguments, Environment) ->
@@ -228,16 +232,20 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
          encode_windows_job_value(integer_to_list(length(CleanEnvironment)))}
         | ArgumentEnvironment ++ EnvironmentEnvironment
     ],
-    %% OTP rejects the managed helper image and cmd does not preserve its
-    %% port-backed standard handles when starting that image. Launch the native
-    %% PowerShell host directly with a fixed ASCII script basename; the script
-    %% loads the cached assembly in-process, so the helper inherits the original
-    %% port handles without compiling again or parsing user-controlled values.
-    {filename:dirname(Launcher), PowerShell,
-     ["-NoLogo", "-NoProfile", "-NonInteractive",
-      "-ExecutionPolicy", "Bypass", "-File",
-      filename:basename(Launcher)],
+    %% OTP's Windows `{args, ...}` path loses the PowerShell host arguments,
+    %% while cmd does not preserve its port-backed handles when starting the
+    %% managed image. `{spawn, Command}` passes this fixed, quoted command line
+    %% directly to CreateProcessW with the original port handles. It contains no
+    %% user-controlled values; launch metadata remains in the private environment.
+    Command = windows_powershell_host_command(PowerShell, Launcher),
+    {filename:dirname(Launcher), {spawn, Command}, [],
      InternalEnvironment}.
+
+windows_powershell_host_command(PowerShell, Launcher) ->
+    lists:flatten([
+      $", PowerShell, $", " -NoLogo -NoProfile -NonInteractive ",
+      "-ExecutionPolicy Bypass -File ", filename:basename(Launcher)
+    ]).
 
 windows_command_processor() ->
     case os:find_executable("cmd.exe") of

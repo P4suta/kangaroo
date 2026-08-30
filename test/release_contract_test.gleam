@@ -335,6 +335,7 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(erlang_process_ffi, "windows_job_launch")
   assert string.contains(erlang_process_ffi, "windows_job_executable")
   assert string.contains(erlang_process_ffi, "windows_job_launcher")
+  assert string.contains(erlang_process_ffi, "windows_powershell_host_command")
   assert string.contains(erlang_process_ffi, "windows_command_processor")
   assert string.contains(erlang_process_ffi, "os:find_executable(\"cmd.exe\")")
   assert string.contains(erlang_process_ffi, "filename:dirname(Launcher)")
@@ -342,8 +343,9 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(erlang_process_ffi, "find_windows_powershell()")
   assert string.contains(
     erlang_process_ffi,
-    "\"-ExecutionPolicy\", \"Bypass\", \"-File\"",
+    "{filename:dirname(Launcher), {spawn, Command}, []",
   )
+  assert string.contains(erlang_process_ffi, "{spawn_executable, Path}")
   assert string.contains(erlang_process_ffi, "ENVIRONMENT_NAME_")
   assert string.contains(erlang_process_ffi, "ENVIRONMENT_VALUE_")
   let assert [_, preparation_body] =

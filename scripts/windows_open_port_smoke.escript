@@ -72,8 +72,8 @@ probe(Label, Executable, Options, Timeout) ->
             error
     end.
 
-probe_output(Label, Executable, Options, Expected, Timeout) ->
-    try open_port({spawn_executable, Executable}, Options) of
+probe_output(Label, SpawnSpec, Options, Expected, Timeout) ->
+    try open_port(SpawnSpec, Options) of
         Port ->
             wait_for_expected_exit(
               Label, Port, Expected, [],
@@ -176,17 +176,11 @@ probe_helper_preparation() ->
                                       "open_port helper artifacts: ok~n"),
                                     probe_output(
                                       "production helper execution",
-                                      PowerShell,
+                                      {spawn, powershell_host_command(
+                                        PowerShell, Launcher)},
                                       [binary, use_stdio, stderr_to_stdout,
                                        exit_status,
                                        {cd, filename:dirname(Helper)},
-                                       {args, [
-                                         "-NoLogo", "-NoProfile",
-                                         "-NonInteractive",
-                                         "-ExecutionPolicy", "Bypass",
-                                         "-File",
-                                         filename:basename(Launcher)
-                                       ]},
                                        {env, internal_environment(
                                          filename:absname("."))}],
                                       <<"cmd.exe">>,
@@ -205,6 +199,12 @@ probe_helper_preparation() ->
                 end
             end
     end.
+
+powershell_host_command(PowerShell, Launcher) ->
+    lists:flatten([
+      $", PowerShell, $", " -NoLogo -NoProfile -NonInteractive ",
+      "-ExecutionPolicy Bypass -File ", filename:basename(Launcher)
+    ]).
 
 prepare_helper_path(CommandProcessor, Arguments, Helper, Timeout) ->
     case filelib:ensure_dir(Helper) of
