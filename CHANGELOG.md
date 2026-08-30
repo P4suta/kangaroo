@@ -58,6 +58,8 @@ versioning.
   directory without passing fragile OTP port arguments or parsing redirected
   PowerShell output, invalidate changed helper binaries, and terminate remaining
   Job Object descendants without racing the enclosing test timeout.
+- Made `doctor` reject Erlang/OTP outside the documented 27–29 range instead
+  of reporting untested future major releases as supported.
 - Distinguished synchronous coverage preparation from the cancellable child
   run in the watch TUI, so its running state is a reliable cancellation
   boundary even on a loaded JavaScript host.

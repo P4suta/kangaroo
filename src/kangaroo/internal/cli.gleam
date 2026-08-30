@@ -1635,8 +1635,7 @@ fn gleam_check(project_dir: String) -> diagnostics.Check {
 fn runtime_check() -> diagnostics.Check {
   let name = vm.runtime_name()
   let version = vm.runtime_version()
-  let minimum = diagnostics.minimum_runtime_version(name)
-  case diagnostics.version_at_least(version, minimum) {
+  case diagnostics.runtime_version_supported(name, version) {
     True ->
       diagnostics.Check(
         "runtime",
@@ -1648,8 +1647,12 @@ fn runtime_check() -> diagnostics.Check {
       diagnostics.Check(
         "runtime",
         diagnostics.Failed,
-        name <> " " <> version <> " is below " <> minimum,
-        Some("upgrade " <> name <> " to a supported version"),
+        name
+          <> " "
+          <> version
+          <> " is outside the supported range "
+          <> diagnostics.supported_runtime_versions(name),
+        Some("install a supported " <> name <> " version"),
       )
   }
 }

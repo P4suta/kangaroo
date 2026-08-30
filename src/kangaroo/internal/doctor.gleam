@@ -33,6 +33,24 @@ pub fn minimum_runtime_version(name: String) -> String {
   }
 }
 
+pub fn runtime_version_supported(name: String, actual: String) -> Bool {
+  let meets_minimum = version_at_least(actual, minimum_runtime_version(name))
+  case name {
+    "erlang" -> meets_minimum && !version_at_least(actual, "30.0.0")
+    _ -> meets_minimum
+  }
+}
+
+pub fn supported_runtime_versions(name: String) -> String {
+  case name {
+    "erlang" -> "27–29"
+    "node" -> "22.12 or newer"
+    "bun" -> "1.4.0 or newer"
+    "deno" -> "2.9 or newer"
+    _ -> "a recognised runtime version"
+  }
+}
+
 pub fn render(checks: List(Check)) -> String {
   checks
   |> list.map(fn(check) {

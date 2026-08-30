@@ -15,6 +15,16 @@ pub fn doctor_requires_node_with_synchronous_esm_loading_test() {
   assert doctor.minimum_runtime_version("bun") == "1.4.0"
 }
 
+pub fn doctor_rejects_runtime_versions_outside_the_supported_range_test() {
+  assert doctor.runtime_version_supported("erlang", "27")
+  assert doctor.runtime_version_supported("erlang", "29.9.9")
+  assert !doctor.runtime_version_supported("erlang", "26.9.9")
+  assert !doctor.runtime_version_supported("erlang", "30.0.0")
+  assert doctor.runtime_version_supported("node", "26.0.0")
+  assert doctor.runtime_version_supported("bun", "2.0.0")
+  assert doctor.runtime_version_supported("deno", "3.0.0")
+}
+
 pub fn doctor_renders_fixes_and_returns_exit_two_test() {
   let checks = [
     Check("discovery", Passed, "4 tests", None),
