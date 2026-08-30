@@ -1,18 +1,24 @@
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
-import kangaroo/event.{type Event, CaseFinished, RunFinished, RunStarted}
-import kangaroo/failure.{Skipped as SkippedOutcome}
+import kangaroo/event.{
+  type Event, CaseFinished, CaseOutput, CaseStarted, RunFinished, RunStarted,
+  SuiteFinished, SuiteStarted,
+}
+import kangaroo/failure.{
+  type Failure, type Outcome, AssertionFailed, EqualityMismatch, Failed, Flaky,
+  Passed, Skipped, SkippedWithReason, UnexpectedError,
+}
 import kangaroo/internal/event_buffer
 import kangaroo/internal/index.{type IndexedTest}
-import kangaroo/internal/legacy/suite.{
-  type Case, Case, Normal, Skipped, Suite, no_hooks,
-}
 import kangaroo/internal/runtime
 import kangaroo/internal/scheduler.{type Wave}
 import kangaroo/internal/vm
-import kangaroo/report.{type Report, CaseResult, Report}
-import kangaroo/runner
+import kangaroo/isolate.{
+  type Isolated, CapturedIsolation, Completed, Crashed, SkippedIsolation,
+  isolate_captured,
+}
+import kangaroo/report.{type CaseResult, type Report, CaseResult, Report}
 import kangaroo/sys
 
 type ResolvedTest {
@@ -44,13 +50,7 @@ pub fn run_with_options(
     runtime.prepare_modules(list.map(tests, fn(indexed) { indexed.module })),
   )
   use resolved <- result.try(list.try_map(tests, resolve))
-  let suites = to_suites(resolved)
-  Ok(runner.run_with_retries(
-    suites,
-    sink,
-    runner.Config(Some(default_timeout_ms), fail_fast),
-    retry,
-  ))
+  Ok(execute(resolved, sink, default_timeout_ms, fail_fast, retry))
 }
 
 /// Runs modules according to deterministic scheduler waves. Each module is a
@@ -100,7 +100,7 @@ pub fn run_scheduled_seeded(
   let started = sys.now_ms()
   sink(RunStarted(run_id, list.length(tests)))
   case
-    run_waves(waves, default_timeout_ms, fail_fast, retry, sink, Report([], []))
+    run_waves(waves, default_timeout_ms, fail_fast, retry, sink, Report([]))
   {
     Ok(final_report) -> {
       sink(RunFinished(
@@ -112,7 +112,7 @@ pub fn run_scheduled_seeded(
     Error(message) -> {
       sink(RunFinished(
         run_id,
-        report.summary(Report([], []), sys.now_ms() - started),
+        report.summary(Report([]), sys.now_ms() - started),
       ))
       Error(message)
     }
@@ -174,10 +174,11 @@ fn run_batch(
   event_buffer.take_batch()
   use resolved <- result.try(list.try_map(tests, resolve))
   let report =
-    runner.run_with_retries(
-      to_suites(resolved),
+    execute(
+      resolved,
       event_buffer.append_batch,
-      runner.Config(Some(default_timeout_ms), fail_fast),
+      default_timeout_ms,
+      fail_fast,
       retry,
     )
   Ok(BatchExecution(report, event_buffer.take_batch()))
@@ -193,10 +194,7 @@ fn without_run_brackets(events: List(Event)) -> List(Event) {
 }
 
 fn merge_reports(first: Report, second: Report) -> Report {
-  Report(
-    list.append(first.cases, second.cases),
-    list.append(first.suite_failures, second.suite_failures),
-  )
+  Report(list.append(first.cases, second.cases))
 }
 
 fn skip_remaining(
@@ -209,12 +207,8 @@ fn skip_remaining(
     |> list.flat_map(fn(wave) {
       wave.batches |> list.flat_map(fn(batch) { batch.tests })
     })
-  let skipped =
-    list.map(tests, fn(indexed) {
-      sink(CaseFinished(indexed.module, indexed.id, SkippedOutcome, 0))
-      CaseResult(indexed.module, indexed.id, SkippedOutcome, 0)
-    })
-  Report(list.append(accumulated.cases, skipped), accumulated.suite_failures)
+  let skipped = list.map(tests, fn(indexed) { skip_indexed(indexed, sink) })
+  Report(list.append(accumulated.cases, skipped))
 }
 
 fn resolve(indexed: IndexedTest) -> Result(ResolvedTest, String) {
@@ -227,44 +221,213 @@ fn resolve(indexed: IndexedTest) -> Result(ResolvedTest, String) {
   }
 }
 
-fn to_suites(tests: List(ResolvedTest)) -> List(suite.Suite) {
-  tests
-  |> list.fold([], fn(groups, indexed_test) {
-    append_test(groups, indexed_test)
-  })
-  |> list.map(fn(group) { Suite(group.0, group.1, no_hooks()) })
+fn execute(
+  tests: List(ResolvedTest),
+  sink: fn(Event) -> Nil,
+  default_timeout_ms: Int,
+  fail_fast: Bool,
+  retries: Int,
+) -> Report {
+  let run_id = sys.now_ms()
+  let started = sys.now_ms()
+  sink(RunStarted(run_id, list.length(tests)))
+  let state =
+    list.fold(group_by_module(tests), Execution([], False), fn(state, group) {
+      case state.stopped {
+        True ->
+          Execution(
+            list.append(
+              state.results,
+              list.map(group.1, fn(resolved) { skip_resolved(resolved, sink) }),
+            ),
+            True,
+          )
+        False ->
+          run_module(
+            group.0,
+            group.1,
+            sink,
+            default_timeout_ms,
+            fail_fast,
+            retries,
+            state.results,
+          )
+      }
+    })
+  let report = Report(state.results)
+  sink(RunFinished(run_id, report.summary(report, sys.now_ms() - started)))
+  report
 }
 
-fn append_test(
-  groups: List(#(String, List(Case))),
-  indexed_test: ResolvedTest,
-) -> List(#(String, List(Case))) {
-  let mode = case indexed_test.index.skip {
-    Some(_) -> Skipped
-    None -> Normal
-  }
-  let case_ =
-    Case(
-      name: indexed_test.index.id,
-      body: indexed_test.body,
-      mode:,
-      timeout_ms: indexed_test.index.timeout_ms,
-      skip_reason: indexed_test.index.skip,
-    )
-  append_case(groups, indexed_test.index.module, case_)
+type Execution {
+  Execution(results: List(CaseResult), stopped: Bool)
 }
 
-fn append_case(
-  groups: List(#(String, List(Case))),
+fn run_module(
   module_name: String,
-  case_: Case,
-) -> List(#(String, List(Case))) {
+  tests: List(ResolvedTest),
+  sink: fn(Event) -> Nil,
+  default_timeout_ms: Int,
+  fail_fast: Bool,
+  retries: Int,
+  previous: List(CaseResult),
+) -> Execution {
+  sink(SuiteStarted(module_name))
+  let state =
+    list.fold(tests, Execution(previous, False), fn(state, resolved) {
+      case state.stopped {
+        True ->
+          Execution(
+            list.append(state.results, [skip_resolved(resolved, sink)]),
+            True,
+          )
+        False -> {
+          let result = run_resolved(resolved, sink, default_timeout_ms, retries)
+          Execution(
+            list.append(state.results, [result]),
+            fail_fast && outcome_failed(result.outcome),
+          )
+        }
+      }
+    })
+  sink(SuiteFinished(module_name, Passed))
+  state
+}
+
+fn run_resolved(
+  resolved: ResolvedTest,
+  sink: fn(Event) -> Nil,
+  default_timeout_ms: Int,
+  retries: Int,
+) -> CaseResult {
+  case resolved.index.skip {
+    Some(_) -> skip_resolved(resolved, sink)
+    None -> {
+      sink(CaseStarted(resolved.index.module, resolved.index.id))
+      let started = sys.now_ms()
+      let timeout = case resolved.index.timeout_ms {
+        Some(milliseconds) -> Some(milliseconds)
+        None -> Some(default_timeout_ms)
+      }
+      let AttemptResult(outcome, stdout, stderr) =
+        retry(resolved.body, timeout, retries, 1, [], "", "")
+      let duration = sys.now_ms() - started
+      sink(CaseFinished(
+        resolved.index.module,
+        resolved.index.id,
+        outcome,
+        duration,
+      ))
+      case stdout == "" && stderr == "" {
+        True -> Nil
+        False ->
+          sink(CaseOutput(
+            resolved.index.module,
+            resolved.index.id,
+            stdout,
+            stderr,
+            outcome,
+          ))
+      }
+      CaseResult(resolved.index.module, resolved.index.id, outcome, duration)
+    }
+  }
+}
+
+type AttemptResult {
+  AttemptResult(outcome: Outcome, stdout: String, stderr: String)
+}
+
+fn retry(
+  body: fn() -> Nil,
+  timeout: Option(Int),
+  retries_left: Int,
+  attempt: Int,
+  previous_failures: List(Failure),
+  previous_stdout: String,
+  previous_stderr: String,
+) -> AttemptResult {
+  let CapturedIsolation(isolated, stdout, stderr) =
+    isolate_captured(body, timeout)
+  let outcome = outcome_of(isolated)
+  let stdout = previous_stdout <> stdout
+  let stderr = previous_stderr <> stderr
+  case outcome, retries_left, previous_failures {
+    Failed(failures), retries, _ if retries > 0 ->
+      retry(
+        body,
+        timeout,
+        retries - 1,
+        attempt + 1,
+        list.append(previous_failures, failures),
+        stdout,
+        stderr,
+      )
+    Passed, _, [] -> AttemptResult(Passed, stdout, stderr)
+    Passed, _, failures ->
+      AttemptResult(Flaky(failures, attempt), stdout, stderr)
+    Failed(failures), _, previous ->
+      AttemptResult(Failed(list.append(previous, failures)), stdout, stderr)
+    outcome, _, _ -> AttemptResult(outcome, stdout, stderr)
+  }
+}
+
+fn outcome_of(isolated: Isolated) -> Outcome {
+  case isolated {
+    Completed -> Passed
+    Crashed(error) ->
+      case error.expected, error.actual {
+        Some(expected), Some(actual) ->
+          Failed([
+            EqualityMismatch(expected, actual, error.diff, error.location),
+          ])
+        _, _ if error.name == "assert" || error.name == "let_assert" ->
+          Failed([AssertionFailed(error.message, error.location)])
+        _, _ ->
+          Failed([UnexpectedError(error.name, error.message, error.location)])
+      }
+    SkippedIsolation(reason) -> SkippedWithReason(reason)
+  }
+}
+
+fn outcome_failed(outcome: Outcome) -> Bool {
+  case outcome {
+    Failed(_) | Flaky(_, _) -> True
+    _ -> False
+  }
+}
+
+fn skip_resolved(resolved: ResolvedTest, sink: fn(Event) -> Nil) -> CaseResult {
+  skip_indexed(resolved.index, sink)
+}
+
+fn skip_indexed(indexed: IndexedTest, sink: fn(Event) -> Nil) -> CaseResult {
+  let outcome = case indexed.skip {
+    Some(reason) -> SkippedWithReason(reason)
+    None -> Skipped
+  }
+  sink(CaseFinished(indexed.module, indexed.id, outcome, 0))
+  CaseResult(indexed.module, indexed.id, outcome, 0)
+}
+
+fn group_by_module(
+  tests: List(ResolvedTest),
+) -> List(#(String, List(ResolvedTest))) {
+  list.fold(tests, [], fn(groups, resolved) {
+    append_to_group(groups, resolved)
+  })
+}
+
+fn append_to_group(
+  groups: List(#(String, List(ResolvedTest))),
+  resolved: ResolvedTest,
+) -> List(#(String, List(ResolvedTest))) {
   case groups {
-    [] -> [#(module_name, [case_])]
-    [group, ..rest] if group.0 == module_name -> [
-      #(group.0, list.append(group.1, [case_])),
+    [] -> [#(resolved.index.module, [resolved])]
+    [group, ..rest] if group.0 == resolved.index.module -> [
+      #(group.0, list.append(group.1, [resolved])),
       ..rest
     ]
-    [group, ..rest] -> [group, ..append_case(rest, module_name, case_)]
+    [group, ..rest] -> [group, ..append_to_group(rest, resolved)]
   }
 }

@@ -43,7 +43,7 @@ pub fn junit_sink(event: Event) -> Nil {
     CaseOutput(_, name, stdout, stderr, _) ->
       reporter_buffer.append_output(name, stdout, stderr)
     RunFinished(_, summary) -> {
-      let report = Report(reporter_buffer.take(), [])
+      let report = Report(reporter_buffer.take())
       let output =
         reporter_buffer.take_output()
         |> list.map(fn(capture) { CaseCapture(capture.0, capture.1, capture.2) })

@@ -29,12 +29,10 @@ pub type Event {
     outcome: Outcome,
     duration_ms: Int,
   )
-  /// A suite has started running its cases, emitted for every suite that
-  /// has at least one runnable case. Suite hooks run inside this window.
+  /// A source module has started running its selected tests.
   SuiteStarted(suite: String)
-  /// A suite finished. The outcome reflects its `before_all` / `after_all`
-  /// hooks, which run once per suite; per-case outcomes arrive as
-  /// `CaseFinished` events.
+  /// A source module finished. Per-test outcomes arrive as `CaseFinished`
+  /// events; `suite` is retained as the protocol v1 field name.
   SuiteFinished(suite: String, outcome: Outcome)
   /// The run has finished with an overall summary.
   RunFinished(run_id: Int, summary: Summary)

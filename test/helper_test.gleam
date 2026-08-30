@@ -2,8 +2,6 @@ import gleam/option.{None, Some}
 import gleam/string
 import kangaroo/internal/fs
 import kangaroo/internal/index.{type IndexedTest, IndexedTest}
-import kangaroo/internal/legacy/expect.{expect, to_be_true, to_equal}
-import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/internal/runtime
 import kangaroo/isolate.{CapturedIsolation, Completed, Crashed, SkippedIsolation}
 
@@ -32,8 +30,6 @@ fn reset_descendant_marker() -> Nil
 @external(javascript, "./runtime_fixture_ffi.mjs", "descendant_marker_exists")
 fn descendant_marker_exists() -> Bool
 
-/// Keeps process-tree cleanup independently selectable while the remaining
-/// pre-v1 helper cases are still exercised through `legacy_regression_test`.
 pub fn descendant_timeout_cleanup_test() {
   reset_descendant_marker()
   let assert Ok(loaded) = runtime.resolve(fixture("descendant_timeout_fixture"))
@@ -46,72 +42,52 @@ pub fn descendant_timeout_cleanup_test() {
   fs.sleep(200)
   let survived = descendant_marker_exists()
   reset_descendant_marker()
-  assert survived == False
+  assert !survived
 }
 
-pub fn suites() {
-  [
-    suite("helpers", [
-      it("turns a dynamic skip into an isolated skipped result", fn() {
-        let assert Ok(loaded) = runtime.resolve(fixture("dynamic_skip_fixture"))
-        expect(runtime.run(loaded, None))
-        |> to_equal(SkippedIsolation("windows only"))
-      }),
-      it("runs teardown and retains both body and teardown failures", fn() {
-        let assert Ok(loaded) =
-          runtime.resolve(fixture("fixture_double_failure"))
-        case runtime.run(loaded, None) {
-          Crashed(error) -> {
-            expect(string.contains(error.message, "body exploded"))
-            |> to_be_true()
-            expect(string.contains(error.message, "cleanup exploded"))
-            |> to_be_true()
-          }
-          _ -> panic as "expected the fixture to fail"
-        }
-      }),
-      it("awaits a promise returned by a JavaScript test", fn() {
-        let assert Ok(loaded) = runtime.resolve(fixture("promise_pass_fixture"))
-        expect(runtime.run(loaded, Some(1000))) |> to_equal(Completed([]))
-      }),
-      it("converts a rejected promise to the common failure model", fn() {
-        let assert Ok(loaded) =
-          runtime.resolve(fixture("promise_reject_fixture"))
-        case runtime.run(loaded, Some(1000)) {
-          Crashed(error) ->
-            expect(string.contains(error.message, "async rejected"))
-            |> to_be_true()
-          _ -> panic as "expected rejected promise failure"
-        }
-      }),
-      it("interrupts an unresolved promise at the test timeout", fn() {
-        let assert Ok(loaded) =
-          runtime.resolve(fixture("promise_timeout_fixture"))
-        case runtime.run(loaded, Some(10)) {
-          Crashed(error) -> expect(error.name) |> to_equal("timeout")
-          _ -> panic as "expected timeout"
-        }
-      }),
-      it("retains output written before a timeout", fn() {
-        let assert Ok(loaded) =
-          runtime.resolve(fixture("output_timeout_fixture"))
-        case runtime.run_captured(loaded, Some(10)) {
-          CapturedIsolation(Crashed(error), stdout, _) -> {
-            expect(error.name) |> to_equal("timeout")
-            expect(stdout) |> to_equal("before timeout\n")
-          }
-          _ -> panic as "expected captured timeout"
-        }
-      }),
-      it("terminates descendant work when an isolated test ends", fn() {
-        reset_descendant_marker()
-        let assert Ok(loaded) = runtime.resolve(fixture("descendant_fixture"))
-        expect(runtime.run(loaded, Some(1000))) |> to_equal(Completed([]))
-        fs.sleep(200)
-        let survived = descendant_marker_exists()
-        reset_descendant_marker()
-        expect(survived) |> to_equal(False)
-      }),
-    ]),
-  ]
+pub fn dynamic_skip_becomes_an_isolated_skipped_result_test() {
+  let assert Ok(loaded) = runtime.resolve(fixture("dynamic_skip_fixture"))
+  assert runtime.run(loaded, None) == SkippedIsolation("windows only")
+}
+
+pub fn fixture_retains_body_and_teardown_failures_test() {
+  let assert Ok(loaded) = runtime.resolve(fixture("fixture_double_failure"))
+  let assert Crashed(error) = runtime.run(loaded, None)
+  assert string.contains(error.message, "body exploded")
+  assert string.contains(error.message, "cleanup exploded")
+}
+
+pub fn javascript_promise_result_is_awaited_test() {
+  let assert Ok(loaded) = runtime.resolve(fixture("promise_pass_fixture"))
+  assert runtime.run(loaded, Some(1000)) == Completed
+}
+
+pub fn rejected_promise_uses_the_common_failure_model_test() {
+  let assert Ok(loaded) = runtime.resolve(fixture("promise_reject_fixture"))
+  let assert Crashed(error) = runtime.run(loaded, Some(1000))
+  assert string.contains(error.message, "async rejected")
+}
+
+pub fn unresolved_promise_is_interrupted_at_timeout_test() {
+  let assert Ok(loaded) = runtime.resolve(fixture("promise_timeout_fixture"))
+  let assert Crashed(error) = runtime.run(loaded, Some(10))
+  assert error.name == "timeout"
+}
+
+pub fn output_before_timeout_is_retained_test() {
+  let assert Ok(loaded) = runtime.resolve(fixture("output_timeout_fixture"))
+  let assert CapturedIsolation(Crashed(error), stdout, _) =
+    runtime.run_captured(loaded, Some(10))
+  assert error.name == "timeout"
+  assert stdout == "before timeout\n"
+}
+
+pub fn isolated_test_termination_cleans_descendants_test() {
+  reset_descendant_marker()
+  let assert Ok(loaded) = runtime.resolve(fixture("descendant_fixture"))
+  assert runtime.run(loaded, Some(1000)) == Completed
+  fs.sleep(200)
+  let survived = descendant_marker_exists()
+  reset_descendant_marker()
+  assert !survived
 }

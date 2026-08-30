@@ -9,7 +9,7 @@ import kangaroo/report.{CaseResult}
 
 pub fn empty_case_output_does_not_print_a_blank_line_test() {
   assert format.case_output_text("case", "", "", Passed) == None
-  let assert CapturedIsolation(Completed([]), stdout, stderr) =
+  let assert CapturedIsolation(Completed, stdout, stderr) =
     isolate_captured(
       fn() { format.print_sink(CaseOutput("suite", "case", "", "", Passed)) },
       None,

@@ -5,19 +5,16 @@ import kangaroo/internal/reporter
 import kangaroo/report.{CaseResult, Report}
 
 fn sample_report() {
-  Report(
-    cases: [
-      CaseResult("math", "test/math.gleam::passes_test", Passed, 5),
-      CaseResult(
-        "math",
-        "test/math.gleam::fails_test",
-        Failed([UnexpectedError("panic", "a < b & c", None)]),
-        10,
-      ),
-      CaseResult("io", "test/io.gleam::skip_test", Skipped, 0),
-    ],
-    suite_failures: [],
-  )
+  Report(cases: [
+    CaseResult("math", "test/math.gleam::passes_test", Passed, 5),
+    CaseResult(
+      "math",
+      "test/math.gleam::fails_test",
+      Failed([UnexpectedError("panic", "a < b & c", None)]),
+      10,
+    ),
+    CaseResult("io", "test/io.gleam::skip_test", Skipped, 0),
+  ])
 }
 
 pub fn dot_reporter_maps_outcomes_to_compact_symbols_test() {

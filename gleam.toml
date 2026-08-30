@@ -5,7 +5,6 @@ description = "A next-generation continuous test runner for Gleam, inspired by W
 licences = ["Apache-2.0"]
 repository = { type = "github", user = "P4suta", repo = "kangaroo" }
 internal_modules = [
-  "kangaroo/context",
   "kangaroo/diff",
   "kangaroo/encode",
   "kangaroo/event",
@@ -16,7 +15,6 @@ internal_modules = [
   "kangaroo/location",
   "kangaroo/print",
   "kangaroo/report",
-  "kangaroo/runner",
   "kangaroo/sys",
 ]
 

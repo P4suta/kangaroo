@@ -1,7 +1,6 @@
 %% Runs a test case body in a freshly spawned process so that panics and
-%% stray processes cannot take down the runner, then reports the collected
-%% matcher failures (or the error that was raised). The source location of
-%% a crash is derived from its stack by the pure `kangaroo@location` module.
+%% stray processes cannot take down the runner. The source location of a
+%% crash is derived from its stack by the pure `kangaroo@location` module.
 -module(kangaroo_isolate_ffi).
 -export([isolate/2, isolate_captured/2]).
 
@@ -28,8 +27,7 @@ isolate_captured(Body, Timeout) ->
                                 group_leader(Collector, self()),
                                 try
                                     Body(),
-                                    Parent ! {kangaroo_done,
-                                              kangaroo_context_ffi:collect()}
+                                    Parent ! kangaroo_done
                                 catch
                                     error:#{kangaroo_error := skip,
                                             reason := SkipReason}:_Stack ->
@@ -44,9 +42,9 @@ isolate_captured(Body, Timeout) ->
     1 = erlang:trace(Pid, true, [procs, set_on_spawn]),
     Pid ! kangaroo_start,
     receive
-        {kangaroo_done, Failures} ->
+        kangaroo_done ->
             cleanup_descendants(Pid),
-            finish_capture(Collector, {completed, Failures});
+            finish_capture(Collector, completed);
         {kangaroo_crashed, _Class, Reason, Stack} ->
             cleanup_descendants(Pid),
             {Expected, Actual, Diff} = assertion_fields(Reason),

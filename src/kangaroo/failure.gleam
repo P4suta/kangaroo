@@ -2,9 +2,9 @@ import gleam/list
 import gleam/option.{type Option, Some}
 import kangaroo/location.{type Location}
 
-/// A failure recorded by a matcher or caused by an unexpected error while a
-/// test case was running. `location` is the source position the failure
-/// originates from, when it can be determined.
+/// A failure recovered from a standard assertion or caused by an unexpected
+/// error while a test case was running. `location` is the source position the
+/// failure originates from, when it can be determined.
 pub type Failure {
   /// The actual value did not equal the expected one. `diff` is a
   /// line-oriented diff of their printed representations, when useful.

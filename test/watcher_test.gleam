@@ -1,6 +1,4 @@
 import gleam/dict
-import kangaroo/internal/legacy/expect.{expect, to_equal}
-import kangaroo/internal/legacy/suite.{it, suite}
 import kangaroo/internal/watcher.{Added, Modified, Removed}
 
 pub fn compile_command_compiles_test_modules_without_running_them_test() {
@@ -11,171 +9,141 @@ pub fn compile_command_compiles_test_modules_without_running_them_test() {
   assert watcher.compile_environment() == [#("KANGAROO_COMPILE_ONLY", "1")]
 }
 
-pub fn suites() {
-  [
-    suite("watch snapshots", [
-      it("detects add modify remove including identical metadata saves", fn() {
-        let before =
-          dict.from_list([
-            #("src/changed.gleam", "old bytes"),
-            #("src/removed.gleam", "gone"),
-          ])
-        let after =
-          dict.from_list([
-            #("src/added.gleam", "new"),
-            #("src/changed.gleam", "new bytes"),
-          ])
-        expect(watcher.diff(before, after))
-        |> to_equal([
-          Added("src/added.gleam"),
-          Modified("src/changed.gleam"),
-          Removed("src/removed.gleam"),
-        ])
-      }),
-      it("normalises rename as an add and a removal", fn() {
-        expect(watcher.diff(
-          dict.from_list([#("test\\old.gleam", "same")]),
-          dict.from_list([#("test/new.gleam", "same")]),
-        ))
-        |> to_equal([
-          Added("test/new.gleam"),
-          Removed("test/old.gleam"),
-        ])
-      }),
-      it("watches Gleam FFI configuration and manifest files", fn() {
-        expect(watcher.is_watched("src/a.gleam")) |> to_equal(True)
-        expect(watcher.is_watched("src/a.erl")) |> to_equal(True)
-        expect(watcher.is_watched("src/a.mjs")) |> to_equal(True)
-        expect(watcher.is_watched("gleam.toml")) |> to_equal(True)
-        expect(watcher.is_watched("manifest.toml")) |> to_equal(True)
-        expect(watcher.is_watched("README.md")) |> to_equal(False)
-      }),
-      it("builds a unique normalised watch root set", fn() {
-        expect(watcher.roots(["test", "test\\integration"], ["priv", "test"]))
-        |> to_equal(["src", "test", "test/integration", "priv"])
-      }),
-      it("compiles test modules without executing their bodies", fn() {
-        expect(watcher.compile_arguments("javascript", "bun"))
-        |> to_equal([
-          "test",
-          "--target",
-          "javascript",
-          "--runtime",
-          "bun",
-        ])
-        expect(watcher.compile_environment())
-        |> to_equal([#("KANGAROO_COMPILE_ONLY", "1")])
-      }),
-      it("invalidates only stale compiler products for content changes", fn() {
-        expect(
-          watcher.stale_build_files("/project", "sample_app", "javascript", [
-            Modified("test/unit/math_test.gleam"),
-            Modified("test/math_test_ffi.mjs"),
-            Modified("test/math_test_ffi.erl"),
-            Added("src/new_module.gleam"),
-            Removed("src/old/module.gleam"),
-          ]),
-        )
-        |> to_equal([
-          "/project/build/dev/javascript/sample_app/_gleam_artefacts/unit@math_test.cache_meta",
-          "/project/build/dev/javascript/sample_app/math_test_ffi.mjs",
-          "/project/build/dev/javascript/sample_app/_gleam_artefacts/old@module.cache_meta",
-          "/project/build/dev/javascript/sample_app/_gleam_artefacts/old@module.cache",
-          "/project/build/dev/javascript/sample_app/old/module.mjs",
-        ])
-      }),
-      it("builds a target-specific cancellable child run command", fn() {
-        expect(
-          watcher.run_arguments("javascript", [
-            "test/a.gleam::a_test",
-            "--reporter",
-            "dot",
-          ]),
-        )
-        |> to_equal([
-          "test",
-          "--target",
-          "javascript",
-          "--",
-          "test/a.gleam::a_test",
-          "--reporter",
-          "dot",
-        ])
-      }),
-      it("preserves the active JavaScript runtime in child generations", fn() {
-        expect(
-          watcher.run_arguments_for("javascript", "bun", ["--tag", "unit"]),
-        )
-        |> to_equal([
-          "test",
-          "--target",
-          "javascript",
-          "--runtime",
-          "bun",
-          "--",
-          "--tag",
-          "unit",
-        ])
-        expect(watcher.run_arguments_for("erlang", "erlang", []))
-        |> to_equal(["test", "--target", "erlang", "--"])
-      }),
-      it("runs compiled Erlang watch generations without a launcher", fn() {
-        expect(watcher.generation_executable("erlang")) |> to_equal("erl")
-        expect(
-          watcher.generation_arguments_for("erlang", "erlang", [
-            "test/math_test.gleam::addition_test",
-            "--reporter",
-            "dot",
-          ]),
-        )
-        |> to_equal([
-          "-noshell",
-          "-eval",
-          "code:add_paths(filelib:wildcard(\"build/dev/erlang/*/ebin\")), kangaroo:main().",
-          "-extra",
-          "test/math_test.gleam::addition_test",
-          "--reporter",
-          "dot",
-        ])
-        expect(watcher.generation_executable("javascript"))
-        |> to_equal("gleam")
-      }),
-      it("starts the watch coordinator through the public run command", fn() {
-        expect(
-          watcher.coordinator_arguments_for("javascript", "deno", [
-            "watch",
-            "--tag",
-            "unit",
-          ]),
-        )
-        |> to_equal([
-          "run",
-          "--target",
-          "javascript",
-          "--runtime",
-          "deno",
-          "-m",
-          "kangaroo",
-          "--",
-          "watch",
-          "--tag",
-          "unit",
-        ])
-        expect(
-          watcher.coordinator_arguments_for("erlang", "erlang", [
-            "watch",
-          ]),
-        )
-        |> to_equal([
-          "run",
-          "--target",
-          "erlang",
-          "-m",
-          "kangaroo",
-          "--",
-          "watch",
-        ])
-      }),
-    ]),
-  ]
+pub fn snapshot_diff_detects_add_modify_and_remove_test() {
+  let before =
+    dict.from_list([
+      #("src/changed.gleam", "old bytes"),
+      #("src/removed.gleam", "gone"),
+    ])
+  let after =
+    dict.from_list([
+      #("src/added.gleam", "new"),
+      #("src/changed.gleam", "new bytes"),
+    ])
+  assert watcher.diff(before, after)
+    == [
+      Added("src/added.gleam"),
+      Modified("src/changed.gleam"),
+      Removed("src/removed.gleam"),
+    ]
+}
+
+pub fn rename_is_normalised_as_add_and_remove_test() {
+  assert watcher.diff(
+      dict.from_list([#("test\\old.gleam", "same")]),
+      dict.from_list([#("test/new.gleam", "same")]),
+    )
+    == [Added("test/new.gleam"), Removed("test/old.gleam")]
+}
+
+pub fn gleam_ffi_config_and_manifest_files_are_watched_test() {
+  assert watcher.is_watched("src/a.gleam")
+  assert watcher.is_watched("src/a.erl")
+  assert watcher.is_watched("src/a.mjs")
+  assert watcher.is_watched("gleam.toml")
+  assert watcher.is_watched("manifest.toml")
+  assert !watcher.is_watched("README.md")
+}
+
+pub fn watch_roots_are_unique_and_normalised_test() {
+  assert watcher.roots(["test", "test\\integration"], ["priv", "test"])
+    == ["src", "test", "test/integration", "priv"]
+}
+
+pub fn javascript_compile_command_does_not_execute_tests_test() {
+  assert watcher.compile_arguments("javascript", "bun")
+    == ["test", "--target", "javascript", "--runtime", "bun"]
+  assert watcher.compile_environment() == [#("KANGAROO_COMPILE_ONLY", "1")]
+}
+
+pub fn only_stale_compiler_products_are_invalidated_test() {
+  assert watcher.stale_build_files("/project", "sample_app", "javascript", [
+      Modified("test/unit/math_test.gleam"),
+      Modified("test/math_test_ffi.mjs"),
+      Modified("test/math_test_ffi.erl"),
+      Added("src/new_module.gleam"),
+      Removed("src/old/module.gleam"),
+    ])
+    == [
+      "/project/build/dev/javascript/sample_app/_gleam_artefacts/unit@math_test.cache_meta",
+      "/project/build/dev/javascript/sample_app/math_test_ffi.mjs",
+      "/project/build/dev/javascript/sample_app/_gleam_artefacts/old@module.cache_meta",
+      "/project/build/dev/javascript/sample_app/_gleam_artefacts/old@module.cache",
+      "/project/build/dev/javascript/sample_app/old/module.mjs",
+    ]
+}
+
+pub fn cancellable_child_run_command_is_target_specific_test() {
+  assert watcher.run_arguments("javascript", [
+      "test/a.gleam::a_test",
+      "--reporter",
+      "dot",
+    ])
+    == [
+      "test",
+      "--target",
+      "javascript",
+      "--",
+      "test/a.gleam::a_test",
+      "--reporter",
+      "dot",
+    ]
+}
+
+pub fn child_generations_preserve_the_javascript_runtime_test() {
+  assert watcher.run_arguments_for("javascript", "bun", ["--tag", "unit"])
+    == [
+      "test",
+      "--target",
+      "javascript",
+      "--runtime",
+      "bun",
+      "--",
+      "--tag",
+      "unit",
+    ]
+  assert watcher.run_arguments_for("erlang", "erlang", [])
+    == ["test", "--target", "erlang", "--"]
+}
+
+pub fn compiled_erlang_generations_run_without_a_launcher_test() {
+  assert watcher.generation_executable("erlang") == "erl"
+  assert watcher.generation_arguments_for("erlang", "erlang", [
+      "test/math_test.gleam::addition_test",
+      "--reporter",
+      "dot",
+    ])
+    == [
+      "-noshell",
+      "-eval",
+      "code:add_paths(filelib:wildcard(\"build/dev/erlang/*/ebin\")), kangaroo:main().",
+      "-extra",
+      "test/math_test.gleam::addition_test",
+      "--reporter",
+      "dot",
+    ]
+  assert watcher.generation_executable("javascript") == "gleam"
+}
+
+pub fn coordinator_starts_through_the_public_run_command_test() {
+  assert watcher.coordinator_arguments_for("javascript", "deno", [
+      "watch",
+      "--tag",
+      "unit",
+    ])
+    == [
+      "run",
+      "--target",
+      "javascript",
+      "--runtime",
+      "deno",
+      "-m",
+      "kangaroo",
+      "--",
+      "watch",
+      "--tag",
+      "unit",
+    ]
+  assert watcher.coordinator_arguments_for("erlang", "erlang", ["watch"])
+    == ["run", "--target", "erlang", "-m", "kangaroo", "--", "watch"]
 }

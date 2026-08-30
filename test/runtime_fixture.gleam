@@ -1,6 +1,5 @@
 import gleam/io
 import kangaroo
-import kangaroo/internal/legacy/expect.{expect, to_equal}
 
 pub fn passing_test() {
   assert 1 + 1 == 2
@@ -8,6 +7,14 @@ pub fn passing_test() {
 
 pub fn panic_fixture() {
   panic as "fixture exploded"
+}
+
+@external(erlang, "kangaroo_cli_test_ffi", "fail_once")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "fail_once")
+fn fail_once() -> Nil
+
+pub fn flaky_fixture() {
+  fail_once()
 }
 
 @external(erlang, "runtime_fixture_ffi", "left_value")
@@ -59,10 +66,6 @@ pub fn non_binary_assert_fixture() {
 pub fn plain_assert_fixture() {
   let condition = False
   assert condition
-}
-
-pub fn matcher_failure_fixture() {
-  expect(1) |> to_equal(2)
 }
 
 pub fn output_fixture() {

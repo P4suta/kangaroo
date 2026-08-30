@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 import { format as formatValue } from "node:util";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { inspect as inspectValue } from "../gleam_stdlib/gleam/string.mjs";
-import { collect as collectMatcherFailures } from "./kangaroo_context_ffi.mjs";
 import { flush as flushCoverage } from "./kangaroo_coverage_probe_ffi.mjs";
 import { diff_lines as diffLines } from "./kangaroo/diff.mjs";
 import { terminateProcessTree } from "./kangaroo_process_tree.mjs";
@@ -128,7 +127,7 @@ async function execute() {
     }
     signalStarted();
     await fun();
-    finish(1, { failures: serialiseMatcherFailures() });
+    finish(1, {});
   } catch (error) {
     if (error && error.kangaroo_skip === true) {
       finish(2, { reason: String(error.reason || "skipped") });
@@ -209,48 +208,10 @@ function structuredDetails(error) {
   };
 }
 
-function serialiseMatcherFailures() {
-  return Array.from(collectMatcherFailures(), (failure) => {
-    const type = failure?.constructor?.name;
-    if (type === "EqualityMismatch") {
-      return {
-        type: "equality",
-        expected: String(failure.expected),
-        actual: String(failure.actual),
-        diff: optionValue(failure.diff),
-        location: serialiseLocation(failure.location),
-      };
-    }
-    if (type === "AssertionFailed") {
-      return {
-        type: "assertion",
-        message: String(failure.message),
-        location: serialiseLocation(failure.location),
-      };
-    }
-    return {
-      type: "unexpected",
-      name: String(failure?.name || type || "error"),
-      message: String(failure?.message || inspectValue(failure)),
-      location: serialiseLocation(failure?.location),
-    };
-  });
-}
-
 function optionValue(option) {
   return option && Object.prototype.hasOwnProperty.call(option, "0")
     ? option[0]
     : null;
-}
-
-function serialiseLocation(option) {
-  const location = optionValue(option);
-  if (!location) return null;
-  return {
-    file: String(location.file),
-    line: Number(location.line),
-    column: optionValue(location.column),
-  };
 }
 
 function withExpression(message, error) {

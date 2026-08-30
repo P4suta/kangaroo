@@ -1,8 +1,6 @@
 import gleam/option.{None, Some}
 import gleam/string
 import kangaroo/internal/index.{IndexedModule, IndexedTest}
-import kangaroo/internal/legacy/expect.{expect, to_equal}
-import kangaroo/internal/legacy/suite.{it, suite}
 
 pub fn underscored_timeout_literal_test() {
   let source =
@@ -12,147 +10,127 @@ pub fn underscored_timeout_literal_test() {
   assert indexed.timeout_ms == Some(120_000)
 }
 
-pub fn suites() {
-  [
-    suite("source index", [
-      it("discovers only public zero-argument *_test functions", fn() {
-        let source =
-          "import app/math\n\nfn private_test() { Nil }\n\npub fn takes_an_argument_test(value: Int) { value }\n\npub fn first_test() { assert 1 == 1 }\n\npub fn helper() { Nil }\n\npub fn second_test() { Nil }\n"
-        let assert Ok(IndexedModule(
-          module: "unit/math_test",
-          imports: ["app/math"],
-          tests: tests,
-          ..,
-        )) = index.index("test/unit/math_test.gleam", source, ["test"])
+pub fn only_public_zero_argument_test_functions_are_discovered_test() {
+  let source =
+    "import app/math\n\nfn private_test() { Nil }\n\npub fn takes_an_argument_test(value: Int) { value }\n\npub fn first_test() { assert 1 == 1 }\n\npub fn helper() { Nil }\n\npub fn second_test() { Nil }\n"
+  let assert Ok(IndexedModule(
+    module: "unit/math_test",
+    imports: ["app/math"],
+    tests: tests,
+    ..,
+  )) = index.index("test/unit/math_test.gleam", source, ["test"])
 
-        expect(tests)
-        |> to_equal([
-          IndexedTest(
-            id: "test/unit/math_test.gleam::first_test",
-            name: "first_test",
-            path: "test/unit/math_test.gleam",
-            module: "unit/math_test",
-            line: 7,
-            column: 1,
-            end_line: 7,
-            end_column: 38,
-            tags: [],
-            timeout_ms: None,
-            serial: False,
-            skip: None,
-          ),
-          IndexedTest(
-            id: "test/unit/math_test.gleam::second_test",
-            name: "second_test",
-            path: "test/unit/math_test.gleam",
-            module: "unit/math_test",
-            line: 11,
-            column: 1,
-            end_line: 11,
-            end_column: 29,
-            tags: [],
-            timeout_ms: None,
-            serial: False,
-            skip: None,
-          ),
-        ])
-      }),
-      it("extracts literal metadata from the function AST", fn() {
-        let source =
-          "import kangaroo as k\n\npub fn database_test() {\n  k.tag(\"database\")\n  k.tags([\"integration\", \"slow\"])\n  k.timeout(250)\n  k.serial()\n  k.skip(\"waiting for postgres\")\n}\n"
-        let assert Ok(IndexedModule(tests: [indexed_test], ..)) =
-          index.index("test/database.gleam", source, ["test"])
+  assert tests
+    == [
+      IndexedTest(
+        id: "test/unit/math_test.gleam::first_test",
+        name: "first_test",
+        path: "test/unit/math_test.gleam",
+        module: "unit/math_test",
+        line: 7,
+        column: 1,
+        end_line: 7,
+        end_column: 38,
+        tags: [],
+        timeout_ms: None,
+        serial: False,
+        skip: None,
+      ),
+      IndexedTest(
+        id: "test/unit/math_test.gleam::second_test",
+        name: "second_test",
+        path: "test/unit/math_test.gleam",
+        module: "unit/math_test",
+        line: 11,
+        column: 1,
+        end_line: 11,
+        end_column: 29,
+        tags: [],
+        timeout_ms: None,
+        serial: False,
+        skip: None,
+      ),
+    ]
+}
 
-        expect(indexed_test.tags)
-        |> to_equal(["database", "integration", "slow"])
-        expect(indexed_test.timeout_ms) |> to_equal(Some(250))
-        expect(indexed_test.serial) |> to_equal(True)
-        expect(indexed_test.skip) |> to_equal(Some("waiting for postgres"))
-      }),
-      it("rejects dynamic tag timeout and serial metadata", fn() {
-        let tag_source =
-          "import kangaroo\npub fn bad_test() { kangaroo.tag(label) }"
-        let timeout_source =
-          "import kangaroo\npub fn bad_test() { kangaroo.timeout(limit) }"
-        let serial_source =
-          "import kangaroo\npub fn bad_test() { kangaroo.serial(enabled) }"
+pub fn literal_metadata_is_extracted_from_the_function_ast_test() {
+  let source =
+    "import kangaroo as k\n\npub fn database_test() {\n  k.tag(\"database\")\n  k.tags([\"integration\", \"slow\"])\n  k.timeout(250)\n  k.serial()\n  k.skip(\"waiting for postgres\")\n}\n"
+  let assert Ok(IndexedModule(tests: [indexed_test], ..)) =
+    index.index("test/database.gleam", source, ["test"])
 
-        expect(index.index("test/bad.gleam", tag_source, ["test"]))
-        |> to_equal(
-          Error(index.InvalidMetadata(
-            id: "test/bad.gleam::bad_test",
-            line: 2,
-            message: "tag must be a string literal",
-          )),
-        )
-        expect(index.index("test/bad.gleam", timeout_source, ["test"]))
-        |> to_equal(
-          Error(index.InvalidMetadata(
-            id: "test/bad.gleam::bad_test",
-            line: 2,
-            message: "timeout must be a positive integer literal",
-          )),
-        )
-        expect(index.index("test/bad.gleam", serial_source, ["test"]))
-        |> to_equal(
-          Error(index.InvalidMetadata(
-            id: "test/bad.gleam::bad_test",
-            line: 2,
-            message: "serial takes no arguments",
-          )),
-        )
-        let skip_source =
-          "import kangaroo\npub fn bad_test() { kangaroo.skip(reason) }"
-        expect(index.index("test/bad.gleam", skip_source, ["test"]))
-        |> to_equal(
-          Error(index.InvalidMetadata(
-            id: "test/bad.gleam::bad_test",
-            line: 2,
-            message: "skip must be a string literal",
-          )),
-        )
-      }),
-      it("normalises windows paths and selects the longest test root", fn() {
-        let source = "pub fn path_test() { Nil }"
-        let assert Ok(IndexedModule(path: path, module: module, ..)) =
-          index.index("spec\\integration\\path_test.gleam", source, [
-            "spec",
-            "spec/integration",
-          ])
-        expect(path) |> to_equal("spec/integration/path_test.gleam")
-        expect(module) |> to_equal("path_test")
-      }),
-      it("uses a stable content hash that changes with content", fn() {
-        let assert Ok(first) =
-          index.index("test/hash_test.gleam", "pub fn hash_test() { Nil }", [
-            "test",
-          ])
-        let assert Ok(same) =
-          index.index("test/hash_test.gleam", "pub fn hash_test() { Nil }", [
-            "test",
-          ])
-        let assert Ok(changed) =
-          index.index("test/hash_test.gleam", "pub fn hash_test() { 1 }", [
-            "test",
-          ])
-        expect(first.content_hash == same.content_hash) |> to_equal(True)
-        expect(first.content_hash == changed.content_hash) |> to_equal(False)
-        expect(index.source_hash(string.repeat("kangaroo🦘", 1000)))
-        |> to_equal("2DB7554B")
-      }),
-      it("returns a located parse error instead of a partial index", fn() {
-        let result =
-          index.index("test/broken_test.gleam", "pub fn broken_test( {", [
-            "test",
-          ])
-        case result {
-          Error(index.ParseError(path, line, _)) -> {
-            expect(path) |> to_equal("test/broken_test.gleam")
-            expect(line > 0) |> to_equal(True)
-          }
-          _ -> panic as "expected a parse error"
-        }
-      }),
-    ]),
-  ]
+  assert indexed_test.tags == ["database", "integration", "slow"]
+  assert indexed_test.timeout_ms == Some(250)
+  assert indexed_test.serial
+  assert indexed_test.skip == Some("waiting for postgres")
+}
+
+pub fn dynamic_metadata_is_rejected_test() {
+  let tag_source = "import kangaroo\npub fn bad_test() { kangaroo.tag(label) }"
+  let timeout_source =
+    "import kangaroo\npub fn bad_test() { kangaroo.timeout(limit) }"
+  let serial_source =
+    "import kangaroo\npub fn bad_test() { kangaroo.serial(enabled) }"
+  let skip_source =
+    "import kangaroo\npub fn bad_test() { kangaroo.skip(reason) }"
+
+  assert index.index("test/bad.gleam", tag_source, ["test"])
+    == Error(index.InvalidMetadata(
+      id: "test/bad.gleam::bad_test",
+      line: 2,
+      message: "tag must be a string literal",
+    ))
+  assert index.index("test/bad.gleam", timeout_source, ["test"])
+    == Error(index.InvalidMetadata(
+      id: "test/bad.gleam::bad_test",
+      line: 2,
+      message: "timeout must be a positive integer literal",
+    ))
+  assert index.index("test/bad.gleam", serial_source, ["test"])
+    == Error(index.InvalidMetadata(
+      id: "test/bad.gleam::bad_test",
+      line: 2,
+      message: "serial takes no arguments",
+    ))
+  assert index.index("test/bad.gleam", skip_source, ["test"])
+    == Error(index.InvalidMetadata(
+      id: "test/bad.gleam::bad_test",
+      line: 2,
+      message: "skip must be a string literal",
+    ))
+}
+
+pub fn windows_paths_use_the_longest_test_root_test() {
+  let source = "pub fn path_test() { Nil }"
+  let assert Ok(IndexedModule(path: path, module: module, ..)) =
+    index.index("spec\\integration\\path_test.gleam", source, [
+      "spec",
+      "spec/integration",
+    ])
+  assert path == "spec/integration/path_test.gleam"
+  assert module == "path_test"
+}
+
+pub fn content_hash_is_stable_and_changes_with_content_test() {
+  let assert Ok(first) =
+    index.index("test/hash_test.gleam", "pub fn hash_test() { Nil }", [
+      "test",
+    ])
+  let assert Ok(same) =
+    index.index("test/hash_test.gleam", "pub fn hash_test() { Nil }", [
+      "test",
+    ])
+  let assert Ok(changed) =
+    index.index("test/hash_test.gleam", "pub fn hash_test() { 1 }", ["test"])
+  assert first.content_hash == same.content_hash
+  assert first.content_hash != changed.content_hash
+  assert index.source_hash(string.repeat("kangaroo🦘", 1000)) == "2DB7554B"
+}
+
+pub fn parse_errors_are_located_without_a_partial_index_test() {
+  let result =
+    index.index("test/broken_test.gleam", "pub fn broken_test( {", ["test"])
+  let assert Error(index.ParseError(path, line, _)) = result
+  assert path == "test/broken_test.gleam"
+  assert line > 0
 }

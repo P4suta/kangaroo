@@ -1,7 +1,4 @@
-// Runs a test case body in isolation, catching any error it raises and
-// reporting the matcher failures it recorded. The previous failure context
-// is saved and restored so that nested runs (cases that themselves run
-// cases) stay isolated from each other.
+// Runs a test case body in isolation and catches any error it raises.
 import {
   CapturedIsolation,
   CaughtError,
@@ -9,16 +6,9 @@ import {
   Crashed,
   SkippedIsolation,
 } from "./kangaroo/isolate.mjs";
-import {
-  AssertionFailed,
-  EqualityMismatch,
-  UnexpectedError,
-} from "./kangaroo/failure.mjs";
-import { Location, from_js_stack } from "./kangaroo/location.mjs";
-import { collect, restore, save } from "./kangaroo_context_ffi.mjs";
+import { from_js_stack } from "./kangaroo/location.mjs";
 import { Worker } from "node:worker_threads";
 import { format as formatValue } from "node:util";
-import { toList } from "./gleam.mjs";
 import { terminateProcessTree } from "./kangaroo_process_tree.mjs";
 import {
   Option$None$const,
@@ -34,11 +24,10 @@ export function isolate_captured(body, timeout_ms) {
     return isolateWorker(body, timeout_ms);
   }
   const output = captureOutput();
-  const previous = save();
   let result;
   try {
     body();
-    result = new Completed(collect());
+    result = new Completed();
   } catch (error) {
     if (error && error.kangaroo_skip === true) {
       result = new SkippedIsolation(String(error.reason || "skipped"));
@@ -64,7 +53,6 @@ export function isolate_captured(body, timeout_ms) {
       );
     }
   } finally {
-    restore(previous);
     output.restore();
   }
   return new CapturedIsolation(result, output.stdout(), output.stderr());
@@ -155,7 +143,7 @@ function isolateWorker(body, timeoutOption) {
 
   let result;
   if (status === 1) {
-    result = new Completed(deserialiseFailures(payload.failures));
+    result = new Completed();
   } else if (status === 2) {
     result = new SkippedIsolation(payload.reason || "skipped");
   } else {
@@ -175,40 +163,6 @@ function isolateWorker(body, timeoutOption) {
     sharedOutput(control, 3, stdoutData),
     sharedOutput(control, 4, stderrData),
   );
-}
-
-function deserialiseFailures(failures) {
-  if (!Array.isArray(failures)) return toList([]);
-  return toList(failures.map((failure) => {
-    const location = deserialiseLocation(failure.location);
-    if (failure.type === "equality") {
-      return new EqualityMismatch(
-        String(failure.expected),
-        String(failure.actual),
-        optional(failure.diff),
-        location,
-      );
-    }
-    if (failure.type === "assertion") {
-      return new AssertionFailed(String(failure.message), location);
-    }
-    return new UnexpectedError(
-      String(failure.name || "error"),
-      String(failure.message || "test failed"),
-      location,
-    );
-  }));
-}
-
-function deserialiseLocation(location) {
-  if (!location || typeof location.file !== "string") return Option$None$const;
-  return new Some(new Location(
-    location.file,
-    Number(location.line),
-    typeof location.column === "number"
-      ? new Some(location.column)
-      : Option$None$const,
-  ));
 }
 
 function requestWorkerCancellation(worker, control, onRequested) {

@@ -2,17 +2,21 @@ import { toList } from "./gleam.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 
-let flakyAttempt = 0;
 let markerId = 0;
+const flakyMarker = join(
+  tmpdir(),
+  `kangaroo-flaky-${globalThis.process.pid}.marker`,
+);
 
 export function reset_flaky() {
-  flakyAttempt = 0;
+  if (existsSync(flakyMarker)) unlinkSync(flakyMarker);
 }
 
 export function fail_once() {
-  flakyAttempt += 1;
-  if (flakyAttempt === 1) {
+  if (!existsSync(flakyMarker)) {
+    writeFileSync(flakyMarker, "failed once");
     const error = new Error("first attempt failed");
     error.gleam_error = "panic";
     throw error;
