@@ -58,6 +58,9 @@ versioning.
   variables without passing fragile OTP port arguments or parsing redirected
   PowerShell output, invalidate changed helper binaries, and terminate remaining
   Job Object descendants without racing the enclosing test timeout.
+- Distinguished synchronous coverage preparation from the cancellable child
+  run in the watch TUI, so its running state is a reliable cancellation
+  boundary even on a loaded JavaScript host.
 - Preserved UTF-8 command arguments, environment values, executables, and
   working directories at the Erlang port boundary instead of double-encoding
   non-ASCII text.

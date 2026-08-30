@@ -18,7 +18,8 @@ FIXTURE = ROOT / "fixtures" / "watch_project"
 RUNNING = "continuous tests · running".encode()
 ENTER = b"\x1b[?1049h"
 LEAVE = b"\x1b[?1049l"
-COVERAGE_STATUS = b"running full-suite coverage"
+PREPARING_COVERAGE_STATUS = b"preparing full-suite coverage"
+RUNNING_COVERAGE_STATUS = b"running full-suite coverage"
 SUSPEND_READY = b"suspend-probe-ready"
 SUSPEND_CHILD_READY = b"suspend-child-ready"
 SUSPEND_CHILD_RESULT = b"suspend-child:terminal-owned"
@@ -168,11 +169,15 @@ def exercise_coverage_cancellation(command: list[str], runtime: str) -> int:
         while time.monotonic() < coverage_deadline:
             output.extend(read_chunk(master, 0.05))
             created = set(coverage_parent.glob(".kangaroo-coverage-*")) - before
-            if COVERAGE_STATUS in output and created:
+            preparing_at = output.find(PREPARING_COVERAGE_STATUS)
+            running_at = output.find(RUNNING_COVERAGE_STATUS)
+            if preparing_at >= 0 and running_at > preparing_at and created:
                 break
             if process.poll() is not None:
                 break
-        if COVERAGE_STATUS not in output or not created:
+        preparing_at = output.find(PREPARING_COVERAGE_STATUS)
+        running_at = output.find(RUNNING_COVERAGE_STATUS)
+        if preparing_at < 0 or running_at <= preparing_at or not created:
             raise AssertionError("TUI coverage process did not become cancellable")
 
         cancellation_started = time.monotonic()

@@ -688,7 +688,7 @@ fn run_tui_coverage(
       ..state,
       ui: state.ui
         |> tui.discard_partial_output
-        |> tui.with_status("running full-suite coverage"),
+        |> tui.with_status("preparing full-suite coverage"),
       request: NoTuiRequest,
     )
   draw_tui(state.ui)
@@ -751,7 +751,13 @@ fn run_prepared_tui_coverage(
           with_coverage_cleanup(prepared, message),
         ),
       )
-    Ok(handle) ->
+    Ok(handle) -> {
+      let state =
+        TuiWatchState(
+          ..state,
+          ui: tui.with_status(state.ui, "running full-suite coverage"),
+        )
+      draw_tui(state.ui)
       case
         continuous.control_process_until_change(
           handle,
@@ -789,6 +795,7 @@ fn run_prepared_tui_coverage(
             state,
           )
       }
+    }
   }
 }
 
