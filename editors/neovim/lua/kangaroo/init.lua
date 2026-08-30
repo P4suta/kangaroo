@@ -749,9 +749,16 @@ local function claim_coverage(session, entry)
   if coverage_owned(session.root) then return false end
   session.coverage_generation = (session.coverage_generation or 0) + 1
   entry.generation = session.coverage_generation
+  entry.run_generation = session.latest_run_generation or 0
   coverage_processes[session.root] = entry
   session.coverage_entry = entry
   return true
+end
+
+local function coverage_result_is_current(session, entry)
+  return not entry.cancelled
+    and session.coverage_generation == entry.generation
+    and (session.latest_run_generation or 0) == entry.run_generation
 end
 
 local function release_coverage(session, entry)
@@ -1051,9 +1058,14 @@ function M.coverage()
   local function completed(result)
     release_coverage(session, entry)
     vim.schedule(function()
-      if entry.cancelled
-        or sessions[session.root] ~= session
-        or session.coverage_generation ~= entry.generation then return end
+      if entry.cancelled or sessions[session.root] ~= session then return end
+      if not coverage_result_is_current(session, entry) then
+        vim.notify(
+          "kangaroo coverage superseded by a newer test generation",
+          vim.log.levels.INFO
+        )
+        return
+      end
       if not coverage_result_is_publishable(result.code) then
         local detail = stderr_tail:gsub("^%s+", ""):gsub("%s+$", "")
         if detail == "" then
@@ -1176,6 +1188,7 @@ M._test = {
   claim_coverage = claim_coverage,
   coverage_arguments = coverage_arguments,
   coverage_options = coverage_options,
+  coverage_result_is_current = coverage_result_is_current,
   coverage_result_is_publishable = coverage_result_is_publishable,
   coverage_namespace = coverage_namespace,
   coverage_owned = coverage_owned,

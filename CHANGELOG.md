@@ -82,6 +82,8 @@ versioning.
 - Kept editor coverage package-serial until the prior process reaches a
   terminal state, ignored all late cancelled output, and stopped Neovim from
   retaining an entire coverage command's stdout and stderr in memory.
+- Suppressed completed editor coverage when a newer test generation has taken
+  ownership, preventing an older LCOV snapshot from restoring stale line data.
 - Serialized editor manifest and configuration restarts behind the old
   daemon and coverage process exits so replacement compiler trees cannot
   overlap in one package.
@@ -134,6 +136,8 @@ versioning.
 - Pinned, cached, and retried the minimum supported VS Code Extension
   Development Host so editor integration gates are reproducible and tolerate
   transient download failures.
+- Pinned the Neovim headless host by version and official SHA-256 digest, with
+  a verified cache and bounded download retries.
 - Made daemon output draining fair to stdin across both large chunks and line
   bursts, retained unterminated output as linear-time fragments, and bounded
   Erlang request allocation while discarding an overlong line; both stdin

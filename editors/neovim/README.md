@@ -68,7 +68,8 @@ process is running or stopping, and its command output is discarded except for
 a bounded error tail because the LCOV file is the source of coverage data.
 Exit 1 still publishes the complete LCOV result while warning about test,
 flaky, or threshold failures; infrastructure exit 2 leaves the prior result
-unchanged.
+unchanged. A newer test generation also supersedes the in-flight LCOV snapshot
+instead of allowing old line data to overwrite current editor state.
 Daemon stdout is decoded incrementally with a 128 MiB per-record ceiling; an
 oversized or schema-invalid protocol-v1 record force-stops and restarts the
 daemon. Records with a different integer protocol version are ignored for
@@ -80,6 +81,8 @@ forward compatibility.
 nvim --headless -u NONE -l test/headless.lua
 ```
 
-CI runs this lifecycle test on the current stable Neovim release, including
+CI runs this lifecycle test on the pinned Neovim 0.12.5 release, including
 daemon crash recovery, operation tracking, Windows path normalization, and
-stale diagnostic/coverage cleanup.
+stale diagnostic/coverage cleanup. The pinned host is updated deliberately so
+an upstream release cannot silently change an otherwise identical release
+gate.

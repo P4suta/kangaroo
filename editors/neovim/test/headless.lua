@@ -128,9 +128,13 @@ local coverage_process = {
 local coverage_lifecycle = {
   root = "/tmp/kangaroo-nvim-coverage-owner",
   coverage_generation = 3,
+  latest_run_generation = 7,
 }
 local coverage_entry = { process = coverage_process, cancelled = false }
 assert(test.claim_coverage(coverage_lifecycle, coverage_entry))
+assert(test.coverage_result_is_current(coverage_lifecycle, coverage_entry))
+coverage_lifecycle.latest_run_generation = 8
+assert(not test.coverage_result_is_current(coverage_lifecycle, coverage_entry))
 assert(test.coverage_owned(coverage_lifecycle.root))
 local competing_coverage = {
   root = coverage_lifecycle.root,

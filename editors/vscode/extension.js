@@ -570,12 +570,26 @@ class WorkspaceSession {
         try {
           if (!cancelled && decoder.remainder()) consume(decoder.remainder());
           if (!cancelled && !this.disposed && !signal && code !== null && code < 2) {
-            const lcov = await this.readCoverageFile(
-              path.join(this.folder.uri.fsPath, "coverage", "lcov.info"),
-              "utf8",
-            );
-            if (!cancelled && !this.disposed) {
-              this.publishCoverage(run, parseLcov(lcov));
+            if (coverageContext.generation !== this.latestRunGeneration) {
+              run.appendOutput(
+                "kangaroo coverage superseded by a newer test generation\r\n",
+              );
+            } else {
+              const lcov = await this.readCoverageFile(
+                path.join(this.folder.uri.fsPath, "coverage", "lcov.info"),
+                "utf8",
+              );
+              if (
+                !cancelled &&
+                !this.disposed &&
+                coverageContext.generation === this.latestRunGeneration
+              ) {
+                this.publishCoverage(run, parseLcov(lcov));
+              } else if (!cancelled && !this.disposed) {
+                run.appendOutput(
+                  "kangaroo coverage superseded by a newer test generation\r\n",
+                );
+              }
             }
           }
           if (!completed && signal) {

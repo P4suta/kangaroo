@@ -330,12 +330,28 @@ jobs:
       - name: Verify packaged VS Code entrypoint
         working-directory: editors/vscode
         run: unzip -l kangaroo.vsix | grep -q 'extension/extension.js'
-      - name: Install current stable Neovim
+      - name: Cache pinned Neovim archive
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kangaroo-neovim/nvim-linux-x86_64-v0.12.5.tar.gz
+          key: neovim-${{ runner.os }}-${{ runner.arch }}-0.12.5-bce0f56e
+      - name: Install pinned Neovim 0.12.5
+        shell: bash
         run: |
-          curl --fail --location --silent --show-error \
-            https://github.com/neovim/neovim/releases/download/stable/nvim-linux-x86_64.tar.gz \
-            --output nvim-linux-x86_64.tar.gz
-          tar -xzf nvim-linux-x86_64.tar.gz -C "${RUNNER_TEMP}"
+          set -euo pipefail
+          archive="${HOME}/.cache/kangaroo-neovim/nvim-linux-x86_64-v0.12.5.tar.gz"
+          checksum="bce0f56eda1f1b1db6eee8f4133d7a38813ea07933837dd1777411ca384c6875"
+          mkdir -p "$(dirname "${archive}")"
+          if ! test -f "${archive}" \
+            || ! echo "${checksum}  ${archive}" | sha256sum --check --status; then
+            rm -f -- "${archive}"
+            curl --fail --location --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 20 --max-time 300 \
+              https://github.com/neovim/neovim/releases/download/v0.12.5/nvim-linux-x86_64.tar.gz \
+              --output "${archive}"
+          fi
+          echo "${checksum}  ${archive}" | sha256sum --check
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}/nvim-linux-x86_64/bin" >> "${GITHUB_PATH}"
       - name: Test Neovim integration headlessly
         run: nvim --headless -u NONE -l editors/neovim/test/headless.lua

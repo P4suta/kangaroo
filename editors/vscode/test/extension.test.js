@@ -1143,6 +1143,46 @@ test("cancelled coverage never republishes an older LCOV file", async () => {
   session.dispose();
 });
 
+test("a newer test generation suppresses completed stale coverage", async () => {
+  const vscode = fakeVscode();
+  const child = fakeChild();
+  child.pid = 42;
+  const run = {
+    coverage: [],
+    output: [],
+    enqueued() {}, started() {}, passed() {}, skipped() {}, failed() {},
+    appendOutput(value) { this.output.push(value); },
+    addCoverage(value) { this.coverage.push(value); },
+    end() {},
+  };
+  vscode.controller.createTestRun = () => run;
+  const session = new WorkspaceSession(
+    vscode,
+    { name: "project", uri: new vscode.Uri("/project") },
+    {
+      diagnostics: { set() {}, delete() {} },
+      output: { append() {}, appendLine() {} },
+      status: { text: "", show() {} },
+    },
+    () => child,
+    async () => "SF:src/stale.gleam\nDA:1,1\nend_of_record\n",
+  );
+  const completed = session.runCoverage({ include: [] }, {
+    onCancellationRequested() {},
+  });
+
+  session.beginRunGeneration({
+    state: { beginRun() {} },
+    generation: 0,
+  });
+  child.emit("exit", 0, null);
+  await completed;
+
+  assert.equal(run.coverage.length, 0);
+  assert.match(run.output.join(""), /coverage superseded/);
+  session.dispose();
+});
+
 test("coverage runs are package-serial until prior process ownership ends", async () => {
   const vscode = fakeVscode();
   const child = fakeChild();

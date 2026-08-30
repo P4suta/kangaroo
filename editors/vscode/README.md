@@ -55,7 +55,9 @@ schema-invalid protocol-v1 record terminates and restarts the daemon instead
 of leaving a run pending; records with a different integer protocol version
 are ignored for forward compatibility. Coverage is package-serial: cancelling
 ends its Testing API run immediately, but a replacement is refused until the
-old process has actually exited and released ownership.
+old process has actually exited and released ownership. If a newer test
+generation takes ownership while coverage is running or reading LCOV, the
+older coverage snapshot is reported as superseded and is not published.
 
 ## Development
 
