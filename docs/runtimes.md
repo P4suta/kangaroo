@@ -45,12 +45,11 @@ successfully after starting background work, and to asynchronous subprocesses
 started by an isolated JavaScript test. PowerShell compiles the immutable
 console helper once, preferring the Windows PowerShell compiler host and falling
 back to PowerShell 7. JavaScript runtimes execute it directly, while Erlang
-opens native `cmd.exe` with AutoRun disabled and invokes the fixed helper
-through a fixed ASCII batch trampoline in its own cache directory around OTP's
-managed-executable boundary. The trampoline makes `cmd.exe` wait for helper
-completion and explicitly rebinds its port-backed descriptors to the helper's
-standard slots, so both paths preserve raw redirected handles and child exit
-status. Each runtime creates its absolute per-user temporary cache directory
+opens the same native PowerShell compiler host with a fixed ASCII script
+basename in its own cache directory around OTP's managed-executable boundary.
+The script loads the compiled helper assembly in-process, preserving the port's
+raw standard handles and the child exit status without compiling again. Each
+runtime creates its absolute per-user temporary cache directory
 first and pins that directory as PowerShell's working directory. Because supported Windows
 OTP releases do not preserve the direct PowerShell argument vector, Erlang
 stages the bundled preparation script there under a process-owned basename and
@@ -59,9 +58,9 @@ only the fixed versioned helper basename, and the caller validates that exact
 artifact after exit zero. Helper preparation therefore never transports a
 Windows path through OTP script arguments or environment options and never
 parses locale-sensitive redirected PowerShell output.
-The command processor receives only the immutable trampoline basename, whose
-contents name only the immutable helper and marker—never a user executable,
-argument, environment value, or working directory.
+The production PowerShell host receives only the immutable script basename;
+the script names only the immutable helper—never a user executable, argument,
+environment value, or working directory.
 Erlang transports Unicode environment overrides as private base64 metadata and
 the helper restores them before launching user code, avoiding OTP port option
 encoding differences. The helper's private environment

@@ -339,6 +339,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(erlang_process_ffi, "os:find_executable(\"cmd.exe\")")
   assert string.contains(erlang_process_ffi, "filename:dirname(Launcher)")
   assert string.contains(erlang_process_ffi, "filename:basename(Launcher)")
+  assert string.contains(erlang_process_ffi, "find_windows_powershell()")
+  assert string.contains(
+    erlang_process_ffi,
+    "\"-ExecutionPolicy\", \"Bypass\", \"-File\"",
+  )
   assert string.contains(erlang_process_ffi, "ENVIRONMENT_NAME_")
   assert string.contains(erlang_process_ffi, "ENVIRONMENT_VALUE_")
   let assert [_, preparation_body] =
@@ -402,14 +407,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert !string.contains(windows_job, "DateTime.UtcNow.AddSeconds")
   assert string.contains(windows_job, "-OutputAssembly")
   assert string.contains(windows_job, "windows-job-v6-20260831.exe")
-  assert string.contains(windows_job, "windows-job-v6-20260831.cmd")
+  assert string.contains(windows_job, "windows-job-v6-20260831-host.ps1")
   assert string.contains(windows_job, "function Ensure-Job-Launcher")
   assert string.contains(windows_job, "[Text.Encoding]::ASCII")
-  assert string.contains(
-    windows_job,
-    "3<&0 4>&1 5>&2 `\"%~dp0$executableName`\" ",
-  )
-  assert string.contains(windows_job, "0<&3 1>&4 2>&5")
+  assert string.contains(windows_job, "[Reflection.Assembly]::LoadFile")
+  assert string.contains(windows_job, "$assembly.EntryPoint.Invoke")
   assert string.contains(
     windows_job,
     "Windows process launcher has unexpected contents",

@@ -536,7 +536,7 @@ public static class KangarooWindowsJob
 
 $prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_"
 $executableName = "windows-job-v6-20260831.exe"
-$launcherName = "windows-job-v6-20260831.cmd"
+$launcherName = "windows-job-v6-20260831-host.ps1"
 
 function Decode-Value([string] $name) {
     $encoded = [Environment]::GetEnvironmentVariable(
@@ -626,10 +626,22 @@ function Ensure-Job-Launcher([string] $executable) {
     $launcher = [IO.Path]::Combine(
         [IO.Path]::GetDirectoryName($executable),
         $launcherName)
-    $contents = "@echo off`r`n" +
-        "3<&0 4>&1 5>&2 `"%~dp0$executableName`" " +
-        "--kangaroo-job-helper 0<&3 1>&4 2>&5`r`n" +
-        "exit /b %errorlevel%`r`n"
+    $contents = @'
+$ErrorActionPreference = "Stop"
+try {
+    $helper = [IO.Path]::Combine(
+        $PSScriptRoot,
+        "windows-job-v6-20260831.exe")
+    $assembly = [Reflection.Assembly]::LoadFile($helper)
+    $exitCode = $assembly.EntryPoint.Invoke($null, $null)
+    [Environment]::Exit([int] $exitCode)
+}
+catch {
+    [Console]::Error.WriteLine(
+        "kangaroo: Windows process host failed: " + $_.Exception.Message)
+    [Environment]::Exit(2)
+}
+'@
     if ([IO.File]::Exists($launcher)) {
         if ([IO.File]::ReadAllText($launcher, [Text.Encoding]::ASCII) -ne
             $contents) {
@@ -640,7 +652,7 @@ function Ensure-Job-Launcher([string] $executable) {
 
     $candidate = [IO.Path]::Combine(
         [IO.Path]::GetDirectoryName($executable),
-        ([Guid]::NewGuid().ToString("N") + ".cmd"))
+        ([Guid]::NewGuid().ToString("N") + ".ps1"))
     try {
         [IO.File]::WriteAllText($candidate, $contents, [Text.Encoding]::ASCII)
         try {
@@ -716,8 +728,17 @@ try {
         throw "Windows process helper did not preserve redirected stdio"
     }
 
+    $hostExecutable = (Get-Process -Id $PID).Path
+    $hostArguments = @(
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        $launcher)
     Set-Smoke-Launch $find @("kangaroo")
-    $output = "kangaroo" | & $launcher
+    $output = "kangaroo" | & $hostExecutable @hostArguments
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         throw "Windows process launcher smoke test exited $exitCode"
@@ -732,7 +753,7 @@ try {
         throw "Windows process helper did not preserve the child exit code"
     }
     Set-Smoke-Launch $find @("not-present")
-    $null = "kangaroo" | & $launcher
+    $null = "kangaroo" | & $hostExecutable @hostArguments
     if ($LASTEXITCODE -ne 1) {
         throw "Windows process launcher did not preserve the child exit code"
     }

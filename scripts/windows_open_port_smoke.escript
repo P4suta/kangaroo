@@ -140,7 +140,7 @@ probe_helper_preparation() ->
     CommandProcessor = require_executable("cmd.exe"),
     Script = filename:absname("priv/kangaroo_windows_job.ps1"),
     Helper = default_helper_path(),
-    Launcher = filename:rootname(Helper) ++ ".cmd",
+    Launcher = filename:rootname(Helper) ++ "-host.ps1",
     Unique = integer_to_list(erlang:unique_integer([positive, monotonic])),
     Preparation = filename:join(
       filename:dirname(Helper),
@@ -176,12 +176,15 @@ probe_helper_preparation() ->
                                       "open_port helper artifacts: ok~n"),
                                     probe_output(
                                       "production helper execution",
-                                      CommandProcessor,
+                                      PowerShell,
                                       [binary, use_stdio, stderr_to_stdout,
                                        exit_status,
                                        {cd, filename:dirname(Helper)},
                                        {args, [
-                                         "/D", "/Q", "/C",
+                                         "-NoLogo", "-NoProfile",
+                                         "-NonInteractive",
+                                         "-ExecutionPolicy", "Bypass",
+                                         "-File",
                                          filename:basename(Launcher)
                                        ]},
                                        {env, internal_environment(

@@ -59,10 +59,10 @@ versioning.
   OTP preserves them. Preparation does not pass a cache path or parse redirected
   PowerShell output; changed helper binaries are invalidated, and remaining Job
   Object descendants terminate without racing the enclosing test timeout.
-- Made Erlang's fixed Windows batch trampoline explicitly rebind native
-  `cmd.exe`'s port-backed descriptors to the managed Job Object helper and wait
-  before publishing its result, preserving captured output, stdin, and the child
-  exit code across OTP 27–29.
+- Made Erlang invoke a fixed ASCII script through the native PowerShell host and
+  load the compiled Job Object helper in-process, preserving the port-backed
+  stdin/stdout and child exit code across OTP 27–29 without recompiling per
+  command.
 - Made `doctor` reject Erlang/OTP outside the documented 27–29 range instead
   of reporting untested future major releases as supported.
 - Distinguished synchronous coverage preparation from the cancellable child
@@ -166,11 +166,11 @@ versioning.
   that object to drain before reporting completion, so successful, cancelled,
   and timed-out work cannot leave descendants behind.
 - Compiled the Windows Job Object helper once and executed it directly from
-  JavaScript runtimes. Erlang opens native `cmd.exe` with AutoRun disabled and
-  invokes a fixed ASCII batch trampoline from its own directory for OTP's
-  managed-executable boundary. The trampoline waits for the helper and preserves
-  redirected stdin/stdout and child exit status; the command processor never
-  sees user-controlled launch data. Unicode environment overrides travel as
+  JavaScript runtimes. Erlang opens the native PowerShell host with a fixed
+  ASCII script basename from its own directory for OTP's managed-executable
+  boundary and loads the helper in-process, preserving redirected stdin/stdout
+  and child exit status without exposing user-controlled launch data. Unicode
+  environment overrides travel as
   private base64 metadata for the helper to restore without exposing them to
   OTP's port options or the command interpreter.
 - Pinned the helper cache directory as the preparation process working

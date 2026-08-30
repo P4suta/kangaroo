@@ -194,7 +194,10 @@ process_launch(Directory, Path, Arguments, Environment) ->
 windows_job_launch(Directory, Path, Arguments, Environment) ->
     Helper = windows_job_executable(),
     Launcher = windows_job_launcher(Helper),
-    {ok, CommandProcessor} = windows_command_processor(),
+    PowerShell = case find_windows_powershell() of
+        false -> erlang:error(missing_windows_powershell);
+        Executable -> Executable
+    end,
     WorkingDirectory = filename:absname(to_list(Directory)),
     CleanEnvironment = [
         {Key, Value} || {Key, Value} <- Environment,
@@ -225,14 +228,15 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
          encode_windows_job_value(integer_to_list(length(CleanEnvironment)))}
         | ArgumentEnvironment ++ EnvironmentEnvironment
     ],
-    %% spawn_executable accepts cmd.exe but rejects both the managed helper
-    %% image and batch files on supported Windows OTP releases. A fixed batch
-    %% trampoline explicitly duplicates cmd's port-backed descriptors into the
-    %% helper's standard slots and makes cmd wait before publishing its status,
-    %% preserving redirected handles and the child exit code. No user-controlled
-    %% value is parsed by the command processor.
-    {filename:dirname(Launcher), CommandProcessor,
-     ["/D", "/Q", "/C", filename:basename(Launcher)],
+    %% OTP rejects the managed helper image and cmd does not preserve its
+    %% port-backed standard handles when starting that image. Launch the native
+    %% PowerShell host directly with a fixed ASCII script basename; the script
+    %% loads the cached assembly in-process, so the helper inherits the original
+    %% port handles without compiling again or parsing user-controlled values.
+    {filename:dirname(Launcher), PowerShell,
+     ["-NoLogo", "-NoProfile", "-NonInteractive",
+      "-ExecutionPolicy", "Bypass", "-File",
+      filename:basename(Launcher)],
      InternalEnvironment}.
 
 windows_command_processor() ->
@@ -416,7 +420,7 @@ windows_job_executable() ->
       {?MODULE, windows_job_helper_path}, default_windows_job_executable()).
 
 windows_job_launcher(Helper) ->
-    filename:rootname(Helper) ++ ".cmd".
+    filename:rootname(Helper) ++ "-host.ps1".
 
 default_windows_job_executable() ->
     Temp = first_nonempty_environment(["TEMP", "TMP", "TMPDIR"], "."),
