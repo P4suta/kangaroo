@@ -219,6 +219,8 @@ export function cleanup_active_processes() {
   terminate_active_processes();
 }
 
+export function start_from_short_lived_owner() {}
+
 export function internal_windows_job_name(name) {
   return isInternalName(name);
 }

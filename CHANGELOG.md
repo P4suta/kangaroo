@@ -137,6 +137,9 @@ versioning.
 - Required the path-bound ownership marker even when a coverage clone fails
   partway through copying, preventing failure cleanup from following a replaced
   workspace path and retaining both the primary and cleanup diagnostics.
+- Monitored every Erlang asynchronous process owner before launch and now
+  terminates the complete command tree if its watch, daemon, or coverage
+  coordinator exits unexpectedly.
 - Pinned, cached, and retried the minimum supported VS Code Extension
   Development Host so editor integration gates are reproducible and tolerate
   transient download failures.

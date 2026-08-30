@@ -43,6 +43,13 @@ fn tree_arguments(marker: String) -> List(String)
 @external(javascript, "./kangaroo_cli_test_ffi.mjs", "cleanup_active_processes")
 fn cleanup_active_processes() -> Nil
 
+@external(erlang, "kangaroo_cli_test_ffi", "start_from_short_lived_owner")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "start_from_short_lived_owner")
+fn start_from_short_lived_owner(
+  executable: String,
+  arguments: List(String),
+) -> Nil
+
 @external(erlang, "kangaroo_cli_test_ffi", "orphan_tree_arguments")
 @external(javascript, "./kangaroo_cli_test_ffi.mjs", "orphan_tree_arguments")
 fn orphan_tree_arguments(marker: String) -> List(String)
@@ -352,6 +359,26 @@ pub fn javascript_coordinator_exit_terminates_active_process_groups_test() {
         await_output_containing(handle, "ready", launch_poll_timeout_ms())
       cleanup_active_processes()
       fs.sleep(700)
+      let survived = fs.exists(marker)
+      case survived {
+        True -> {
+          let _ = fs.remove_file(marker)
+          Nil
+        }
+        False -> Nil
+      }
+      assert !survived
+    }
+    _ -> Nil
+  }
+}
+
+pub fn erlang_coordinator_exit_terminates_active_process_groups_test() {
+  case vm.target() {
+    "erlang" -> {
+      let marker = tree_marker()
+      start_from_short_lived_owner(sleeper_executable(), tree_arguments(marker))
+      fs.sleep(800)
       let survived = fs.exists(marker)
       case survived {
         True -> {

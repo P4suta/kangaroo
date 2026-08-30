@@ -13,7 +13,8 @@
          closed_stdin_executable/0, closed_stdin_tree_arguments/1,
          silent_exit_arguments/1, schedule_replace/4,
          kill_stderr_proxy/0, make_directory_symlink/2,
-         cleanup_active_processes/0, internal_windows_job_name/1]).
+         cleanup_active_processes/0, internal_windows_job_name/1,
+         start_from_short_lived_owner/2]).
 
 reset_flaky() ->
     persistent_term:put({?MODULE, flaky_attempt}, 0),
@@ -203,6 +204,28 @@ kill_stderr_proxy() ->
     nil.
 
 cleanup_active_processes() -> nil.
+
+start_from_short_lived_owner(Executable, Arguments) ->
+    Caller = self(),
+    Owner = spawn(fun() ->
+        Result = kangaroo_process_ffi:start(
+          <<".">>, Executable, Arguments, [], 10000),
+        Caller ! {kangaroo_short_lived_owner_started, self(), Result},
+        receive
+            stop -> ok
+        end
+    end),
+    receive
+        {kangaroo_short_lived_owner_started, Owner, {ok, _Handle}} ->
+            exit(Owner, kill),
+            nil;
+        {kangaroo_short_lived_owner_started, Owner, Error} ->
+            exit(Owner, kill),
+            erlang:error({process_start_failed, Error})
+    after 5000 ->
+        exit(Owner, kill),
+        erlang:error(process_owner_start_timeout)
+    end.
 
 internal_windows_job_name(Name) ->
     kangaroo_process_ffi:internal_windows_job_name(Name).

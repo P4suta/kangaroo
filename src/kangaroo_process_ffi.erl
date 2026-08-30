@@ -142,20 +142,22 @@ acknowledge_output(Id, Output) ->
 async_run(Parent, Id, Directory, Path, Arguments, Environment, TimeoutMs,
           Streaming) ->
     process_flag(trap_exit, true),
+    OwnerMonitor = erlang:monitor(process, Parent),
     try open_process_port(Directory, Path, Arguments, Environment, captured) of
-        Port -> async_run_port(Parent, Id, Port, TimeoutMs, Streaming)
+        Port -> async_run_port(Parent, OwnerMonitor, Id, Port, TimeoutMs,
+                              Streaming)
     catch
         Class:Reason:Stack ->
             Parent ! {kangaroo_process, Id,
                       {failed, format_exception(Class, Reason, Stack)}}
     end.
 
-async_run_port(Parent, Id, Port, TimeoutMs, Streaming) ->
+async_run_port(Parent, OwnerMonitor, Id, Port, TimeoutMs, Streaming) ->
     try
         OsPid = port_os_pid(Port),
         Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
-        async_collect(Parent, Id, Port, OsPid, [], <<>>, 0, Deadline,
-                      Streaming)
+        async_collect(Parent, OwnerMonitor, Id, Port, OsPid, [], <<>>, 0,
+                      Deadline, Streaming)
     catch
         Class:Reason:Stack ->
             safe_close_port(Port),
@@ -372,8 +374,8 @@ windows_job_executable() ->
     end,
     filename:join([Temp, "kangaroo", "windows-job-v5-20260831.exe"]).
 
-async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8, OutputBytes,
-              Deadline, Streaming) ->
+async_collect(Parent, OwnerMonitor, Id, Port, OsPid, Output, PendingUtf8,
+              OutputBytes, Deadline, Streaming) ->
     %% A full output pipe can enqueue many port messages ahead of a caller's
     %% cancellation request. Selectively check the control message first so
     %% cancellation latency does not depend on draining captured output.
@@ -381,25 +383,27 @@ async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8, OutputBytes,
         cancel ->
             close_port(Port),
             Parent ! {kangaroo_process, Id, cancelled};
+        {'DOWN', OwnerMonitor, process, Parent, _Reason} ->
+            close_port(Port);
         {'EXIT', Port, epipe} ->
             terminate_process_tree(OsPid),
             safe_close_port(Port),
             Parent ! {kangaroo_process, Id,
                       {failed, <<"process stdin is not writable">>}};
         {'EXIT', Port, normal} ->
-            async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8,
-                          OutputBytes, Deadline, Streaming);
+            async_collect(Parent, OwnerMonitor, Id, Port, OsPid, Output,
+                          PendingUtf8, OutputBytes, Deadline, Streaming);
         {'EXIT', Port, Reason} ->
             terminate_process_tree(OsPid),
             safe_close_port(Port),
             Parent ! {kangaroo_process, Id,
                       {failed, port_failure_message(Reason)}}
     after 0 ->
-        async_collect_wait(Parent, Id, Port, OsPid, Output, PendingUtf8,
-                           OutputBytes, Deadline, Streaming)
+        async_collect_wait(Parent, OwnerMonitor, Id, Port, OsPid, Output,
+                           PendingUtf8, OutputBytes, Deadline, Streaming)
     end.
 
-async_collect_wait(Parent, Id, Port, OsPid, Output, PendingUtf8,
+async_collect_wait(Parent, OwnerMonitor, Id, Port, OsPid, Output, PendingUtf8,
                    OutputBytes, Deadline, Streaming) ->
     Remaining = erlang:max(0, Deadline - erlang:monotonic_time(millisecond)),
     receive
@@ -418,8 +422,9 @@ async_collect_wait(Parent, Id, Port, OsPid, Output, PendingUtf8,
                         true -> Output;
                         false -> prepend_nonempty(Text, Output)
                     end,
-                    async_collect(Parent, Id, Port, OsPid, NextOutput,
-                                  Pending, NextBytes, Deadline, Streaming)
+                    async_collect(Parent, OwnerMonitor, Id, Port, OsPid,
+                                  NextOutput, Pending, NextBytes, Deadline,
+                                  Streaming)
             end;
         {Port, {exit_status, Code}} ->
             terminate_remaining_process_group(OsPid),
@@ -442,14 +447,14 @@ async_collect_wait(Parent, Id, Port, OsPid, Output, PendingUtf8,
             end;
         {consumed, Bytes} when Streaming =:= true, is_integer(Bytes),
                                Bytes > 0 ->
-            async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8,
-                          erlang:max(0, OutputBytes - Bytes), Deadline,
-                          Streaming);
+            async_collect(Parent, OwnerMonitor, Id, Port, OsPid, Output,
+                          PendingUtf8, erlang:max(0, OutputBytes - Bytes),
+                          Deadline, Streaming);
         {input, Input} ->
             case write_port(Port, Input) of
                 ok ->
-                    async_collect(Parent, Id, Port, OsPid, Output,
-                                  PendingUtf8, OutputBytes, Deadline,
+                    async_collect(Parent, OwnerMonitor, Id, Port, OsPid,
+                                  Output, PendingUtf8, OutputBytes, Deadline,
                                   Streaming);
                 {error, Message} ->
                     close_port(Port),
@@ -458,14 +463,16 @@ async_collect_wait(Parent, Id, Port, OsPid, Output, PendingUtf8,
         cancel ->
             close_port(Port),
             Parent ! {kangaroo_process, Id, cancelled};
+        {'DOWN', OwnerMonitor, process, Parent, _Reason} ->
+            close_port(Port);
         {'EXIT', Port, epipe} ->
             terminate_process_tree(OsPid),
             safe_close_port(Port),
             Parent ! {kangaroo_process, Id,
                       {failed, <<"process stdin is not writable">>}};
         {'EXIT', Port, normal} ->
-            async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8,
-                          OutputBytes, Deadline, Streaming);
+            async_collect(Parent, OwnerMonitor, Id, Port, OsPid, Output,
+                          PendingUtf8, OutputBytes, Deadline, Streaming);
         {'EXIT', Port, Reason} ->
             terminate_process_tree(OsPid),
             safe_close_port(Port),
@@ -554,7 +561,7 @@ invalid_utf8_prefix(Bytes) ->
 %% hostile output stream does not recurse once per byte while still emitting
 %% one replacement character for each invalid byte.
 invalid_utf8_prefix(<<Byte, Rest/binary>>, Count)
-  when Byte < 16#C2; Byte > 16#F4 ->
+  when (Byte >= 16#80 andalso Byte < 16#C2) orelse Byte > 16#F4 ->
     invalid_utf8_prefix(Rest, Count + 1);
 invalid_utf8_prefix(<<_Invalid, Rest/binary>>, 0) -> {1, Rest};
 invalid_utf8_prefix(Rest, Count) -> {Count, Rest}.
