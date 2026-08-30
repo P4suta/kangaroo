@@ -415,7 +415,7 @@ fn refresh_tui(
 ) -> continuous.WatchContinuation(TuiWatchState) {
   case state.request {
     CoverageRequest -> {
-      let state = run_tui_coverage(project_dir, state, options)
+      let state = run_tui_coverage(project_dir, roots, baseline, state, options)
       draw_tui(state.ui)
       continue_after_tui_action(
         project_dir,
@@ -684,6 +684,8 @@ fn finish_controlled_tui_run(
 
 fn run_tui_coverage(
   project_dir: String,
+  roots: List(String),
+  baseline: Dict(String, String),
   state: TuiWatchState,
   options: command.RunOptions,
 ) -> TuiWatchState {
@@ -712,6 +714,8 @@ fn run_tui_coverage(
     Ok(#(configured, prepared)) ->
       run_prepared_tui_coverage(
         project_dir,
+        roots,
+        baseline,
         configured,
         prepared,
         state,
@@ -722,6 +726,8 @@ fn run_tui_coverage(
 
 fn run_prepared_tui_coverage(
   project_dir: String,
+  roots: List(String),
+  baseline: Dict(String, String),
   configured: config.CoverageConfig,
   prepared: coverage_run.Prepared,
   state: TuiWatchState,
@@ -753,8 +759,11 @@ fn run_prepared_tui_coverage(
       )
     Ok(handle) ->
       case
-        continuous.control_process(
+        continuous.control_process_until_change(
           handle,
+          project_dir,
+          roots,
+          baseline,
           state,
           tui_stream_output,
           tui_active_control,
@@ -768,28 +777,15 @@ fn run_prepared_tui_coverage(
               with_coverage_cleanup(prepared, message),
             ),
           )
-        Ok(continuous.ActiveCancelled(state)) ->
-          case coverage_run.cleanup(prepared) {
-            Error(message) ->
-              TuiWatchState(
-                ..state,
-                ui: tui.with_compile_error(
-                  tui.discard_partial_output(state.ui),
-                  "could not remove coverage workspace: " <> message,
-                ),
-              )
-            Ok(_) ->
-              TuiWatchState(
-                ..state,
-                ui: state.ui
-                  |> tui.discard_partial_output
-                  |> tui.with_status(request_status(
-                    state.request,
-                    "coverage cancelled",
-                  )),
-              )
-          }
-        Ok(continuous.ActiveCompleted(completed, state)) ->
+        Ok(continuous.ControlledChildSuperseded(state)) ->
+          cancel_tui_coverage(prepared, state, "coverage superseded")
+        Ok(continuous.ControlledChildCancelled(state)) ->
+          cancel_tui_coverage(
+            prepared,
+            state,
+            request_status(state.request, "coverage cancelled"),
+          )
+        Ok(continuous.ControlledChildCompleted(completed, state)) ->
           finish_tui_coverage(
             project_dir,
             configured,
@@ -799,6 +795,30 @@ fn run_prepared_tui_coverage(
             state,
           )
       }
+  }
+}
+
+fn cancel_tui_coverage(
+  prepared: coverage_run.Prepared,
+  state: TuiWatchState,
+  status: String,
+) -> TuiWatchState {
+  case coverage_run.cleanup(prepared) {
+    Error(message) ->
+      TuiWatchState(
+        ..state,
+        ui: tui.with_compile_error(
+          tui.discard_partial_output(state.ui),
+          "could not remove coverage workspace: " <> message,
+        ),
+      )
+    Ok(_) ->
+      TuiWatchState(
+        ..state,
+        ui: state.ui
+          |> tui.discard_partial_output
+          |> tui.with_status(status),
+      )
   }
 }
 

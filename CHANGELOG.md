@@ -151,6 +151,9 @@ versioning.
 - Revalidated source ownership after watch compile and run children reached a
   terminal state, preventing a save in the final poll window from publishing
   a stale generation.
+- Made interactive coverage observe the original project's watch snapshot,
+  cancel and fully drain a superseded coverage process, and discard its
+  partial output before the saved generation runs.
 - Validated every protocol-v1 response shape in both official editor clients,
   including nested events and failures, and restarted fail-closed instead of
   accepting schema-invalid daemon output.

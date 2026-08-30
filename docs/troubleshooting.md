@@ -47,6 +47,11 @@ generated/config files outside those roots are listed in
 `[tools.kangaroo.watch].extra_paths`. Changing
 `gleam.toml` refreshes extra roots automatically.
 
+The interactive coverage action observes the same project snapshot while its
+instrumented clone runs. A save cancels that coverage process, discards the
+partial report, and schedules the saved generation instead of publishing
+stale coverage.
+
 On Windows, allow the terminal/editor to terminate child process trees. A
 security product that blocks descendant termination can make cancellation
 exceed the 2 second Windows performance budget. The Unix budget is 250 ms.

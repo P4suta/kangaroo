@@ -373,3 +373,17 @@ pub fn neovim_installation_uses_a_supported_lazy_nvim_spec_test() {
   assert string.contains(readme, "require(\"kangaroo\").setup({")
   assert string.contains(readme, "javascript_runtime = \"nodejs\"")
 }
+
+pub fn tui_coverage_is_owned_by_the_original_watch_snapshot_test() {
+  let assert Ok(cli) = fs.read_file("src/kangaroo/internal/cli.gleam")
+  let assert [_, coverage] = string.split(cli, "fn run_prepared_tui_coverage(")
+  let assert [coverage, ..] = string.split(coverage, "fn finish_tui_coverage(")
+
+  assert string.contains(coverage, "control_process_until_change(")
+  assert string.contains(
+    coverage,
+    "project_dir,\n          roots,\n          baseline,",
+  )
+  assert string.contains(coverage, "ControlledChildSuperseded")
+  assert string.contains(coverage, "coverage superseded")
+}

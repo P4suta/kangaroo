@@ -501,6 +501,31 @@ pub fn control_process(
   control_process_loop(handle, initial_state, on_output, on_control)
 }
 
+/// Controls an already-started process while preserving the same snapshot
+/// ownership guarantees as an interactive watch generation. This is used by
+/// long-running auxiliary actions such as coverage, whose child process runs
+/// in a temporary workspace while saves must still supersede it in the
+/// original project.
+pub fn control_process_until_change(
+  handle: Int,
+  project_dir: String,
+  roots: List(String),
+  baseline: Dict(String, String),
+  initial_state: state,
+  on_output: fn(state, String) -> state,
+  on_control: fn(state) -> ActiveControl(state),
+) -> Result(ControlledRunOutcome(state), String) {
+  poll_controlled_run(
+    project_dir,
+    roots,
+    baseline,
+    handle,
+    initial_state,
+    on_output,
+    on_control,
+  )
+}
+
 fn control_process_loop(handle, state, on_output, on_control) {
   case process.poll(handle) {
     process.ProcessOutput(chunk) ->
