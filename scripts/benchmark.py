@@ -199,8 +199,8 @@ def create_discovery_project(project: Path, root: Path, count: int) -> None:
         )
 
 
-def mutate_probe(path: Path, *, generation: int) -> None:
-    """Atomically change a fixed-width probe while preserving size and mtime."""
+def mutate_probe(path: Path, *, generation: int) -> int:
+    """Commit a fixed-width probe and return its pre-replace wall timestamp."""
     marker = "// kangaroo-benchmark: "
     token_width = 8
     if generation < 0 or generation >= 10**token_width:
@@ -228,9 +228,14 @@ def mutate_probe(path: Path, *, generation: int) -> None:
             temporary_name,
             ns=(metadata.st_atime_ns, metadata.st_mtime_ns),
         )
+        # The watcher cannot observe the new generation before this replace.
+        # Start the product latency clock here so temporary-file writes and
+        # fsync stalls are not misreported as Kangaroo detection latency.
+        committed_at_ms = time.time_ns() // 1_000_000
         os.replace(temporary_name, path)
         temporary_name = None
         os.utime(path, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+        return committed_at_ms
     finally:
         if temporary_name is not None:
             Path(temporary_name).unlink(missing_ok=True)
@@ -686,8 +691,7 @@ def measure_save_detection(root: Path, *, samples: int = 20) -> list[float]:
             )
             timings: list[float] = []
             for generation in range(1, samples + 1):
-                started_ms = time.time_ns() // 1_000_000
-                mutate_probe(probe, generation=generation)
+                started_ms = mutate_probe(probe, generation=generation)
                 detection = _wait_for_line(
                     client.stderr,
                     "kangaroo benchmark: watch detected "

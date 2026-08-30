@@ -24,8 +24,9 @@ const synchronousCleanupMarginMs = 25;
 let testDeadline = Number.POSITIVE_INFINITY;
 let finishing = false;
 
-globalThis.process?.once?.("exit", (code) => {
+function publishPrematureExit(code) {
   if (Atomics.load(control, 0) !== 0) return;
+  signalStarted();
   const encoded = new TextEncoder().encode(JSON.stringify({
     name: "infrastructure",
     message: `JavaScript test worker exited with code ${Number(code)}` +
@@ -37,7 +38,22 @@ globalThis.process?.once?.("exit", (code) => {
   Atomics.store(control, 2, encoded.length);
   Atomics.store(control, 0, 1);
   Atomics.notify(control, 0, 1);
-});
+}
+
+globalThis.process?.once?.("exit", publishPrematureExit);
+
+// Node 24 on Windows can terminate the complete host when process.exit() is
+// called by a nested Worker. Publish the isolated failure ourselves and park
+// this Worker until its owner terminates it, preserving process.exit's
+// non-returning contract without risking the test runner process.
+if (globalThis.process && typeof globalThis.process.exit === "function") {
+  globalThis.process.exit = (code = 0) => {
+    finishing = true;
+    clearInterval(cancellationPoll);
+    publishPrematureExit(code);
+    Atomics.wait(control, 0, 1);
+  };
+}
 
 function claimPidSlot(pid) {
   for (let index = 1; index < childPids.length; index += 1) {

@@ -303,8 +303,7 @@ prepare_windows_job_helper_worker() ->
                 "-ExecutionPolicy", "Bypass", "-File",
                 filename:join(windows_priv_directory(),
                               "kangaroo_windows_job.ps1"),
-                "-Prepare", "-EncodedHelperPath",
-                binary_to_list(encode_windows_job_value(Helper))
+                "-Prepare"
             ],
             try open_port(
                   {spawn_executable, PowerShell},

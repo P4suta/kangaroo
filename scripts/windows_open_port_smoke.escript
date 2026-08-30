@@ -94,18 +94,21 @@ probe_helper_preparation() ->
     case file:make_dir(CacheDirectory) of
         ok ->
             Helper = filename:join(
-              CacheDirectory, "windows-job-v5-20260831.exe"),
+              [CacheDirectory, "kangaroo",
+               "windows-job-v5-20260831.exe"]),
             Launcher = filename:rootname(Helper) ++ ".cmd",
             Arguments = [
                 "-NoLogo", "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-File", Script,
-                "-Prepare", "-EncodedHelperPath", encoded(Helper)
+                "-Prepare"
             ],
             Result = try
                 case probe(
-                       "encoded helper preparation", PowerShell,
+                       "isolated helper preparation", PowerShell,
                        [binary, use_stdio, stderr_to_stdout, exit_status,
-                        {args, Arguments}],
+                        {args, Arguments},
+                        {env, [{"TEMP", CacheDirectory},
+                               {"TMP", CacheDirectory}]}],
                        20000) of
                     ok ->
                         case {filelib:is_regular(Helper),
@@ -125,6 +128,7 @@ probe_helper_preparation() ->
             after
                 safe_delete(Helper),
                 safe_delete(Launcher),
+                _ = file:del_dir(filename:dirname(Helper)),
                 _ = file:del_dir(CacheDirectory)
             end,
             Result;

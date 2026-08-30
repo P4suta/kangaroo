@@ -110,8 +110,9 @@ versioning.
   reported immediately as an exit failure instead of being misclassified as a
   test timeout after the full deadline.
 - Published an emergency infrastructure result when a Node test Worker exits
-  directly, allowing its registered child trees to be cleaned without waiting
-  for the test timeout.
+  directly, and contained `process.exit()` inside the Worker before it can
+  terminate the Windows Node 24 host, allowing registered child trees to be
+  cleaned without waiting for the test timeout.
 - Kept BEAM test owners alive through a trace-delivery barrier and reaped both
   spawned processes and executable ports before publishing a result; cleanup
   failures now become explicit infrastructure failures.
@@ -130,9 +131,10 @@ versioning.
   immutable trampoline basename. Unicode environment overrides travel as
   private base64 metadata for the helper to restore without exposing them to
   OTP's port options or the command interpreter.
-- Passed the helper preparation path as an explicit base64 argument instead of
-  relying on OTP's replacement-environment semantics, and smoke-tested the
-  exact first-launch artifacts on Windows OTP 27 through 29.
+- Let PowerShell and OTP resolve the same inherited temporary helper cache
+  without passing a string parameter through the Windows port boundary, and
+  smoke-tested exact first-launch artifacts under an isolated `TEMP`/`TMP` on
+  Windows OTP 27 through 29.
 - Pinned, cached, and retried the minimum supported VS Code Extension
   Development Host so editor integration gates are reproducible and tolerate
   transient download failures.
@@ -178,6 +180,8 @@ versioning.
   filesystem-backed workspace before it can execute package toolchains.
 - Kept the quick performance smoke test's idle-CPU window at ten seconds so
   Linux scheduler-tick quantization cannot create a false regression failure.
+- Started save-detection timing at the atomic replacement boundary, excluding
+  unobservable temporary-file `fsync` stalls from the watcher latency budget.
 
 ### Removed
 

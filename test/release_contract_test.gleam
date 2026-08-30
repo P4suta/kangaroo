@@ -103,6 +103,10 @@ pub fn ci_covers_the_supported_platforms_and_runtimes_test() {
     "npm run download:test-host",
     "Cache pinned VS Code test host",
     "Prebuild VS Code fixture daemon",
+    "Cache pinned Neovim archive",
+    "releases/download/v0.12.5/nvim-linux-x86_64.tar.gz",
+    "bce0f56eda1f1b1db6eee8f4133d7a38813ea07933837dd1777411ca384c6875",
+    "--retry-all-errors",
     "nvim-linux-x86_64.tar.gz",
     "npm ci",
     "python3 -W error::ResourceWarning -m unittest scripts/test_hex_clean_install.py",
@@ -323,7 +327,8 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
     string.split(erlang_process_ffi, "\nprepare_windows_job_helper_worker() ->")
   let assert [preparation_body, ..] =
     string.split(preparation_body, "collect_windows_job_preparation(")
-  assert string.contains(preparation_body, "-EncodedHelperPath")
+  assert string.contains(preparation_body, "\"-Prepare\"")
+  assert !string.contains(preparation_body, "HelperPath")
   assert !string.contains(preparation_body, "port_environment_pair")
   assert string.contains(process_worker, "windowsJobLaunch")
   assert string.contains(test_worker, "windowsJobSpawnOptions")
@@ -347,7 +352,7 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_job, "ConsoleApplication")
   assert string.contains(workflow, "kangaroo_windows_job.ps1 -SmokeTest")
   assert string.contains(workflow, "windows_open_port_smoke.escript")
-  assert string.contains(windows_job, "EncodedHelperPath")
+  assert string.contains(windows_job, "GetTempPath")
   assert string.contains(windows_job, "DuplicateHandle")
   assert string.contains(process_ffi, "activityBuffer")
   assert string.contains(process_worker, "workerData.activityBuffer")

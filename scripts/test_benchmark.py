@@ -266,8 +266,14 @@ class BenchmarkFixtureTest(unittest.TestCase):
                 encoding="utf-8",
             )
             before = path.stat()
-            benchmark.mutate_probe(path, generation=42)
+            with mock.patch.object(
+                benchmark.time,
+                "time_ns",
+                return_value=1_700_000_000_042_000_000,
+            ):
+                committed_at_ms = benchmark.mutate_probe(path, generation=42)
             after = path.stat()
+            self.assertEqual(committed_at_ms, 1_700_000_000_042)
             self.assertEqual(after.st_size, before.st_size)
             self.assertEqual(after.st_mtime_ns, before.st_mtime_ns)
             self.assertIn(
