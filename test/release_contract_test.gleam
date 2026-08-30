@@ -404,6 +404,9 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_job, "OrdinalIgnoreCase")
   assert string.contains(windows_job, "EnvironmentVariableTarget.Process")
   assert string.contains(windows_job, "CREATE_SUSPENDED")
+  assert string.contains(windows_job, "CREATE_NEW_CONSOLE")
+  assert string.contains(windows_job, "STARTF_USESHOWWINDOW")
+  assert string.contains(windows_job, "GetConsoleWindow")
   assert string.contains(windows_job, "AssignProcessToJobObject")
   assert string.contains(windows_job, "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE")
   assert string.contains(windows_job, "TerminateRemainingProcesses(job)")
@@ -454,11 +457,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   )
   assert string.contains(
     windows_open_port_smoke,
-    "require_executable(\"where.exe\")",
+    "require_executable(\"erl.exe\")",
   )
-  assert string.contains(windows_open_port_smoke, "Arguments = [\"cmd.exe\"]")
+  assert string.contains(windows_open_port_smoke, "kangaroo-erl-ready")
   assert string.contains(windows_open_port_smoke, "probe_output(")
-  assert string.contains(windows_open_port_smoke, "<<\"cmd.exe\">>")
+  assert string.contains(windows_open_port_smoke, "<<\"kangaroo-erl-ready\">>")
   assert string.contains(windows_open_port_smoke, "hide,")
   assert !string.contains(
     windows_open_port_smoke,

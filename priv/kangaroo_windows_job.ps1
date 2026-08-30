@@ -26,6 +26,8 @@ public static class KangarooWindowsJob
 {
     private const string Prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_";
     private const uint CREATE_SUSPENDED = 0x00000004;
+    private const uint CREATE_NEW_CONSOLE = 0x00000010;
+    private const uint STARTF_USESHOWWINDOW = 0x00000001;
     private const uint STARTF_USESTDHANDLES = 0x00000100;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
@@ -36,6 +38,7 @@ public static class KangarooWindowsJob
     private const int STD_INPUT_HANDLE = -10;
     private const int STD_OUTPUT_HANDLE = -11;
     private const int STD_ERROR_HANDLE = -12;
+    private const short SW_HIDE = 0;
 
     public static int Main()
     {
@@ -238,6 +241,9 @@ public static class KangarooWindowsJob
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetCurrentProcess();
 
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetConsoleWindow();
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool DuplicateHandle(
         IntPtr sourceProcess,
@@ -296,6 +302,18 @@ public static class KangarooWindowsJob
             startup.hStdOutput = standardOutput;
             startup.hStdError = standardError;
 
+            uint creationFlags = CREATE_SUSPENDED;
+            if (GetConsoleWindow() == IntPtr.Zero)
+            {
+                // erl.exe closes redirected standard handles and detaches its
+                // emulator when it cannot open CONOUT$. Give console-aware
+                // launchers a hidden console while retaining the explicit
+                // pipe handles above. Existing terminal sessions stay shared.
+                creationFlags |= CREATE_NEW_CONSOLE;
+                startup.dwFlags |= STARTF_USESHOWWINDOW;
+                startup.wShowWindow = SW_HIDE;
+            }
+
             string resolvedExecutable = ResolveExecutable(executable);
             StringBuilder commandLine = BuildCommandLine(argv0, arguments);
             Check(
@@ -305,7 +323,7 @@ public static class KangarooWindowsJob
                     IntPtr.Zero,
                     IntPtr.Zero,
                     true,
-                    CREATE_SUSPENDED,
+                    creationFlags,
                     IntPtr.Zero,
                     directory,
                     ref startup,

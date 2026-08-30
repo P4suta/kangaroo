@@ -36,11 +36,14 @@ require_executable(Name) ->
     end.
 
 internal_environment(Directory) ->
-    %% `where.exe cmd.exe` has no nested command-processor parsing, exits zero
-    %% only when its fixed argument arrives, and writes through the helper's
-    %% redirected stdout handle. The full test suite exercises cmd and Gleam.
-    Executable = require_executable("where.exe"),
-    Arguments = ["cmd.exe"],
+    %% Exercise the actual Erlang launcher boundary: without a console erl.exe
+    %% closes 0/1/2 and detaches the emulator even when valid port handles were
+    %% supplied. The helper must provide a hidden console and retain those pipes.
+    Executable = require_executable("erl.exe"),
+    Arguments = [
+      "-noshell", "-eval",
+      "io:put_chars(\"kangaroo-erl-ready\"), halt()."
+    ],
     Values = [
         {"EXECUTABLE", Executable},
         {"DIRECTORY", Directory},
@@ -184,7 +187,7 @@ probe_helper_preparation() ->
                                        {cd, filename:dirname(Helper)},
                                        {env, internal_environment(
                                          filename:absname("."))}],
-                                      <<"cmd.exe">>,
+                                      <<"kangaroo-erl-ready">>,
                                       5000);
                                 State ->
                                     io:format(

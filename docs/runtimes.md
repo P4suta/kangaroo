@@ -53,7 +53,10 @@ uses OTP's fixed-command launch form because its Windows argument-vector form
 does not preserve the PowerShell host arguments; the fixed command contains no
 user-controlled launch data. The port is hidden through OTP's Windows option,
 which avoids a detached console process while keeping the supplied standard
-handles. Each runtime creates its absolute per-user temporary cache directory
+handles. If the helper host has no console, it creates a hidden one for
+console-aware launchers such as `erl.exe`; the child's explicit standard slots
+remain bound to the port pipes, while normal terminal sessions keep sharing
+their existing console. Each runtime creates its absolute per-user temporary cache directory
 first and pins that directory as PowerShell's working directory. Because supported Windows
 OTP releases do not preserve the direct PowerShell argument vector, Erlang
 stages the bundled preparation script there under a process-owned basename and

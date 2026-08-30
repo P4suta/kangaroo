@@ -66,7 +66,9 @@ versioning.
   argument-vector form drops the PowerShell host arguments; user launch data
   remains isolated in private environment metadata. The native host uses OTP's
   hidden-window mode so it retains the supplied port handles instead of becoming
-  a detached console process.
+  a detached console process. When no console exists, the helper supplies a
+  hidden console for console-aware launchers such as `erl.exe` while keeping
+  their explicit standard handles bound to the port pipes.
 - Made `doctor` reject Erlang/OTP outside the documented 27–29 range instead
   of reporting untested future major releases as supported.
 - Distinguished synchronous coverage preparation from the cancellable child
