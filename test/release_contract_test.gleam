@@ -281,6 +281,8 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   let assert Ok(windows_job) = fs.read_file("priv/kangaroo_windows_job.ps1")
   let assert Ok(windows_job_bridge) =
     fs.read_file("src/kangaroo_windows_job.mjs")
+  let assert Ok(windows_open_port_smoke) =
+    fs.read_file("scripts/windows_open_port_smoke.escript")
 
   assert string.contains(runtime_docs, "Node.js 22.12+")
   assert string.contains(readme, "Node.js 22.12+")
@@ -344,7 +346,15 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   let assert [preparation_body, ..] =
     string.split(preparation_body, "collect_windows_job_preparation(")
   assert string.contains(preparation_body, "\"-Prepare\"")
-  assert string.contains(preparation_body, "\"-OutputPath\"")
+  assert !string.contains(preparation_body, "\"-OutputPath\"")
+  assert string.contains(
+    preparation_body,
+    "{env, windows_job_output_path_environment(Helper)}",
+  )
+  assert string.contains(
+    erlang_process_ffi,
+    "windows_job_output_path_environment(Helper)",
+  )
   assert string.contains(preparation_body, "default_windows_job_executable()")
   assert string.contains(erlang_process_ffi, "filename:absname(")
   assert !string.contains(preparation_body, "\"-PrintHelperPath\"")
@@ -378,11 +388,16 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(windows_job_bridge, "pwsh.exe")
   assert !string.contains(windows_job_bridge, "HelperPath")
   assert string.contains(windows_job, "[string] $OutputPath")
+  assert string.contains(windows_job, "$prefix + \"OUTPUT_PATH\"")
   assert !string.contains(windows_job, "[switch] $PrintHelperPath")
   assert !string.contains(windows_job, "function Write-Ascii-Line")
   assert string.contains(windows_job, "ConsoleApplication")
   assert string.contains(workflow, "kangaroo_windows_job.ps1 -SmokeTest")
   assert string.contains(workflow, "windows_open_port_smoke.escript")
+  assert string.contains(
+    windows_open_port_smoke,
+    "{env, windows_job_output_path_environment(Helper)}",
+  )
   assert string.contains(windows_job, "GetTempPath")
   assert string.contains(windows_job, "DuplicateHandle")
   assert string.contains(process_ffi, "activityBuffer")

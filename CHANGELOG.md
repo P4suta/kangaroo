@@ -160,9 +160,10 @@ versioning.
   launch data. Unicode environment overrides travel as
   private base64 metadata for the helper to restore without exposing them to
   OTP's port options or the command interpreter.
-- Passed the helper cache location as a fixed PowerShell `-OutputPath` argument
-  and smoke-tested exact first-launch compilation plus fixed `cmd.exe`
-  execution on Windows OTP 27 through 29.
+- Passed the helper cache location as private base64 process metadata and
+  smoke-tested exact first-launch compilation plus fixed `cmd.exe` execution
+  on Windows OTP 27 through 29, without relying on OTP's script-argument or
+  redirected-output encoding.
 - Required the path-bound ownership marker even when a coverage clone fails
   partway through copying, preventing failure cleanup from following a replaced
   workspace path and retaining both the primary and cleanup diagnostics.

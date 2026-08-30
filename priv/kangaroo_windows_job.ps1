@@ -555,6 +555,14 @@ function Get-Helper-Path {
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         return [IO.Path]::GetFullPath($OutputPath)
     }
+    $encodedOutputPath = [Environment]::GetEnvironmentVariable(
+        $prefix + "OUTPUT_PATH",
+        [EnvironmentVariableTarget]::Process)
+    if (-not [string]::IsNullOrWhiteSpace($encodedOutputPath)) {
+        $decodedOutputPath = [Text.Encoding]::UTF8.GetString(
+            [Convert]::FromBase64String($encodedOutputPath))
+        return [IO.Path]::GetFullPath($decodedOutputPath)
+    }
     return [IO.Path]::Combine(
         [IO.Path]::GetTempPath(),
         "kangaroo",

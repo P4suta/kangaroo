@@ -94,7 +94,7 @@ probe_helper_preparation() ->
     Arguments = [
         "-NoLogo", "-NoProfile", "-NonInteractive",
         "-ExecutionPolicy", "Bypass", "-File", Script,
-        "-OutputPath", Helper, "-Prepare"
+        "-Prepare"
     ],
     case prepare_helper_path(PowerShell, Arguments, Helper, 60000) of
         ok ->
@@ -127,7 +127,8 @@ prepare_helper_path(PowerShell, Arguments, Helper, Timeout) ->
     try open_port(
           {spawn_executable, PowerShell},
           [binary, use_stdio, stderr_to_stdout, exit_status,
-           {args, Arguments}]) of
+           {args, Arguments},
+           {env, windows_job_output_path_environment(Helper)}]) of
         Port ->
             wait_for_helper_path(
               Port, Helper, [],
@@ -184,6 +185,9 @@ default_helper_path() ->
     end,
     filename:absname(
       filename:join([Temp, "kangaroo", "windows-job-v6-20260831.exe"])).
+
+windows_job_output_path_environment(Helper) ->
+    [{"__KANGAROO_INTERNAL_WINDOWS_JOB_V1_OUTPUT_PATH", encoded(Helper)}].
 
 require_powershell() ->
     case os:find_executable("powershell.exe") of

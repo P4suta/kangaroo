@@ -314,12 +314,13 @@ prepare_windows_job_helper_worker() ->
                 "-ExecutionPolicy", "Bypass", "-File",
                 filename:join(windows_priv_directory(),
                               "kangaroo_windows_job.ps1"),
-                "-OutputPath", Helper, "-Prepare"
+                "-Prepare"
             ],
             try open_port(
                   {spawn_executable, PowerShell},
                   [binary, use_stdio, stderr_to_stdout, exit_status,
-                   {args, Arguments}]) of
+                   {args, Arguments},
+                   {env, windows_job_output_path_environment(Helper)}]) of
                 Port -> collect_windows_job_preparation(
                           Port, Helper, [],
                           erlang:monotonic_time(millisecond) + 60000)
@@ -385,6 +386,10 @@ default_windows_job_executable() ->
     end,
     filename:absname(
       filename:join([Temp, "kangaroo", "windows-job-v6-20260831.exe"])).
+
+windows_job_output_path_environment(Helper) ->
+    [{"__KANGAROO_INTERNAL_WINDOWS_JOB_V1_OUTPUT_PATH",
+      binary_to_list(encode_windows_job_value(Helper))}].
 
 find_windows_powershell() ->
     case os:find_executable("powershell.exe") of
