@@ -9,6 +9,7 @@ import {
   readFileSync,
   readSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -172,6 +173,7 @@ function isPackageRoot(directory) {
 
 export function copy_to_temporary_workspace(projectDir) {
   let destination;
+  let ownerWritten = false;
   try {
     const source = resolve(String(projectDir));
     try {
@@ -184,11 +186,29 @@ export function copy_to_temporary_workspace(projectDir) {
       encoding: "utf8",
       flag: "wx",
     });
+    ownerWritten = true;
     copyDirectory(source, destination, true, true);
     return new Ok(destination);
   } catch (error) {
-    if (destination) rmSync(destination, { recursive: true, force: true });
-    return new GleamError(String(error && error.message ? error.message : error));
+    const primary = String(error && error.message ? error.message : error);
+    if (!destination) return new GleamError(primary);
+    try {
+      // Before ownership is recorded, only an empty directory can safely be
+      // removed. Afterwards use the same marker validation as public cleanup
+      // so an externally replaced path can never redirect recursive deletion.
+      if (ownerWritten) removeOwnedCoverageWorkspace(destination);
+      else rmdirSync(destination);
+      return new GleamError(primary);
+    } catch (cleanupError) {
+      const cleanup = String(
+        cleanupError && cleanupError.message
+          ? cleanupError.message
+          : cleanupError,
+      );
+      return new GleamError(
+        `${primary}\ncould not remove coverage workspace: ${cleanup}`,
+      );
+    }
   }
 }
 
@@ -243,42 +263,45 @@ function copyDependencyCache(source, destination) {
 
 export function remove_tree(path) {
   try {
-    const value = resolve(String(path));
-    if (!basename(value).startsWith(".kangaroo-coverage-")) {
-      throw new Error("refusing to remove a non-coverage workspace");
-    }
-    let workspaceInfo;
-    try {
-      workspaceInfo = lstatSync(value);
-    } catch (error) {
-      if (error?.code === "ENOENT") return new Ok(undefined);
-      throw error;
-    }
-    const marker = join(value, coverageOwnerMarker);
-    let markerInfo;
-    try {
-      markerInfo = lstatSync(marker);
-    } catch {
-      throw new Error(
-        "refusing to remove a coverage workspace without its ownership marker",
-      );
-    }
-    if (
-      !workspaceInfo.isDirectory() ||
-      workspaceInfo.isSymbolicLink() ||
-      !markerInfo.isFile() ||
-      markerInfo.isSymbolicLink() ||
-      readFileSync(marker, "utf8") !== value
-    ) {
-      throw new Error(
-        "refusing to remove a coverage workspace without its ownership marker",
-      );
-    }
-    rmSync(value, { recursive: true, force: true });
+    removeOwnedCoverageWorkspace(resolve(String(path)));
     return new Ok(undefined);
   } catch (error) {
     return new GleamError(String(error && error.message ? error.message : error));
   }
+}
+
+function removeOwnedCoverageWorkspace(value) {
+  if (!basename(value).startsWith(".kangaroo-coverage-")) {
+    throw new Error("refusing to remove a non-coverage workspace");
+  }
+  let workspaceInfo;
+  try {
+    workspaceInfo = lstatSync(value);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  const marker = join(value, coverageOwnerMarker);
+  let markerInfo;
+  try {
+    markerInfo = lstatSync(marker);
+  } catch {
+    throw new Error(
+      "refusing to remove a coverage workspace without its ownership marker",
+    );
+  }
+  if (
+    !workspaceInfo.isDirectory() ||
+    workspaceInfo.isSymbolicLink() ||
+    !markerInfo.isFile() ||
+    markerInfo.isSymbolicLink() ||
+    readFileSync(marker, "utf8") !== value
+  ) {
+    throw new Error(
+      "refusing to remove a coverage workspace without its ownership marker",
+    );
+  }
+  rmSync(value, { recursive: true, force: true });
 }
 
 export function write_exclusive(path, contents) {

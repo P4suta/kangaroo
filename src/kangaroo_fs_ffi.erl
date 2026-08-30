@@ -185,8 +185,8 @@ copy_to_temporary_workspace(ProjectDir) ->
             case copy_workspace_directory(Source, Destination) of
                 ok -> {ok, unicode:characters_to_binary(Destination)};
                 {error, Reason} ->
-                    _ = remove_directory(Destination),
-                    {error, format_error(Reason)}
+                    copy_cleanup_error(
+                      Reason, remove_tree(Destination))
             end;
         {error, Reason} -> {error, format_error(Reason)}
     end.
@@ -211,12 +211,20 @@ make_workspace(Parent, Attempt) ->
             case write_workspace_owner(Destination) of
                 ok -> {ok, Destination};
                 Error ->
-                    _ = remove_directory(Destination),
+                    %% The ownership marker was not committed, so only remove
+                    %% the still-empty directory. Recursive deletion is never
+                    %% permitted without validated ownership.
+                    _ = file:del_dir(Destination),
                     Error
             end;
         {error, eexist} -> make_workspace(Parent, Attempt + 1);
         Error -> Error
     end.
+
+copy_cleanup_error(Reason, {ok, nil}) -> {error, format_error(Reason)};
+copy_cleanup_error(Reason, {error, Cleanup}) ->
+    {error, <<(format_error(Reason))/binary,
+              "\ncould not remove coverage workspace: ", Cleanup/binary>>}.
 
 write_workspace_owner(Destination) ->
     Marker = filename:join(Destination, ".kangaroo-coverage-owner"),

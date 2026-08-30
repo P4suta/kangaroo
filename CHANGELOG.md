@@ -134,6 +134,9 @@ versioning.
 - Passed the helper cache location through OTP's validated private base64
   environment namespace, and smoke-tested exact first-launch compilation and
   fixed `cmd.exe` execution on Windows OTP 27 through 29.
+- Required the path-bound ownership marker even when a coverage clone fails
+  partway through copying, preventing failure cleanup from following a replaced
+  workspace path and retaining both the primary and cleanup diagnostics.
 - Pinned, cached, and retried the minimum supported VS Code Extension
   Development Host so editor integration gates are reproducible and tolerate
   transient download failures.

@@ -282,6 +282,14 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(runtime_docs, "Node.js 22.12+")
   assert string.contains(readme, "Node.js 22.12+")
   assert string.contains(erlang_fs, "file:read_link_info(Path)")
+  assert string.contains(
+    erlang_fs,
+    "copy_cleanup_error(\n                      Reason, remove_tree(Destination))",
+  )
+  assert !string.contains(
+    erlang_fs,
+    "{error, Reason} ->\n                    _ = remove_directory(Destination)",
+  )
   assert !string.contains(erlang_fs, "case file:read_file_info(Path) of")
   assert string.contains(
     erlang_fs,
@@ -357,6 +365,14 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(process_ffi, "activityBuffer")
   assert string.contains(process_worker, "workerData.activityBuffer")
   assert string.contains(javascript_fs, "observedActivity")
+  assert string.contains(
+    javascript_fs,
+    "if (ownerWritten) removeOwnedCoverageWorkspace(destination)",
+  )
+  assert !string.contains(
+    javascript_fs,
+    "if (destination) rmSync(destination, { recursive: true",
+  )
   assert string.contains(stdin_worker, "workerData.activityBuffer")
   assert string.contains(erlang_fs, "await_input_continue(Parent)")
   assert string.contains(
