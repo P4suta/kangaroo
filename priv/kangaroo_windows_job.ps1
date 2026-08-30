@@ -1,17 +1,18 @@
 param(
     [switch] $Prepare,
+    [switch] $Run,
     [switch] $SmokeTest,
     [switch] $CheckSource
 )
 
 $ErrorActionPreference = "Stop"
 
-# PowerShell is used only to compile an immutable native launcher. Commands run
-# through that executable directly, so PowerShell never retains a copy of a
-# redirected stdio handle or reparses user arguments. The launcher starts the
-# command suspended, assigns it to a kill-on-close Job Object, and only then
-# lets user code run. This closes the race where a fast command could fork and
-# exit before Kangaroo acquired ownership of its descendants.
+# PowerShell compiles an immutable launcher. JavaScript runtimes execute it
+# directly; Erlang loads the same assembly through `-Run` because OTP's Windows
+# port driver rejects managed executables as a spawn_executable target. In both
+# paths user arguments stay in process-scoped environment variables and are
+# never reparsed by PowerShell. The launcher starts the command suspended,
+# assigns it to a kill-on-close Job Object, and only then lets user code run.
 $source = @'
 using System;
 using System.Collections;
@@ -615,8 +616,14 @@ try {
         [Environment]::Exit(0)
     }
 
+    if ($Run) {
+        Add-Type -Path $helper
+        $exitCode = [KangarooWindowsJob]::Main()
+        [Environment]::Exit($exitCode)
+    }
+
     if (-not $SmokeTest) {
-        throw "specify -Prepare or -SmokeTest"
+        throw "specify -Prepare, -Run, or -SmokeTest"
     }
 
     $find = (Get-Command "findstr.exe" -ErrorAction Stop).Source
@@ -628,6 +635,22 @@ try {
     }
     if (($output -join "`n").Trim() -ne "kangaroo") {
         throw "Windows process helper did not preserve redirected stdio"
+    }
+
+    # Exercise the exact compatibility entry point used by Erlang ports. Run
+    # it in a child PowerShell so its Environment.Exit cannot stop this smoke
+    # test and its inherited handles remain observable here.
+    $hostExecutable = (Get-Process -Id $PID).Path
+    Set-Smoke-Launch $find @("kangaroo")
+    $output = "kangaroo" | & $hostExecutable `
+        -NoLogo -NoProfile -NonInteractive `
+        -ExecutionPolicy Bypass -File $PSCommandPath -Run
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "Windows process compatibility entry point exited $exitCode"
+    }
+    if (($output -join "`n").Trim() -ne "kangaroo") {
+        throw "Windows process compatibility entry point lost redirected stdio"
     }
 
     Set-Smoke-Launch $find @("not-present")

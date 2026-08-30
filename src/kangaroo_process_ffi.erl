@@ -75,12 +75,12 @@ run_captured_port(Directory, Path, Arguments, Environment, TimeoutMs) ->
                 Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
                 collect(Port, OsPid, [], <<>>, 0, Deadline)
             catch
-                Class:Reason ->
+                Class:Reason:Stack ->
                     safe_close_port(Port),
-                    {error, format_exception(Class, Reason)}
+                    {error, format_exception(Class, Reason, Stack)}
             end
     catch
-        Class:Reason -> {error, format_exception(Class, Reason)}
+        Class:Reason:Stack -> {error, format_exception(Class, Reason, Stack)}
     end.
 
 run_inherited(Directory, Executable, Arguments, Environment, TimeoutMs) ->
@@ -102,12 +102,12 @@ run_inherited_port(Directory, Path, Arguments, Environment, TimeoutMs) ->
                 Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
                 collect_inherited(Port, OsPid, Deadline)
             catch
-                Class:Reason ->
+                Class:Reason:Stack ->
                     safe_close_port(Port),
-                    {error, format_exception(Class, Reason)}
+                    {error, format_exception(Class, Reason, Stack)}
             end
     catch
-        Class:Reason -> {error, format_exception(Class, Reason)}
+        Class:Reason:Stack -> {error, format_exception(Class, Reason, Stack)}
     end.
 
 collect_inherited(Port, OsPid, Deadline) ->
@@ -128,9 +128,9 @@ async_run(Parent, Id, Directory, Path, Arguments, Environment, TimeoutMs) ->
     try open_process_port(Directory, Path, Arguments, Environment, captured) of
         Port -> async_run_port(Parent, Id, Port, TimeoutMs)
     catch
-        Class:Reason ->
+        Class:Reason:Stack ->
             Parent ! {kangaroo_process, Id,
-                      {failed, format_exception(Class, Reason)}}
+                      {failed, format_exception(Class, Reason, Stack)}}
     end.
 
 async_run_port(Parent, Id, Port, TimeoutMs) ->
@@ -139,10 +139,10 @@ async_run_port(Parent, Id, Port, TimeoutMs) ->
         Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
         async_collect(Parent, Id, Port, OsPid, [], <<>>, 0, Deadline)
     catch
-        Class:Reason ->
+        Class:Reason:Stack ->
             safe_close_port(Port),
             Parent ! {kangaroo_process, Id,
-                      {failed, format_exception(Class, Reason)}}
+                      {failed, format_exception(Class, Reason, Stack)}}
     end.
 
 open_process_port(Directory, Path, Arguments, Environment, Mode) ->
@@ -173,6 +173,13 @@ process_launch(Directory, Path, Arguments, Environment) ->
 
 windows_job_launch(Directory, Path, Arguments, Environment) ->
     Helper = windows_job_executable(),
+    PowerShell = case os:find_executable("powershell.exe") of
+        false -> erlang:error(
+                   {missing_windows_process_wrapper, powershell_exe});
+        Value -> Value
+    end,
+    Script = filename:join(windows_priv_directory(),
+                           "kangaroo_windows_job.ps1"),
     WorkingDirectory = filename:absname(to_list(Directory)),
     CleanEnvironment = [
         {Key, Value} || {Key, Value} <- Environment,
@@ -184,6 +191,8 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
         {Name, encode_windows_job_value(Argument)}
     end, lists:seq(0, length(Arguments) - 1), Arguments),
     InternalEnvironment = [
+        {?WINDOWS_JOB_PREFIX ++ "HELPER_PATH",
+         encode_windows_job_value(Helper)},
         {?WINDOWS_JOB_PREFIX ++ "EXECUTABLE", encode_windows_job_value(Path)},
         {?WINDOWS_JOB_PREFIX ++ "DIRECTORY",
          encode_windows_job_value(WorkingDirectory)},
@@ -193,7 +202,11 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
         | ArgumentEnvironment
     ],
     InheritedRemovals = inherited_windows_job_removals(),
-    {Helper, ["--kangaroo-job-helper"],
+    PowerShellArguments = [
+        "-NoLogo", "-NoProfile", "-NonInteractive",
+        "-ExecutionPolicy", "Bypass", "-File", Script, "-Run"
+    ],
+    {PowerShell, PowerShellArguments,
      InheritedRemovals ++ InternalEnvironment ++ CleanEnvironment}.
 
 internal_windows_job_name(Name) ->
@@ -283,8 +296,8 @@ prepare_windows_job_helper_worker() ->
                           Port, [], erlang:monotonic_time(millisecond) + 15000,
                           Helper)
             catch
-                Class:Reason ->
-                    {error, format_exception(Class, Reason)}
+                Class:Reason:Stack ->
+                    {error, format_exception(Class, Reason, Stack)}
             end
     end.
 
@@ -630,9 +643,32 @@ executable_path(Executable) ->
         Path -> {ok, Path}
     end.
 
-format_exception(Class, Reason) ->
-    unicode:characters_to_binary(
-      io_lib:format("~0p: ~0p", [Class, Reason])).
+format_exception(Class, Reason, Stack) ->
+    Base = io_lib:format("~0p: ~0p", [Class, Reason]),
+    Context = exception_context(Stack),
+    unicode:characters_to_binary([Base, Context]).
+
+%% Preserve the failing operation and OTP's non-sensitive error category while
+%% omitting stack arguments: process environments can contain credentials and
+%% must never be copied into CLI diagnostics.
+exception_context([{Module, Function, Arguments, Details} | _]) ->
+    Arity = case Arguments of
+        Values when is_list(Values) -> length(Values);
+        Value when is_integer(Value) -> Value;
+        _ -> 0
+    end,
+    ErrorInfo = proplists:get_value(error_info, Details, #{}),
+    Cause = case is_map(ErrorInfo) of
+        true -> maps:get(cause, ErrorInfo, undefined);
+        false -> undefined
+    end,
+    case Cause of
+        undefined -> io_lib:format(" at ~0p:~0p/~B", [Module, Function, Arity]);
+        _ -> io_lib:format(
+               " at ~0p:~0p/~B (~0p)",
+               [Module, Function, Arity, Cause])
+    end;
+exception_context(_) -> [].
 
 to_list(Value) when is_binary(Value) -> unicode:characters_to_list(Value);
 to_list(Value) when is_list(Value) -> Value.

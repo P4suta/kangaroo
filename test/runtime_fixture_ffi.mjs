@@ -140,6 +140,35 @@ export function spawn_native_descendant() {
   spawn(globalThis.process.execPath, ["-e", code], { stdio: "ignore" });
 }
 
+export function complete_native_child() {
+  const code = `require("node:fs").writeFileSync(${JSON.stringify(descendantMarker)}, "completed");`;
+  if (typeof globalThis.Bun !== "undefined") {
+    return globalThis.Bun.spawn([globalThis.process.execPath, "-e", code], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exited;
+  }
+  if (typeof globalThis.Deno !== "undefined") {
+    const denoCode = `await Deno.writeTextFile(${JSON.stringify(descendantMarker)}, "completed");`;
+    return new globalThis.Deno.Command(globalThis.Deno.execPath(), {
+      args: ["eval", denoCode],
+      stdin: "null",
+      stdout: "null",
+      stderr: "null",
+    }).output();
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(globalThis.process.execPath, ["-e", code], {
+      stdio: "ignore",
+    });
+    child.once("error", reject);
+    child.once("exit", code => code === 0
+      ? resolve()
+      : reject(new Error(`native child exited ${code}`)));
+  });
+}
+
 export function spawn_synchronous_descendant() {
   if (typeof globalThis.Deno !== "undefined") {
     const writer = `await new Promise(resolve => setTimeout(resolve, 100)); await Deno.writeTextFile(${JSON.stringify(descendantMarker)}, "survived");`;

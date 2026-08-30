@@ -289,6 +289,7 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   )
   assert string.contains(erlang_process_ffi, "taskkill /PID")
   assert string.contains(erlang_process_ffi, "windows_job_launch")
+  assert string.contains(erlang_process_ffi, "\"-Run\"")
   assert string.contains(process_worker, "windowsJobLaunch")
   assert string.contains(test_worker, "windowsJobSpawnOptions")
   assert string.contains(test_worker, "windowsJobLaunch")

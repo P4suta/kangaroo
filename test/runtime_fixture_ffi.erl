@@ -8,7 +8,8 @@
          kill_output_collector/0,
          kill_test_owner_from_link/0,
          exit_test_worker/0,
-         spawn_native_descendant/0, spawn_synchronous_descendant/0,
+         spawn_native_descendant/0, complete_native_child/0,
+         spawn_synchronous_descendant/0,
          native_output_timeout/0, synchronous_timeout/0,
          reset_descendant_marker/0, descendant_marker_exists/0,
          run_all_crash_cancels_sibling/0]).
@@ -91,6 +92,10 @@ kill_test_owner_from_link() ->
 exit_test_worker() -> nil.
 
 spawn_native_descendant() -> spawn_descendant().
+
+complete_native_child() ->
+    file:write_file(descendant_marker(), <<"completed">>),
+    nil.
 
 spawn_synchronous_descendant() -> spawn_descendant().
 

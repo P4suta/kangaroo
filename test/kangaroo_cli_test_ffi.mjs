@@ -231,8 +231,15 @@ export function schedule_replace(path, expected, replacement, delay) {
       // `run` subcommand's --allow-read/--allow-write flags.
       ? ["eval", script]
       : ["-e", script];
-  const child = spawn(sleeper_executable(), args, { stdio: "ignore" });
-  child.on("error", () => {});
+  const child = typeof globalThis.Bun !== "undefined"
+    ? globalThis.Bun.spawn([sleeper_executable(), ...args], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    : spawn(sleeper_executable(), args, { stdio: "ignore" });
+  child.on?.("error", () => {});
+  child.exited?.catch?.(() => {});
   child.unref?.();
 }
 

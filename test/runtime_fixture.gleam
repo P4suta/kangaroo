@@ -162,6 +162,10 @@ pub fn fail_then_skip_fixture() {
 @external(javascript, "./runtime_fixture_ffi.mjs", "spawn_native_descendant")
 pub fn native_descendant_fixture() -> Nil
 
+@external(erlang, "runtime_fixture_ffi", "complete_native_child")
+@external(javascript, "./runtime_fixture_ffi.mjs", "complete_native_child")
+pub fn native_child_completion_fixture() -> Nil
+
 @external(erlang, "runtime_fixture_ffi", "spawn_synchronous_descendant")
 @external(javascript, "./runtime_fixture_ffi.mjs", "spawn_synchronous_descendant")
 pub fn synchronous_descendant_fixture() -> Nil

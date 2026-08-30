@@ -250,6 +250,18 @@ pub fn native_runtime_processes_are_cleaned_after_a_test_test() {
   assert !survived
 }
 
+pub fn native_runtime_processes_complete_successfully_test() {
+  kangaroo.serial()
+  reset_descendant_marker()
+  let assert Ok(loaded) =
+    runtime.resolve(fixture("native_child_completion_fixture"))
+  assert runtime.run(loaded, Some(functional_isolation_timeout_ms()))
+    == Completed
+  let completed = descendant_marker_exists()
+  reset_descendant_marker()
+  assert completed
+}
+
 pub fn synchronous_process_descendants_are_cleaned_after_a_test_test() {
   kangaroo.serial()
   reset_descendant_marker()
