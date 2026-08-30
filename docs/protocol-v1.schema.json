@@ -7,9 +7,13 @@
     { "$ref": "#/$defs/response" }
   ],
   "$defs": {
+    "nonBlankString": {
+      "type": "string",
+      "pattern": "\\S"
+    },
     "stringArray": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "$ref": "#/$defs/nonBlankString" }
     },
     "request": {
       "oneOf": [
@@ -18,7 +22,7 @@
           "required": ["protocol_version", "id", "command"],
           "properties": {
             "protocol_version": { "const": 1 },
-            "id": { "type": "string" },
+            "id": { "$ref": "#/$defs/nonBlankString" },
             "command": { "const": "discover" }
           },
           "additionalProperties": false
@@ -28,7 +32,7 @@
           "required": ["protocol_version", "id", "command"],
           "properties": {
             "protocol_version": { "const": 1 },
-            "id": { "type": "string" },
+            "id": { "$ref": "#/$defs/nonBlankString" },
             "command": { "enum": ["run", "watch"] },
             "selectors": { "$ref": "#/$defs/stringArray" },
             "include_tags": { "$ref": "#/$defs/stringArray" },
@@ -41,9 +45,9 @@
           "required": ["protocol_version", "id", "command", "operation_id"],
           "properties": {
             "protocol_version": { "const": 1 },
-            "id": { "type": "string" },
+            "id": { "$ref": "#/$defs/nonBlankString" },
             "command": { "const": "cancel" },
-            "operation_id": { "type": "string", "minLength": 1 }
+            "operation_id": { "$ref": "#/$defs/nonBlankString" }
           },
           "additionalProperties": false
         },
@@ -52,7 +56,7 @@
           "required": ["protocol_version", "id", "command"],
           "properties": {
             "protocol_version": { "const": 1 },
-            "id": { "type": "string" },
+            "id": { "$ref": "#/$defs/nonBlankString" },
             "command": { "const": "shutdown" }
           },
           "additionalProperties": false

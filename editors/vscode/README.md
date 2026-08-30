@@ -8,6 +8,8 @@ package, or continuously. Testing API exclusions are preserved.
 Failures are published both as Testing API messages and Problems diagnostics.
 Every new run clears stale diagnostics, and an unexpected daemon exit ends the
 active run, clears stale state, restarts the daemon, and rediscovers tests.
+Cancelling a run ends its Testing API session immediately and invalidates its
+generation, so an acknowledgement race cannot republish stale results.
 
 ## Requirements
 
@@ -15,16 +17,43 @@ active run, clears stale state, restarts the daemon, and rediscovers tests.
 - The project depends on `kangaroo` 1.x
 - `gleam` is on `PATH`, or `kangaroo.gleamPath` points to it
 
+Kangaroo is disabled in VS Code Restricted Mode because it executes the
+workspace's tests and configured toolchain. It also requires a
+filesystem-backed workspace rather than a virtual filesystem.
+
+For a JavaScript-target package, set the resource-scoped
+`kangaroo.javascriptRuntime` setting to `nodejs` (the default), `bun`, or
+`deno`. The same runtime is used by discovery, run/watch, and coverage, and a
+configuration change restarts only the affected package daemon.
+
 No standalone CLI is required. The extension invokes the package's unified
 entry point:
 
 ```sh
-gleam run -m kangaroo -- daemon
+gleam run --target javascript --runtime bun -m kangaroo -- daemon
 ```
 
-Multi-root workspaces and monorepos are supported; creating or deleting a
-`gleam.toml` adds or removes the corresponding independent test tree and
-daemon lifecycle.
+Multi-root workspaces and monorepos are supported; creating, changing, or
+deleting a `gleam.toml` adds, restarts, or removes the corresponding
+independent test tree and daemon lifecycle. A nested `gleam.toml` activates
+the extension even before a Gleam source file is opened.
+
+Only the newest discovery response may replace a package's Testing tree.
+If discovery fails or its daemon exits, stale test IDs are removed until a
+fresh discovery succeeds.
+Every completed watch generation refreshes discovery, while unchanged tests
+retain their Testing API identity. Added and removed tests therefore converge
+without a manual refresh.
+Shutdown first asks the daemon to exit cleanly, then force-stops its complete
+process tree if it does not respond.
+
+Daemon stdout is decoded incrementally with a 128 MiB per-record ceiling,
+large enough for the maximum escaped captured-output event. An oversized or
+schema-invalid protocol-v1 record terminates and restarts the daemon instead
+of leaving a run pending; records with a different integer protocol version
+are ignored for forward compatibility. Coverage is package-serial: cancelling
+ends its Testing API run immediately, but a replacement is refused until the
+old process has actually exited and released ownership.
 
 ## Development
 

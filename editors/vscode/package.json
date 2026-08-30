@@ -8,11 +8,22 @@
   "categories": ["Testing", "Other"],
   "activationEvents": [
     "workspaceContains:gleam.toml",
+    "workspaceContains:**/gleam.toml",
     "onLanguage:gleam",
     "onCommand:kangaroo.start",
     "onCommand:kangaroo.stop",
     "onCommand:kangaroo.refresh"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Kangaroo executes the workspace's Gleam tests and configured toolchain."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Kangaroo requires a filesystem-backed Gleam package and local subprocesses."
+    }
+  },
   "main": "./extension.js",
   "contributes": {
     "commands": [
@@ -28,6 +39,13 @@
           "default": "gleam",
           "scope": "resource",
           "description": "Path to the gleam executable."
+        },
+        "kangaroo.javascriptRuntime": {
+          "type": "string",
+          "enum": ["nodejs", "bun", "deno"],
+          "default": "nodejs",
+          "scope": "resource",
+          "description": "JavaScript runtime used for JavaScript-target packages."
         }
       }
     }

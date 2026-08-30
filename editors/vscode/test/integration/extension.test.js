@@ -21,7 +21,9 @@ suite("Kangaroo extension host", () => {
     assert.equal(api.sessions.size, 1);
     const session = Array.from(api.sessions.values())[0];
     assert.equal(session.target, "javascript");
+    assert.equal(session.javascriptRuntime, "nodejs");
     assert.equal(session.client.target, "javascript");
+    assert.equal(session.client.runtime, "nodejs");
     const testId = "test/editor_test.gleam::editor_integration_test";
     let item;
     try {
@@ -74,12 +76,14 @@ suite("Kangaroo extension host", () => {
     const crashed = session.client.process;
     const requestNumber = session.requestNumber;
     assert.equal(crashed.kill("SIGKILL"), true);
+    await waitFor("stale test tree cleanup", () => session.items.size === 0);
     await waitFor("daemon restart", () =>
       session.client.process && session.client.process !== crashed);
     await waitFor("daemon rediscovery request", () =>
       session.requestNumber > requestNumber);
+    await waitFor("daemon rediscovery result", () =>
+      session.items.has(testId));
     assert.equal(vscode.languages.getDiagnostics(testUri).length, 0);
-    assert.ok(session.items.has(testId));
 
     await vscode.commands.executeCommand("kangaroo.stop");
     assert.equal(api.sessions.size, 0);

@@ -12,8 +12,10 @@ const {
   RunState,
   daemonArguments,
   failuresFor,
+  javascriptRuntime,
   projectTarget,
   protocolRequest,
+  protocolResponse,
   resolveGleamExecutable,
   subprocessEnvironment,
   zeroBasedRange,
@@ -32,8 +34,10 @@ class DaemonClient {
     schedule = setTimeout,
     cancelSchedule = clearTimeout,
     discoveryTimeoutMs = 60_000,
+    maxProtocolLineBytes = 128 * 1024 * 1024,
     terminateProcess = terminateProcessTree,
     target,
+    runtime,
   }) {
     this.cwd = cwd;
     this.executable = executable;
@@ -44,9 +48,11 @@ class DaemonClient {
     this.schedule = schedule;
     this.cancelSchedule = cancelSchedule;
     this.discoveryTimeoutMs = discoveryTimeoutMs;
+    this.maxProtocolLineBytes = maxProtocolLineBytes;
     this.terminateProcess = terminateProcess;
     this.target = target;
-    this.logHistory = [];
+    this.runtime = javascriptRuntime(runtime);
+    this.logHistory = "";
     this.pendingDiscoveries = new Map();
     this.process = null;
     this.finishProcess = null;
@@ -58,13 +64,17 @@ class DaemonClient {
     this.stopping = false;
     let child;
     try {
-      child = this.spawnProcess(this.executable, daemonArguments(this.target), {
-        cwd: this.cwd,
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
-        detached: globalThis.process.platform !== "win32",
-        env: subprocessEnvironment(),
-      });
+      child = this.spawnProcess(
+        this.executable,
+        daemonArguments(this.target, this.runtime),
+        {
+          cwd: this.cwd,
+          stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
+          detached: globalThis.process.platform !== "win32",
+          env: subprocessEnvironment(),
+        },
+      );
     } catch (error) {
       this.log(`daemon error: ${error.message}`);
       this.onExit({ code: null, signal: null, expected: false });
@@ -81,24 +91,45 @@ class DaemonClient {
       this.onExit({ code, signal, expected: this.stopping });
     };
     this.finishProcess = finish;
-    const decoder = new LineDecoder();
+    const decoder = new LineDecoder(this.maxProtocolLineBytes);
     child.stdout.setEncoding?.("utf8");
     child.stderr.setEncoding?.("utf8");
     child.stdout.on("data", (chunk) => {
-      for (const line of decoder.push(chunk)) {
+      if (this.process !== child) return;
+      let lines;
+      try {
+        lines = decoder.push(chunk);
+      } catch (error) {
+        this.log(`daemon stdout error: ${error.message}\n`);
+        this.terminateProcess(child);
+        finish(null, null);
+        return;
+      }
+      for (const line of lines) {
         try {
           const message = JSON.parse(line);
           if (message.protocol_version === PROTOCOL_VERSION) {
+            if (!protocolResponse(message)) {
+              throw new Error("invalid daemon stdout record");
+            }
             this.acknowledgeDiscovery(message.request_id);
             this.onMessage(message);
           }
-          else this.log(`unsupported daemon message: ${line}`);
+          else if (Number.isInteger(message?.protocol_version)) {
+            this.log("unsupported daemon protocol version\n");
+          }
+          else throw new Error("invalid daemon stdout record");
         } catch {
-          this.log(`invalid daemon stdout: ${line}`);
+          this.log("invalid daemon stdout record\n");
+          this.terminateProcess(child);
+          finish(null, null);
+          return;
         }
       }
     });
-    child.stderr.on("data", (chunk) => this.log(String(chunk)));
+    child.stderr.on("data", (chunk) => {
+      if (this.process === child) this.log(String(chunk));
+    });
     child.stdin.on?.("error", (error) => {
       this.handleStdinFailure(error, child);
     });
@@ -111,8 +142,12 @@ class DaemonClient {
   }
 
   send(message) {
-    if (!this.process || !this.process.stdin.writable) return false;
+    if (!this.process) return false;
     const child = this.process;
+    if (!child.stdin.writable) {
+      this.handleStdinFailure(new Error("daemon stdin is not writable"), child);
+      return false;
+    }
     try {
       child.stdin.write(`${JSON.stringify(message)}\n`);
     } catch (error) {
@@ -127,13 +162,12 @@ class DaemonClient {
 
   log(message) {
     const rendered = String(message);
-    this.logHistory.push(rendered);
-    if (this.logHistory.length > 100) this.logHistory.shift();
+    this.logHistory = (this.logHistory + rendered).slice(-65_536);
     this.onLog(rendered);
   }
 
   diagnosticLog() {
-    return this.logHistory.join("").slice(-65_536).trim();
+    return this.logHistory.trim();
   }
 
   handleStdinFailure(error, child) {
@@ -190,6 +224,7 @@ class WorkspaceSession {
     spawnProcess = spawn,
     readCoverageFile = readFile,
     schedule = setTimeout,
+    now = Date.now,
   ) {
     this.vscode = vscode;
     this.folder = folder;
@@ -197,17 +232,27 @@ class WorkspaceSession {
     this.spawnProcess = spawnProcess;
     this.readCoverageFile = readCoverageFile;
     this.schedule = schedule;
+    this.now = now;
     this.disposed = false;
     this.restartAttempt = 0;
     this.restartTimer = null;
+    this.daemonStartedAt = null;
+    this.stableDaemonMs = 10_000;
     this.requestNumber = 0;
+    this.latestDiscoveryId = null;
     this.items = new Map();
     this.files = new Map();
     this.activeRuns = new Map();
     this.runState = new RunState();
+    this.latestRunGeneration = 0;
     this.diagnosticUris = new Set();
     this.coverageDetails = new WeakMap();
-    this.coverageProcesses = new Set();
+    this.coverageProcesses = new Map();
+    const configuration = this.vscode.workspace
+      .getConfiguration("kangaroo", this.folder.uri);
+    this.javascriptRuntime = javascriptRuntime(
+      configuration.get("javascriptRuntime", "nodejs"),
+    );
     try {
       this.target = projectTarget(readFileSync(
         path.join(this.folder.uri.fsPath, "gleam.toml"),
@@ -235,6 +280,7 @@ class WorkspaceSession {
       cwd: this.folder.uri.fsPath,
       executable,
       target: this.target,
+      runtime: this.javascriptRuntime,
       spawnProcess: this.spawnProcess,
       onMessage: (message) => this.handleMessage(message),
       onLog: (message) => this.shared.output.append(message),
@@ -250,13 +296,14 @@ class WorkspaceSession {
       (request, token) => this.startOperation("run", request, token),
       true,
     );
-    const watch = this.controller.createRunProfile(
+    this.controller.createRunProfile(
       "Watch",
       TestRunProfileKind.Run,
       (request, token) => this.startOperation("watch", request, token),
       false,
+      undefined,
+      true,
     );
-    watch.supportsContinuousRun = true;
     const coverage = this.controller.createRunProfile(
       "Coverage",
       TestRunProfileKind.Coverage,
@@ -268,13 +315,23 @@ class WorkspaceSession {
   }
 
   start() {
-    this.client.start();
     this.discover();
   }
 
   discover() {
-    if (!this.client.process) this.client.start();
-    this.client.send(protocolRequest(this.nextId("discover"), "discover"));
+    if (!this.ensureClient()) return;
+    const id = this.nextId("discover");
+    this.latestDiscoveryId = id;
+    if (!this.client.send(protocolRequest(id, "discover"))) {
+      if (this.latestDiscoveryId === id) this.latestDiscoveryId = null;
+    }
+  }
+
+  ensureClient() {
+    if (this.client.process) return true;
+    const started = this.client.start();
+    if (started && this.client.process) this.daemonStartedAt = this.now();
+    return started;
   }
 
   nextId(prefix) {
@@ -325,8 +382,18 @@ class WorkspaceSession {
       `Kangaroo ${command}`,
     );
     if (!runnable) return;
-    this.activeRuns.set(id, { run, command });
-    const sent = this.client.send(protocolRequest(id, command, { selectors }));
+    const context = {
+      run,
+      command,
+      state: new RunState(),
+      items: new Map(this.items),
+      generation: 0,
+      receivedRunStarted: false,
+    };
+    this.activeRuns.set(id, context);
+    this.beginRunGeneration(context);
+    const sent = this.ensureClient() &&
+      this.client.send(protocolRequest(id, command, { selectors }));
     if (!sent) {
       run.appendOutput("kangaroo daemon is not running\r\n");
       run.end();
@@ -335,6 +402,15 @@ class WorkspaceSession {
       return;
     }
     token.onCancellationRequested(() => {
+      if (context.cancelled) return;
+      context.cancelled = true;
+      context.state.beginRun();
+      if (context.generation === this.latestRunGeneration) {
+        this.latestRunGeneration += 1;
+        this.clearDiagnostics();
+      }
+      context.run.end();
+      this.activeRuns.delete(id);
       this.client.send(protocolRequest(this.nextId("cancel"), "cancel", {
         operation_id: id,
       }));
@@ -347,6 +423,13 @@ class WorkspaceSession {
       "Kangaroo coverage",
     );
     if (!runnable) return Promise.resolve();
+    if (this.coverageProcesses.size > 0) {
+      run.appendOutput(
+        "kangaroo coverage is already running or stopping for this package\r\n",
+      );
+      run.end();
+      return Promise.resolve();
+    }
     const configured = this.vscode.workspace
       .getConfiguration("kangaroo", this.folder.uri)
       .get("gleamPath", "gleam");
@@ -354,18 +437,50 @@ class WorkspaceSession {
 
     return new Promise((resolve) => {
       let child;
-      let finished = false;
+      let cancelled = false;
+      let terminal = false;
+      let completed = false;
       const decoder = new LineDecoder();
-      const end = () => {
-        if (finished) return false;
-        finished = true;
-        if (child) this.coverageProcesses.delete(child);
+      const coverageContext = {
+        run,
+        state: new RunState(),
+        items: new Map(this.items),
+        generation: 0,
+        receivedRunStarted: false,
+      };
+      this.beginRunGeneration(coverageContext);
+      const finishOperation = () => {
+        if (completed) return false;
+        completed = true;
+        run.end();
+        resolve();
         return true;
+      };
+      const claimTerminal = () => {
+        if (terminal) return false;
+        terminal = true;
+        return true;
+      };
+      const cancelCoverage = () => {
+        if (cancelled || completed) return;
+        cancelled = true;
+        coverageContext.cancelled = true;
+        coverageContext.state.beginRun();
+        if (coverageContext.generation === this.latestRunGeneration) {
+          this.latestRunGeneration += 1;
+          this.clearDiagnostics();
+        }
+        if (!terminal) terminateProcessTree(child);
+        finishOperation();
       };
       try {
         child = this.spawnProcess(
           executable,
-          coverageArguments(selectors, this.target),
+          coverageArguments(
+            selectors,
+            this.target,
+            this.javascriptRuntime,
+          ),
           {
             cwd: this.folder.uri.fsPath,
             stdio: ["ignore", "pipe", "pipe"],
@@ -374,7 +489,7 @@ class WorkspaceSession {
             env: subprocessEnvironment(),
           },
         );
-        this.coverageProcesses.add(child);
+        this.coverageProcesses.set(child, cancelCoverage);
       } catch (error) {
         run.appendOutput(`could not start coverage: ${error.message}\r\n`);
         run.end();
@@ -389,7 +504,7 @@ class WorkspaceSession {
         try {
           const event = JSON.parse(line);
           if (event && typeof event.type === "string") {
-            this.handleEvent(run, event);
+            this.handleEvent(run, event, coverageContext);
             return;
           }
         } catch {
@@ -398,36 +513,52 @@ class WorkspaceSession {
         run.appendOutput(`${line}\r\n`);
       };
       child.stdout.on("data", (chunk) => {
-        decoder.push(chunk).forEach(consume);
+        if (cancelled || completed) return;
+        try {
+          decoder.push(chunk).forEach(consume);
+        } catch (error) {
+          run.appendOutput(`coverage output failed: ${error.message}\r\n`);
+          cancelCoverage();
+        }
       });
       child.stderr.on("data", (chunk) => {
+        if (cancelled || completed) return;
         run.appendOutput(String(chunk).replace(/(?<!\r)\n/g, "\r\n"));
       });
       child.on("error", (error) => {
-        if (!end()) return;
-        run.appendOutput(`coverage process failed: ${error.message}\r\n`);
-        run.end();
-        resolve();
+        if (!claimTerminal()) return;
+        this.coverageProcesses.delete(child);
+        if (!cancelled) {
+          run.appendOutput(`coverage process failed: ${error.message}\r\n`);
+        }
+        finishOperation();
       });
       child.on("exit", async (code, signal) => {
-        if (!end()) return;
-        if (decoder.remainder()) consume(decoder.remainder());
+        if (!claimTerminal()) return;
         try {
-          const lcov = await this.readCoverageFile(
-            path.join(this.folder.uri.fsPath, "coverage", "lcov.info"),
-            "utf8",
-          );
-          this.publishCoverage(run, parseLcov(lcov));
+          if (!cancelled && decoder.remainder()) consume(decoder.remainder());
+          if (!cancelled && !this.disposed && !signal && code !== null && code < 2) {
+            const lcov = await this.readCoverageFile(
+              path.join(this.folder.uri.fsPath, "coverage", "lcov.info"),
+              "utf8",
+            );
+            if (!cancelled && !this.disposed) {
+              this.publishCoverage(run, parseLcov(lcov));
+            }
+          }
+          if (!completed && signal) {
+            run.appendOutput(`coverage cancelled (${signal})\r\n`);
+          }
         } catch (error) {
-          if (code !== null && code < 2) {
+          if (!cancelled && !this.disposed) {
             run.appendOutput(`could not read coverage/lcov.info: ${error.message}\r\n`);
           }
+        } finally {
+          this.coverageProcesses.delete(child);
+          finishOperation();
         }
-        if (signal) run.appendOutput(`coverage cancelled (${signal})\r\n`);
-        run.end();
-        resolve();
       });
-      token.onCancellationRequested(() => terminateProcessTree(child));
+      token.onCancellationRequested(cancelCoverage);
     });
   }
 
@@ -449,8 +580,12 @@ class WorkspaceSession {
   }
 
   handleMessage(message) {
-    this.restartAttempt = 0;
+    if (this.disposed) return;
     if (message.type === "discovered") {
+      if (
+        this.latestDiscoveryId !== null &&
+        message.request_id !== this.latestDiscoveryId
+      ) return;
       this.replaceTests(message.tests || []);
       this.shared.status.text = `Kangaroo: $(beaker) ${this.items.size} tests`;
       this.shared.status.show();
@@ -466,11 +601,18 @@ class WorkspaceSession {
     }
     const active = this.activeRuns.get(message.request_id);
     if (message.type === "event" && active) {
-      this.handleEvent(active.run, message.event || {});
+      active.state ||= new RunState();
+      active.generation ||= 0;
+      this.handleEvent(active.run, message.event || {}, active);
     } else if (message.type === "completed" && active) {
       active.run.end();
       this.activeRuns.delete(message.request_id);
     } else if (message.type === "error") {
+      if (message.request_id === this.latestDiscoveryId) {
+        this.replaceTests([]);
+        this.shared.status.text = "Kangaroo: $(warning) discovery failed";
+        this.shared.status.show();
+      }
       if (active) {
         active.run.appendOutput(`${message.message}\r\n`);
         active.run.end();
@@ -481,22 +623,31 @@ class WorkspaceSession {
   }
 
   replaceTests(tests) {
-    this.items.clear();
-    this.files.clear();
-    this.controller.items.replace([]);
+    const previousItems = this.items;
+    const previousFiles = this.files;
+    const items = new Map();
+    const files = new Map();
+    const children = new Map();
     for (const test of tests) {
-      let fileItem = this.files.get(test.path);
+      let fileItem = files.get(test.path);
       if (!fileItem) {
-        const uri = this.vscode.Uri.joinPath(this.folder.uri, test.path);
-        fileItem = this.controller.createTestItem(
-          `file:${test.path}`,
-          path.basename(test.path),
-          uri,
-        );
-        this.files.set(test.path, fileItem);
-        this.controller.items.add(fileItem);
+        fileItem = previousFiles.get(test.path);
+        if (!fileItem) {
+          const uri = this.vscode.Uri.joinPath(this.folder.uri, test.path);
+          fileItem = this.controller.createTestItem(
+            `file:${test.path}`,
+            path.basename(test.path),
+            uri,
+          );
+        }
+        files.set(test.path, fileItem);
+        children.set(test.path, []);
       }
-      const item = this.controller.createTestItem(test.id, test.name, fileItem.uri);
+      let item = previousItems.get(test.id);
+      if (!item || item.uri.toString() !== fileItem.uri.toString()) {
+        item = this.controller.createTestItem(test.id, test.name, fileItem.uri);
+      }
+      item.label = test.name;
       const range = zeroBasedRange(test);
       item.range = new this.vscode.Range(
         range.start.line,
@@ -505,38 +656,67 @@ class WorkspaceSession {
         range.end.column,
       );
       item.tags = (test.tags || []).map((tag) => new this.vscode.TestTag(tag));
-      fileItem.children.add(item);
-      this.items.set(test.id, item);
+      children.get(test.path).push(item);
+      items.set(test.id, item);
     }
+    for (const [testPath, fileItem] of files) {
+      fileItem.children.replace(children.get(testPath));
+    }
+    this.controller.items.replace(Array.from(files.values()));
+    this.items = items;
+    this.files = files;
   }
 
-  handleEvent(run, event) {
-    const item = this.items.get(event.case);
+  handleEvent(run, event, context) {
+    if (context?.cancelled) return;
+    const state = context?.state || this.runState;
+    const item = context?.items?.get(event.case) || this.items.get(event.case);
     if (event.type === "run_started") {
-      this.runState.beginRun();
-      this.clearDiagnostics();
+      if (context) context.items = new Map(this.items);
+      if (
+        context && context.generation > 0 && !context.receivedRunStarted
+      ) {
+        context.receivedRunStarted = true;
+        state.beginRun();
+        if (context.generation === this.latestRunGeneration) {
+          this.clearDiagnostics();
+        }
+      } else {
+        this.beginRunGeneration(context);
+        if (context) context.receivedRunStarted = true;
+      }
     } else if (event.type === "case_started" && item) {
       run.started(item);
     } else if (event.type === "case_finished" && item) {
-      this.finishItem(run, item, event);
+      this.finishItem(run, item, event, state);
     } else if (event.type === "case_output") {
       if (event.stdout) run.appendOutput(event.stdout.replace(/\n/g, "\r\n"), undefined, item);
       if (event.stderr) run.appendOutput(event.stderr.replace(/\n/g, "\r\n"), undefined, item);
     } else if (event.type === "run_finished") {
+      if (context && context.generation !== this.latestRunGeneration) return;
       const summary = event.summary || {};
       const icon = summary.failed > 0 ? "$(error)" : "$(check)";
       this.shared.status.text =
         `Kangaroo: ${icon} ${summary.passed || 0} passed, ${summary.failed || 0} failed`;
       this.shared.status.show();
-      this.rebuildDiagnostics();
+      this.rebuildDiagnostics(state);
+      if (context?.command === "watch") this.discover();
     }
   }
 
-  finishItem(run, item, event) {
+  beginRunGeneration(context) {
+    const state = context?.state || this.runState;
+    state.beginRun();
+    const generation = ++this.latestRunGeneration;
+    if (context) context.generation = generation;
+    this.clearDiagnostics();
+  }
+
+  finishItem(run, item, event, state = this.runState) {
     const outcome = event.outcome || {};
     const duration = event.duration_ms;
     const failures = failuresFor(event);
-    this.runState.record(event.case, failures);
+    state.record(event.case, failures);
     if (outcome.kind === "passed") {
       run.passed(item, duration);
     } else if (outcome.kind === "skipped") {
@@ -562,10 +742,10 @@ class WorkspaceSession {
     }
   }
 
-  rebuildDiagnostics() {
+  rebuildDiagnostics(state = this.runState) {
     this.clearDiagnostics();
     const byFile = new Map();
-    for (const diagnostic of this.runState.diagnostics()) {
+    for (const diagnostic of state.diagnostics()) {
       if (!byFile.has(diagnostic.file)) byFile.set(diagnostic.file, []);
       byFile.get(diagnostic.file).push(diagnostic);
     }
@@ -597,6 +777,14 @@ class WorkspaceSession {
     this.runState.beginRun();
     this.clearDiagnostics();
     if (!exit.expected && !this.disposed) {
+      this.replaceTests([]);
+      if (
+        this.daemonStartedAt !== null &&
+        this.now() - this.daemonStartedAt >= this.stableDaemonMs
+      ) {
+        this.restartAttempt = 0;
+      }
+      this.daemonStartedAt = null;
       this.shared.status.text = "Kangaroo: $(warning) daemon restarting";
       this.shared.status.show();
       this.scheduleRestart();
@@ -610,7 +798,6 @@ class WorkspaceSession {
     const timer = this.schedule(() => {
       this.restartTimer = null;
       if (this.disposed || this.client.process) return;
-      this.client.start();
       this.discover();
     }, delay);
     this.restartTimer = timer;
@@ -618,8 +805,15 @@ class WorkspaceSession {
   }
 
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
-    for (const child of this.coverageProcesses) terminateProcessTree(child);
+    this.latestRunGeneration += 1;
+    for (const { run } of this.activeRuns.values()) run.end?.();
+    this.activeRuns.clear();
+    this.runState.beginRun();
+    for (const cancelCoverage of Array.from(this.coverageProcesses.values())) {
+      cancelCoverage();
+    }
     this.coverageProcesses.clear();
     this.client.stop();
     this.clearDiagnostics();
@@ -654,26 +848,47 @@ async function discoverPackageFolders(vscode, workspaceFolder) {
     left.uri.toString().localeCompare(right.uri.toString()));
 }
 
-function terminateProcessTree(child) {
+function terminateProcessTree(child, dependencies = {}) {
   if (!child) return;
-  if (globalThis.process.platform === "win32" && child.pid) {
-    const killer = spawn(
-      "taskkill",
-      ["/pid", String(child.pid), "/T", "/F"],
-      { stdio: "ignore", windowsHide: true },
-    );
-    killer.unref?.();
-    return;
+  const platform = dependencies.platform || globalThis.process.platform;
+  const spawnProcess = dependencies.spawnProcess || spawn;
+  const killProcess = dependencies.killProcess || globalThis.process.kill;
+  const forceChild = () => child.kill?.("SIGKILL");
+  if (platform === "win32" && child.pid) {
+    try {
+      const killer = spawnProcess(
+        "taskkill",
+        ["/pid", String(child.pid), "/T", "/F"],
+        { stdio: "ignore", windowsHide: true },
+      );
+      let settled = false;
+      const fallback = () => {
+        if (settled) return;
+        settled = true;
+        forceChild();
+      };
+      killer.on?.("error", fallback);
+      killer.on?.("exit", (code) => {
+        if (settled) return;
+        settled = true;
+        if (code !== 0) forceChild();
+      });
+      killer.unref?.();
+      return;
+    } catch {
+      forceChild();
+      return;
+    }
   }
   if (child.pid) {
     try {
-      globalThis.process.kill(-child.pid, "SIGTERM");
+      killProcess(-child.pid, "SIGKILL");
       return;
     } catch {
       // A mocked or already-exited process may not own a process group.
     }
   }
-  child.kill?.();
+  forceChild();
 }
 
 function createExtension(vscode, spawnProcess = spawn) {
@@ -690,7 +905,7 @@ function createExtension(vscode, spawnProcess = spawn) {
     session.start();
   }
 
-  async function refreshPackages() {
+  async function refreshPackages({ restartKey } = {}) {
     if (!enabled) return;
     const generation = ++refreshGeneration;
     const discovered = await Promise.all(
@@ -703,7 +918,7 @@ function createExtension(vscode, spawnProcess = spawn) {
       for (const folder of packages) desired.set(folder.uri.toString(), folder);
     }
     for (const [key, session] of sessions) {
-      if (!desired.has(key)) {
+      if (!desired.has(key) || key === restartKey) {
         session.dispose();
         sessions.delete(key);
       }
@@ -726,9 +941,34 @@ function createExtension(vscode, spawnProcess = spawn) {
     if (manifestWatcher) {
       context.subscriptions.push(
         manifestWatcher,
+        manifestWatcher.onDidChange((manifest) => {
+          const packageUri =
+            typeof manifest.with === "function" && typeof manifest.path === "string"
+              ? manifest.with({ path: path.posix.dirname(manifest.path) })
+              : vscode.Uri.file(path.dirname(manifest.fsPath));
+          return refreshPackages({ restartKey: packageUri.toString() });
+        }),
         manifestWatcher.onDidCreate(() => refreshPackages()),
         manifestWatcher.onDidDelete(() => refreshPackages()),
       );
+    }
+    const configurationSubscription =
+      vscode.workspace.onDidChangeConfiguration?.(async (event) => {
+        const affected = [];
+        for (const [key, session] of sessions) {
+          if (event.affectsConfiguration("kangaroo", session.folder.uri)) {
+            affected.push(key);
+          }
+        }
+        if (affected.length === 0) return;
+        for (const key of affected) {
+          sessions.get(key)?.dispose();
+          sessions.delete(key);
+        }
+        await refreshPackages();
+      });
+    if (configurationSubscription) {
+      context.subscriptions.push(configurationSubscription);
     }
     context.subscriptions.push(
       vscode.workspace.onDidChangeWorkspaceFolders(() => refreshPackages()),
@@ -783,4 +1023,5 @@ module.exports = {
   createExtension,
   deactivate,
   discoverPackageFolders,
+  terminateProcessTree,
 };

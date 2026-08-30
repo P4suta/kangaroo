@@ -9,11 +9,15 @@ gleam run -m kangaroo -- daemon
 The protocol is bidirectional newline-delimited JSON (NDJSON). A client writes
 one request per stdin line and reads one response/event per stdout line.
 Stdout is protocol-only; compiler output and logs are written to stderr.
+Each request line is limited to 1 MiB of UTF-8. An overlong line produces one
+`error` record with an empty request ID, is discarded through its newline, and
+does not poison later requests on the same daemon.
 
 Every record has `"protocol_version": 1`. Unknown versions and commands return
-an `error` response. Request IDs are client-selected strings and correlate all
-operation records. Paths are `/`-normalised and project-relative. Lines and
-columns are one-based; discovered end positions are exclusive.
+an `error` response. Request IDs are client-selected non-blank strings and
+correlate all operation records. Selector and tag array entries must also be
+non-blank. Paths are `/`-normalised and project-relative. Lines and columns are
+one-based; discovered end positions are exclusive.
 
 The machine-readable schema is
 [`protocol-v1.schema.json`](protocol-v1.schema.json).
@@ -36,6 +40,8 @@ to empty arrays:
 
 Multiple selectors form a union; include tags are ORed and excludes win. The
 request `id` is also the operation ID in v1 and must be unique while active.
+The daemon accepts at most 32 concurrent run/watch operations; an excess
+request receives an `error` response without starting a child process.
 
 Cancel an active operation:
 
@@ -76,6 +82,8 @@ Each runner event is wrapped without changing its payload:
 ```
 
 Other event payloads are `suite_started`, `suite_finished`, and `case_output`.
+The `suite_finished.outcome` aggregates that module's selected cases, so a
+failed or flaky case can never produce a passing suite record.
 `case_output` carries captured `stdout`, `stderr`, and the case outcome.
 
 Outcomes are:
@@ -101,8 +109,9 @@ A finite run ends with its process exit status:
 ```
 
 Watch operations remain active until cancellation, shutdown, daemon exit, or
-an infrastructure error. A successful cancellation responds to the cancel
-request:
+an infrastructure error. The combined stdout and stderr of each external child
+command is limited to 16 MiB; exceeding it is an infrastructure error. A
+successful cancellation responds to the cancel request:
 
 ```json
 {"protocol_version":1,"type":"cancelled","request_id":"cancel-1","operation_id":"watch-1"}
@@ -123,9 +132,15 @@ Errors are non-terminal unless they belong to an active operation:
 ## Client invariants
 
 - Parse stdout by complete lines and retain an incomplete trailing chunk.
+- Bound retained protocol lines above the maximum valid escaped event size and
+  restart fail-closed after malformed or oversized daemon stdout.
 - Ignore records whose protocol version is unsupported.
 - Clear diagnostics at `run_started`, then rebuild them from the matching
   generation only.
-- After cancel, ignore any late child output for that operation.
+- End the editor run immediately after requesting cancellation and ignore any
+  late child output for that operation; the daemon retains process ownership
+  until its child reaches a terminal state.
 - On daemon exit, end active editor runs, clear stale diagnostics, restart the
   package daemon, and rediscover the test tree.
+- Rediscover after a completed watch generation so added and removed test IDs
+  converge in long-lived clients.

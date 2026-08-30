@@ -8,23 +8,191 @@ const {
   LineDecoder,
   parseLcov,
   projectTarget,
+  protocolResponse,
   RunState,
   daemonArguments,
   failuresFor,
+  javascriptRuntime,
   protocolRequest,
   resolveGleamExecutable,
   subprocessEnvironment,
   zeroBasedRange,
 } = require("../core");
 
+test("validates daemon responses against every protocol-v1 record shape", () => {
+  const records = [
+    {
+      protocol_version: 1,
+      type: "discovered",
+      request_id: "discover-1",
+      tests: [{
+        id: "test/math.gleam::addition_test",
+        name: "addition_test",
+        path: "test/math.gleam",
+        module: "math",
+        line: 1,
+        column: 1,
+        end_line: 2,
+        end_column: 2,
+        tags: ["unit"],
+        timeout_ms: null,
+        serial: false,
+      }],
+    },
+    {
+      protocol_version: 1,
+      type: "started",
+      request_id: "run-1",
+      operation_id: "run-1",
+      operation: "run",
+    },
+    {
+      protocol_version: 1,
+      type: "event",
+      request_id: "run-1",
+      event: { type: "run_started", run_id: 1, case_count: 1 },
+    },
+    {
+      protocol_version: 1,
+      type: "event",
+      request_id: "run-1",
+      event: {
+        type: "case_output",
+        suite: "math",
+        case: "test/math.gleam::addition_test",
+        stdout: "",
+        stderr: "",
+        outcome: {
+          kind: "failed",
+          failures: [{
+            kind: "equality_mismatch",
+            expected: "1",
+            actual: "2",
+            diff: null,
+            location: { file: "test/math.gleam", line: 1, column: null },
+          }],
+        },
+      },
+    },
+    {
+      protocol_version: 1,
+      type: "event",
+      request_id: "run-1",
+      event: {
+        type: "case_finished",
+        suite: "math",
+        case: "test/math.gleam::addition_test",
+        outcome: {
+          kind: "flaky",
+          attempts: 2,
+          failures: [{
+            kind: "assertion_failed",
+            message: "not equal",
+            location: null,
+          }],
+        },
+        duration_ms: 1,
+      },
+    },
+    {
+      protocol_version: 1,
+      type: "event",
+      request_id: "run-1",
+      event: {
+        type: "suite_finished",
+        suite: "math",
+        outcome: {
+          kind: "failed",
+          failures: [{
+            kind: "unexpected_error",
+            name: "panic",
+            message: "boom",
+            location: null,
+          }],
+        },
+      },
+    },
+    {
+      protocol_version: 1,
+      type: "event",
+      request_id: "run-1",
+      event: {
+        type: "run_finished",
+        run_id: 1,
+        summary: { passed: 1, failed: 0, skipped: 0, duration_ms: 1 },
+      },
+    },
+    {
+      protocol_version: 1,
+      type: "completed",
+      request_id: "run-1",
+      exit_code: 0,
+    },
+    {
+      protocol_version: 1,
+      type: "cancelled",
+      request_id: "cancel-1",
+      operation_id: "watch-1",
+    },
+    {
+      protocol_version: 1,
+      type: "error",
+      request_id: "bad-1",
+      message: "bad request",
+    },
+    { protocol_version: 1, type: "shutdown", request_id: "shutdown-1" },
+  ];
+  assert.ok(records.every(protocolResponse));
+});
+
+test("rejects records outside the protocol-v1 response schema", () => {
+  const invalid = [
+    null,
+    [],
+    { protocol_version: 1, type: "unknown", request_id: "x" },
+    {
+      protocol_version: 1,
+      type: "discovered",
+      request_id: "x",
+      tests: "not-an-array",
+    },
+    {
+      protocol_version: 1,
+      type: "completed",
+      request_id: "x",
+      exit_code: 3,
+    },
+    {
+      protocol_version: 1,
+      type: "event",
+      request_id: "x",
+      event: {
+        type: "run_finished",
+        run_id: 1,
+        summary: { passed: -1, failed: 0, skipped: 0, duration_ms: 1 },
+      },
+    },
+    {
+      protocol_version: 1,
+      type: "shutdown",
+      request_id: "x",
+      extra: true,
+    },
+  ];
+  assert.ok(invalid.every((record) => !protocolResponse(record)));
+});
+
 test("requests an LCOV report for exactly the selected stable ids", () => {
   assert.deepEqual(coverageArguments(
     ["test/math.gleam::addition_test"],
     "javascript",
+    "bun",
   ), [
     "run",
     "--target",
     "javascript",
+    "--runtime",
+    "bun",
     "-m",
     "kangaroo",
     "--",
@@ -79,11 +247,25 @@ test("starts the unified protocol-v1 daemon", () => {
     "run",
     "--target",
     "javascript",
+    "--runtime",
+    "nodejs",
     "-m",
     "kangaroo",
     "--",
     "daemon",
   ]);
+  assert.deepEqual(daemonArguments("javascript", "deno"), [
+    "run",
+    "--target",
+    "javascript",
+    "--runtime",
+    "deno",
+    "-m",
+    "kangaroo",
+    "--",
+    "daemon",
+  ]);
+  assert.equal(javascriptRuntime("not-a-runtime"), "nodejs");
 });
 
 test("reads only the top-level Gleam project target", () => {
@@ -123,6 +305,21 @@ test("Gleam executable configuration is scoped to each package resource", () => 
     manifest.contributes.configuration.properties["kangaroo.gleamPath"].scope,
     "resource",
   );
+  const runtime = manifest.contributes.configuration.properties[
+    "kangaroo.javascriptRuntime"
+  ];
+  assert.equal(runtime.scope, "resource");
+  assert.deepEqual(runtime.enum, ["nodejs", "bun", "deno"]);
+  assert.equal(runtime.default, "nodejs");
+});
+
+test("nested Gleam packages activate the extension before a file is opened", () => {
+  assert.ok(manifest.activationEvents.includes("workspaceContains:**/gleam.toml"));
+});
+
+test("workspace execution requires trust and a filesystem-backed package", () => {
+  assert.equal(manifest.capabilities.untrustedWorkspaces.supported, false);
+  assert.equal(manifest.capabilities.virtualWorkspaces.supported, false);
 });
 
 test("restores the launcher tool PATH for extension subprocesses", () => {
@@ -154,6 +351,14 @@ test("reassembles arbitrary NDJSON chunks", () => {
   assert.deepEqual(decoder.push('{"a":1}\n{"b"'), ['{"a":1}']);
   assert.deepEqual(decoder.push(':2}\n'), ['{"b":2}']);
   assert.equal(decoder.remainder(), "");
+});
+
+test("bounds an unterminated protocol line without quadratic concatenation", () => {
+  const decoder = new LineDecoder(8);
+  assert.deepEqual(decoder.push("12"), []);
+  assert.deepEqual(decoder.push("34"), []);
+  assert.equal(decoder.remainder(), "1234");
+  assert.throws(() => decoder.push("56789"), /exceeded 8 bytes/);
 });
 
 test("converts protocol ranges from one-based to zero-based", () => {
