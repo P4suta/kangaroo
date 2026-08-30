@@ -18,6 +18,7 @@ local configuration = {
 }
 local javascript_runtimes = { nodejs = true, bun = true, deno = true }
 local clear_coverage
+local finish_stopping_session
 
 local function restart_delay(attempt)
   return restart_delays[attempt]
@@ -711,9 +712,7 @@ start_root = function(root, restarting)
         session.summary = nil
         clear_diagnostics(session)
         if session.stopping then
-          local after_stop = session.after_stop
-          session.after_stop = nil
-          if after_stop ~= nil then after_stop() end
+          finish_stopping_session(session)
           return
         end
         local stable = now_ms() - session.started_at_ms >= stable_daemon_ms
@@ -762,6 +761,16 @@ local function coverage_owned(root)
   return coverage_processes[root] ~= nil
 end
 
+finish_stopping_session = function(session)
+  if not session.stopping
+    or session.job_id ~= nil
+    or coverage_owned(session.root) then return false end
+  local after_stop = session.after_stop
+  session.after_stop = nil
+  if after_stop ~= nil then after_stop() end
+  return true
+end
+
 local function claim_coverage(session, entry)
   if coverage_owned(session.root) then return false end
   session.coverage_generation = (session.coverage_generation or 0) + 1
@@ -783,11 +792,7 @@ local function release_coverage(session, entry)
     coverage_processes[session.root] = nil
   end
   if session.coverage_entry == entry then session.coverage_entry = nil end
-  local after_stop = session.after_coverage_stop
-  if after_stop ~= nil and not coverage_owned(session.root) then
-    session.after_coverage_stop = nil
-    after_stop()
-  end
+  finish_stopping_session(session)
 end
 
 local function stop_coverage(session)
@@ -803,6 +808,7 @@ local function stop_session(session, after_stop)
   if session == nil then return end
   if session.stopping then
     session.after_stop = after_stop
+    finish_stopping_session(session)
     return
   end
   session.stopping = true
@@ -828,10 +834,7 @@ local function stop_session(session, after_stop)
   stop_coverage(session)
   clear_diagnostics(session)
   clear_coverage(session)
-  if not was_alive and after_stop ~= nil then
-    session.after_stop = nil
-    after_stop()
-  end
+  finish_stopping_session(session)
 end
 
 local function stop_root(root)
@@ -871,14 +874,6 @@ end
 
 local function restart_session(root, session)
   stop_session(session, function()
-    if coverage_owned(root) then
-      session.after_coverage_stop = function()
-        if sessions[root] ~= session then return end
-        sessions[root] = nil
-        start_root(root)
-      end
-      return
-    end
     if sessions[root] ~= session then return end
     sessions[root] = nil
     start_root(root)

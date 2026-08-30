@@ -538,6 +538,29 @@ local ok, lifecycle_error = pcall(function()
   running[manual_job.id] = false
   manual_job.options.on_exit(manual_job.id)
   assert(#jobs == jobs_before_restart + 1)
+
+  local coverage_only_root = "/tmp/kangaroo-nvim-coverage-only-stop-start"
+  local coverage_only_session = test.start_root(coverage_only_root)
+  local coverage_only_job = jobs[#jobs]
+  local coverage_only_killed = false
+  local coverage_only_entry = {
+    cancelled = false,
+    process = {
+      kill = function(_, signal)
+        coverage_only_killed = signal == 9
+      end,
+    },
+  }
+  assert(test.claim_coverage(coverage_only_session, coverage_only_entry))
+  running[coverage_only_job.id] = false
+  coverage_only_job.options.on_exit(coverage_only_job.id)
+  local jobs_before_coverage_only_restart = #jobs
+  assert(test.stop_root(coverage_only_root))
+  assert(test.start_root(coverage_only_root) == coverage_only_session)
+  assert(coverage_only_killed)
+  assert(#jobs == jobs_before_coverage_only_restart)
+  test.release_coverage(coverage_only_session, coverage_only_entry)
+  assert(#jobs == jobs_before_coverage_only_restart + 1)
 end)
 
 kangaroo.stop_all()
