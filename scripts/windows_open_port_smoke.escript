@@ -36,8 +36,11 @@ require_executable(Name) ->
     end.
 
 internal_environment(Directory) ->
-    Executable = require_executable("cmd.exe"),
-    Arguments = ["/D", "/Q", "/C", "exit", "0"],
+    %% `where.exe cmd.exe` has no nested command-processor parsing, exits zero
+    %% only when its fixed argument arrives, and writes through the helper's
+    %% redirected stdout handle. The full test suite exercises cmd and Gleam.
+    Executable = require_executable("where.exe"),
+    Arguments = ["cmd.exe"],
     Values = [
         {"EXECUTABLE", Executable},
         {"DIRECTORY", Directory},

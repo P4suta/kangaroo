@@ -436,6 +436,11 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
     windows_open_port_smoke,
     "{spawn_executable, CommandProcessor}",
   )
+  assert string.contains(
+    windows_open_port_smoke,
+    "require_executable(\"where.exe\")",
+  )
+  assert string.contains(windows_open_port_smoke, "Arguments = [\"cmd.exe\"]")
   assert !string.contains(
     windows_open_port_smoke,
     "{spawn_executable, PowerShell}",
