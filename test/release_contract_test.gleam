@@ -459,9 +459,9 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
     windows_open_port_smoke,
     "require_executable(\"erl.exe\")",
   )
-  assert string.contains(windows_open_port_smoke, "kangaroo-erl-ready")
+  assert string.contains(windows_open_port_smoke, "KANGAROO_PROCESS_TEST_ENV")
+  assert string.contains(windows_open_port_smoke, "expected_helper_output()")
   assert string.contains(windows_open_port_smoke, "probe_output(")
-  assert string.contains(windows_open_port_smoke, "<<\"kangaroo-erl-ready\">>")
   assert string.contains(windows_open_port_smoke, "hide,")
   assert !string.contains(
     windows_open_port_smoke,

@@ -40,21 +40,35 @@ internal_environment(Directory) ->
     %% closes 0/1/2 and detaches the emulator even when valid port handles were
     %% supplied. The helper must provide a hidden console and retain those pipes.
     Executable = require_executable("erl.exe"),
+    Kangaroo = unicode:characters_to_list(<<240, 159, 166, 152>>),
+    Argument = "space \"quote\" trailing\\ " ++ Kangaroo,
+    Environment = "environment value " ++ Kangaroo,
     Arguments = [
       "-noshell", "-eval",
-      "io:put_chars(\"kangaroo-erl-ready\"), halt()."
+      "[Argument]=init:get_plain_arguments(), "
+      "io:put_chars([Argument,\"|\","
+      "os:getenv(\"KANGAROO_PROCESS_TEST_ENV\")]), halt().",
+      "-extra", Argument
     ],
     Values = [
         {"EXECUTABLE", Executable},
         {"DIRECTORY", Directory},
         {"ARGV0", Executable},
         {"ARGUMENT_COUNT", integer_to_list(length(Arguments))},
-        {"ENVIRONMENT_COUNT", "0"}
+        {"ENVIRONMENT_COUNT", "1"},
+        {"ENVIRONMENT_NAME_000000", "KANGAROO_PROCESS_TEST_ENV"},
+        {"ENVIRONMENT_VALUE_000000", Environment}
     ] ++ [{"ARGUMENT_" ++ lists:flatten(
-                         io_lib:format("~6..0B", [Index])), Argument}
-          || {Index, Argument} <- lists:enumerate(0, Arguments)],
+                         io_lib:format("~6..0B", [Index])), Item}
+          || {Index, Item} <- lists:enumerate(0, Arguments)],
     [{"__KANGAROO_INTERNAL_WINDOWS_JOB_V1_" ++ Name,
       encoded(Value)} || {Name, Value} <- Values].
+
+expected_helper_output() ->
+    Kangaroo = unicode:characters_to_list(<<240, 159, 166, 152>>),
+    unicode:characters_to_binary(
+      "space \"quote\" trailing\\ " ++ Kangaroo ++
+      "|environment value " ++ Kangaroo).
 
 encoded(Value) ->
     binary_to_list(base64:encode(unicode:characters_to_binary(Value))).
@@ -187,7 +201,7 @@ probe_helper_preparation() ->
                                        {cd, filename:dirname(Helper)},
                                        {env, internal_environment(
                                          filename:absname("."))}],
-                                      <<"kangaroo-erl-ready">>,
+                                      expected_helper_output(),
                                       5000);
                                 State ->
                                     io:format(
