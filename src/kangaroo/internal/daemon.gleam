@@ -235,7 +235,13 @@ fn handle(
             }
             CancellationTimedOut(message) -> {
               fs.write_stdout_line(protocol.encode_error(id, message))
-              #(state, True)
+              let operations =
+                retain_timed_out_cancellation(
+                  state.operations,
+                  operation_id,
+                  message,
+                )
+              #(State(..state, operations:), True)
             }
           }
         }
@@ -246,6 +252,18 @@ fn handle(
       #(state, False)
     }
   }
+}
+
+/// Retains ownership after a cancellation timeout, but prevents output already
+/// consumed by the cancellation wait from being mistaken for a valid result.
+/// The normal drain path publishes this error after the child eventually
+/// reaches a terminal state.
+pub fn retain_timed_out_cancellation(
+  state: operations.State,
+  operation_id: String,
+  message: String,
+) -> operations.State {
+  operations.fail(state, operation_id, message)
 }
 
 fn trace_benchmark(label: String, started: Int) -> Nil {

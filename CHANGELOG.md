@@ -61,8 +61,10 @@ versioning.
 - Preserved UTF-8 command arguments, environment values, executables, and
   working directories at the Erlang port boundary instead of double-encoding
   non-ASCII text.
-- Made cancellation fail closed, terminate Unix process groups, and retain
-  daemon operation ownership until cancellation reaches a terminal state.
+- Made cancellation fail closed, terminate Unix process groups, retain daemon
+  operation ownership until cancellation reaches a terminal state, and prevent
+  output consumed by a timed-out cancellation wait from becoming a false
+  successful completion.
 - Delayed JavaScript cancellation acknowledgement until the killed child had
   closed and its streams had drained, and reported hard cleanup deadlines as
   failures instead of allowing a replacement process to overlap.

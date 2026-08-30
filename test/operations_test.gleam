@@ -98,6 +98,21 @@ pub fn cancellation_lookup_retains_operation_until_cleanup_succeeds_test() {
   assert operations.has(state, "watch-1")
 }
 
+pub fn cancellation_timeout_retains_owned_operation_as_failed_test() {
+  let assert Ok(state) =
+    operations.start(operations.empty(), "watch-1", 42, WatchOperation)
+  let retained =
+    daemon.retain_timed_out_cancellation(
+      state,
+      "watch-1",
+      "process cancellation timed out",
+    )
+
+  assert operations.handle(retained, "watch-1") == Some(42)
+  let assert [entry] = operations.entries(retained)
+  assert entry.terminal_error == Some("process cancellation timed out")
+}
+
 pub fn stale_completion_after_cancellation_is_ignored_test() {
   let assert Ok(state) =
     operations.start(operations.empty(), "run-1", 7, RunOperation)
