@@ -47,10 +47,11 @@ console helper once, preferring the Windows PowerShell compiler host and falling
 back to PowerShell 7. JavaScript runtimes execute it directly, while Erlang
 opens native `cmd.exe` with AutoRun disabled and invokes the fixed helper
 basename from its own cache directory around OTP's managed-executable boundary;
-both paths preserve the raw redirected handles and child exit status. Every
-compiler host derives the per-user temporary cache path itself and reports it
-to Erlang as explicit base64 ASCII bytes, bypassing redirected PowerShell text
-encoding, so no locale-sensitive path text is passed into an OTP port command.
+both paths preserve the raw redirected handles and child exit status. Erlang
+derives the absolute per-user temporary cache path, passes it to the compiler
+host as a literal `-OutputPath` argument, and validates that exact artifact
+after exit zero. Helper preparation therefore never parses redirected
+PowerShell output or depends on its locale-sensitive text encoding.
 The command processor receives only the immutable helper basename and marker—never
 a user executable, argument, environment value, or working directory.
 Erlang transports Unicode environment overrides as private base64 metadata and

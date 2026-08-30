@@ -54,10 +54,10 @@ versioning.
   complete live tree instead of discarding the write error and waiting for the
   command timeout.
 - Made Windows helper preparation prefer the native Windows PowerShell
-  compiler host, return its locally derived cache path to OTP as explicit
-  base64 ASCII bytes independent of redirected-output encoding, invalidate
-  changed helper binaries, and terminate remaining Job Object descendants
-  without racing the enclosing test timeout.
+  compiler host, accept OTP's exact absolute cache path without parsing
+  redirected PowerShell output, invalidate changed helper binaries, and
+  terminate remaining Job Object descendants without racing the enclosing test
+  timeout.
 - Preserved UTF-8 command arguments, environment values, executables, and
   working directories at the Erlang port boundary instead of double-encoding
   non-ASCII text.
@@ -155,9 +155,9 @@ versioning.
   launch data. Unicode environment overrides travel as
   private base64 metadata for the helper to restore without exposing them to
   OTP's port options or the command interpreter.
-- Passed the helper cache location through OTP's validated private base64
-  environment namespace, and smoke-tested exact first-launch compilation and
-  fixed `cmd.exe` execution on Windows OTP 27 through 29.
+- Passed the helper cache location as a fixed PowerShell `-OutputPath` argument
+  and smoke-tested exact first-launch compilation plus fixed `cmd.exe`
+  execution on Windows OTP 27 through 29.
 - Required the path-bound ownership marker even when a coverage clone fails
   partway through copying, preventing failure cleanup from following a replaced
   workspace path and retaining both the primary and cleanup diagnostics.
