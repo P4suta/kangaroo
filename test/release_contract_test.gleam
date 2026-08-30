@@ -344,11 +344,13 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   let assert [preparation_body, ..] =
     string.split(preparation_body, "collect_windows_job_preparation(")
   assert string.contains(preparation_body, "\"-Prepare\"")
-  assert string.contains(preparation_body, "\"-HelperPathBase64\"")
-  assert string.contains(preparation_body, "encode_windows_job_value(Helper)")
+  assert !string.contains(preparation_body, "HelperPath")
   assert !string.contains(preparation_body, "HELPER_PATH")
   assert string.contains(erlang_process_ffi, "find_windows_powershell")
-  assert string.contains(erlang_process_ffi, "os:find_executable(\"pwsh.exe\")")
+  assert string.contains(
+    erlang_process_ffi,
+    "os:find_executable(\"powershell.exe\")",
+  )
   assert string.contains(process_worker, "windowsJobLaunch")
   assert string.contains(test_worker, "windowsJobSpawnOptions")
   assert string.contains(test_worker, "windowsJobLaunch")
@@ -370,8 +372,8 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   assert string.contains(erlang_process_ffi, "windows-job-v6-20260831.exe")
   assert string.contains(windows_job_bridge, "findPowerShell")
   assert string.contains(windows_job_bridge, "pwsh.exe")
-  assert string.contains(windows_job_bridge, "\"-HelperPathBase64\"")
-  assert string.contains(windows_job, "[string] $HelperPathBase64")
+  assert !string.contains(windows_job_bridge, "HelperPath")
+  assert !string.contains(windows_job, "$HelperPath")
   assert string.contains(windows_job, "ConsoleApplication")
   assert string.contains(workflow, "kangaroo_windows_job.ps1 -SmokeTest")
   assert string.contains(workflow, "windows_open_port_smoke.escript")

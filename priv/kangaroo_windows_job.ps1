@@ -1,9 +1,7 @@
 param(
     [switch] $Prepare,
     [switch] $SmokeTest,
-    [switch] $CheckSource,
-    [string] $HelperPath,
-    [string] $HelperPathBase64
+    [switch] $CheckSource
 )
 
 $ErrorActionPreference = "Stop"
@@ -553,20 +551,6 @@ function Encode-Value([string] $value) {
 }
 
 function Get-Helper-Path {
-    if (-not [string]::IsNullOrWhiteSpace($HelperPathBase64)) {
-        return [Text.Encoding]::UTF8.GetString(
-            [Convert]::FromBase64String($HelperPathBase64))
-    }
-    if (-not [string]::IsNullOrWhiteSpace($HelperPath)) {
-        return $HelperPath
-    }
-    $encoded = [Environment]::GetEnvironmentVariable(
-        $prefix + "HELPER_PATH",
-        [EnvironmentVariableTarget]::Process)
-    if (-not [string]::IsNullOrWhiteSpace($encoded)) {
-        return [Text.Encoding]::UTF8.GetString(
-            [Convert]::FromBase64String($encoded))
-    }
     return [IO.Path]::Combine(
         [IO.Path]::GetTempPath(),
         "kangaroo",

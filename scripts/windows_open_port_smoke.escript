@@ -90,57 +90,41 @@ wait_for_exit(Label, Port, Deadline) ->
 probe_helper_preparation() ->
     PowerShell = require_powershell(),
     Script = filename:absname("priv/kangaroo_windows_job.ps1"),
-    CacheDirectory = filename:join(
-      temporary_directory(),
-      "kangaroo-port-smoke-" ++
-      integer_to_list(erlang:unique_integer([positive, monotonic]))),
-    case file:make_dir(CacheDirectory) of
-        ok ->
-            Helper = filename:join(
-              CacheDirectory, "windows-job-v6-20260831.exe"),
-            Arguments = [
-                "-NoLogo", "-NoProfile", "-NonInteractive",
-                "-ExecutionPolicy", "Bypass", "-File", Script,
-                "-HelperPathBase64", encoded(Helper), "-Prepare"
-            ],
-            Result = try
-                case probe(
-                       "isolated helper preparation", PowerShell,
-                       [binary, use_stdio, stderr_to_stdout, exit_status,
-                        {args, Arguments}],
-                       60000) of
-                    ok ->
-                        case filelib:is_regular(Helper) of
-                            true ->
-                                io:format("open_port helper artifact: ok~n"),
-                                probe(
-                                  "isolated helper execution",
-                                  require_executable("cmd.exe"),
-                                  [binary, use_stdio, stderr_to_stdout,
-                                   exit_status,
-                                   {cd, filename:dirname(Helper)},
-                                   {args, ["/D", "/Q", "/C",
-                                           filename:basename(Helper),
-                                           "--kangaroo-job-helper"]},
-                                   {env, internal_environment(
-                                           filename:absname("."))}],
-                                  5000);
-                            false ->
-                                io:format(
-                                  "open_port helper artifact: missing~n"),
-                                error
-                        end;
-                    error -> error
-                end
-            after
-                safe_delete(Helper),
-                _ = file:del_dir(CacheDirectory)
-            end,
-            Result;
-        {error, Reason} ->
-            io:format(
-              "open_port helper cache: ~tp~n", [Reason]),
-            error
+    Helper = filename:join(
+      [temporary_directory(), "kangaroo", "windows-job-v6-20260831.exe"]),
+    Arguments = [
+        "-NoLogo", "-NoProfile", "-NonInteractive",
+        "-ExecutionPolicy", "Bypass", "-File", Script, "-Prepare"
+    ],
+    safe_delete(Helper),
+    try
+        case probe(
+               "production helper preparation", PowerShell,
+               [binary, use_stdio, stderr_to_stdout, exit_status,
+                {args, Arguments}],
+               60000) of
+            ok ->
+                case filelib:is_regular(Helper) of
+                    true ->
+                        io:format("open_port helper artifact: ok~n"),
+                        probe(
+                          "production helper execution",
+                          require_executable("cmd.exe"),
+                          [binary, use_stdio, stderr_to_stdout, exit_status,
+                           {cd, filename:dirname(Helper)},
+                           {args, ["/D", "/Q", "/C",
+                                   filename:basename(Helper),
+                                   "--kangaroo-job-helper"]},
+                           {env, internal_environment(filename:absname("."))}],
+                          5000);
+                    false ->
+                        io:format("open_port helper artifact: missing~n"),
+                        error
+                end;
+            error -> error
+        end
+    after
+        safe_delete(Helper)
     end.
 
 temporary_directory() ->
@@ -154,8 +138,8 @@ temporary_directory() ->
     end.
 
 require_powershell() ->
-    case os:find_executable("pwsh.exe") of
-        false -> require_executable("powershell.exe");
+    case os:find_executable("powershell.exe") of
+        false -> require_executable("pwsh.exe");
         Path -> Path
     end.
 

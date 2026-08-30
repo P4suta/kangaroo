@@ -308,7 +308,6 @@ prepare_windows_job_helper_worker() ->
                 "-ExecutionPolicy", "Bypass", "-File",
                 filename:join(windows_priv_directory(),
                               "kangaroo_windows_job.ps1"),
-                "-HelperPathBase64", encode_windows_job_value(Helper),
                 "-Prepare"
             ],
             try open_port(
@@ -375,8 +374,8 @@ windows_job_executable() ->
     filename:join([Temp, "kangaroo", "windows-job-v6-20260831.exe"]).
 
 find_windows_powershell() ->
-    case os:find_executable("pwsh.exe") of
-        false -> os:find_executable("powershell.exe");
+    case os:find_executable("powershell.exe") of
+        false -> os:find_executable("pwsh.exe");
         Path -> Path
     end.
 

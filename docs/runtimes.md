@@ -43,13 +43,13 @@ the completed command are terminated through that Job Object. This ownership
 boundary also applies when a command exits
 successfully after starting background work, and to asynchronous subprocesses
 started by an isolated JavaScript test. PowerShell compiles the immutable
-console helper once, preferring PowerShell 7 when it is installed and falling
-back to Windows PowerShell. JavaScript runtimes execute it directly, while Erlang
+console helper once, preferring the Windows PowerShell compiler host and falling
+back to PowerShell 7. JavaScript runtimes execute it directly, while Erlang
 opens native `cmd.exe` with AutoRun disabled and invokes the fixed helper
 basename from its own cache directory around OTP's managed-executable boundary;
-both paths preserve the raw redirected handles and child exit status. Helper
-cache paths cross the OTP port boundary as base64 rather than locale-sensitive
-command text. The
+both paths preserve the raw redirected handles and child exit status. Every
+runtime and the compiler host derive the same per-user temporary cache path
+locally, so that path never crosses OTP's locale-sensitive port boundary. The
 command processor receives only the immutable helper basename and marker—never
 a user executable, argument, environment value, or working directory.
 Erlang transports Unicode environment overrides as private base64 metadata and

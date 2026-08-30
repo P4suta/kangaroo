@@ -1,4 +1,3 @@
-import { Buffer } from "node:buffer";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -37,7 +36,9 @@ function executableOnPath(name) {
 }
 
 function findPowerShell() {
-  return executableOnPath("pwsh.exe") || "powershell.exe";
+  return executableOnPath("powershell.exe") ||
+    executableOnPath("pwsh.exe") ||
+    "powershell.exe";
 }
 
 export function ensureWindowsJobHelper() {
@@ -48,13 +49,11 @@ export function ensureWindowsJobHelper() {
       findPowerShell(),
       [
         ...powershellArguments,
-        "-HelperPathBase64",
-        Buffer.from(cachedExecutable, "utf8").toString("base64"),
         "-Prepare",
       ],
       {
         env: globalThis.process.env,
-        stdio: "ignore",
+        stdio: "pipe",
         timeout: 60_000,
         windowsHide: true,
       },
