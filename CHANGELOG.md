@@ -140,6 +140,9 @@ versioning.
 - Monitored every Erlang asynchronous process owner before launch and now
   terminates the complete command tree if its watch, daemon, or coverage
   coordinator exits unexpectedly.
+- Reported persistent watched-file read failures with the affected path while
+  still tolerating files removed between enumeration and reading, so permission
+  errors cannot masquerade as source deletion.
 - Pinned, cached, and retried the minimum supported VS Code Extension
   Development Host so editor integration gates are reproducible and tolerate
   transient download failures.

@@ -2,7 +2,13 @@ import { toList } from "./gleam.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { existsSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { terminate_active_processes } from "./kangaroo_process_ffi.mjs";
 import { isInternalName } from "./kangaroo_windows_job.mjs";
 
@@ -202,6 +208,19 @@ export function tree_marker() {
     tmpdir(),
     `kangaroo-tree-${globalThis.process.pid}-${Date.now()}-${markerId}.marker`,
   );
+}
+
+export function temporary_directory() {
+  return tmpdir();
+}
+
+export function set_file_mode(path, mode) {
+  try {
+    chmodSync(path, Number(mode));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function tree_arguments(marker) {

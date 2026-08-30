@@ -355,7 +355,16 @@ pub fn snapshot_project(
     let relative = relative_to(project_dir, absolute)
     case is_watched(relative), fs.read_file(absolute) {
       True, Ok(contents) -> Ok(dict.insert(snapshot, relative, contents))
-      True, Error(_) -> Ok(snapshot)
+      True, Error(message) ->
+        case fs.exists(absolute) {
+          // A file can disappear between directory enumeration and reading.
+          // Treat that ordinary atomic-save race as removal on the next scan.
+          False -> Ok(snapshot)
+          True ->
+            Error(
+              "could not read watched file `" <> relative <> "`: " <> message,
+            )
+        }
       False, _ -> Ok(snapshot)
     }
   })

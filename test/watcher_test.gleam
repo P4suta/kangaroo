@@ -1,8 +1,20 @@
 import gleam/dict
+import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
+import kangaroo/internal/fs
+import kangaroo/internal/vm
 import kangaroo/internal/watcher.{Added, Modified, Removed}
+import kangaroo/sys
+
+@external(erlang, "kangaroo_cli_test_ffi", "temporary_directory")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "temporary_directory")
+fn temporary_directory() -> String
+
+@external(erlang, "kangaroo_cli_test_ffi", "set_file_mode")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "set_file_mode")
+fn set_file_mode(path: String, mode: Int) -> Bool
 
 pub fn compile_command_compiles_test_modules_without_running_them_test() {
   assert watcher.compile_arguments("erlang", "erlang")
@@ -74,6 +86,30 @@ pub fn project_root_snapshot_prunes_generated_trees_test() {
       "src/coverage/legitimate.gleam",
       "src/example.gleam",
     ]
+}
+
+pub fn watched_file_read_errors_are_reported_test() {
+  case vm.operating_system(), vm.target(), vm.runtime_name() {
+    "windows", _, _ -> Nil
+    _, "javascript", runtime if runtime != "node" -> Nil
+    _, _, _ -> {
+      let directory = temporary_directory()
+      let name =
+        "kangaroo-watcher-unreadable-"
+        <> int.to_string(sys.now_ms())
+        <> ".gleam"
+      let path = directory <> "/" <> name
+      let assert Ok(Nil) = fs.write_file(path, "pub fn value() { 1 }")
+      assert set_file_mode(path, 0)
+      let snapshot = watcher.snapshot_project(directory, [name])
+      let restored = set_file_mode(path, 384)
+      let removed = fs.remove_file(path)
+      assert restored
+      assert removed == Ok(Nil)
+      let assert Error(message) = snapshot
+      assert string.contains(message, "could not read watched file `" <> name)
+    }
+  }
 }
 
 pub fn javascript_compile_command_does_not_execute_tests_test() {

@@ -14,7 +14,8 @@
          silent_exit_arguments/1, schedule_replace/4,
          kill_stderr_proxy/0, make_directory_symlink/2,
          cleanup_active_processes/0, internal_windows_job_name/1,
-         start_from_short_lived_owner/2]).
+         start_from_short_lived_owner/2, temporary_directory/0,
+         set_file_mode/2]).
 
 reset_flaky() ->
     persistent_term:put({?MODULE, flaky_attempt}, 0),
@@ -104,18 +105,28 @@ silent_exit_arguments(Code) ->
     [<<"-noshell">>, <<"-eval">>, Expression].
 
 tree_marker() ->
-    Temp = case os:getenv("TMPDIR") of
-               false ->
-                   case os:getenv("TEMP") of
-                       false -> "/tmp";
-                       Value -> Value
-                   end;
-               Value -> Value
-           end,
+    Temp = temporary_directory(),
     Name = "kangaroo-tree-" ++
            integer_to_list(erlang:unique_integer([positive, monotonic])) ++
            ".marker",
     unicode:characters_to_binary(filename:join(Temp, Name)).
+
+temporary_directory() ->
+    unicode:characters_to_binary(
+      case os:getenv("TMPDIR") of
+          false ->
+              case os:getenv("TEMP") of
+                  false -> "/tmp";
+                  Value -> Value
+              end;
+          Value -> Value
+      end).
+
+set_file_mode(Path, Mode) ->
+    case file:change_mode(Path, Mode) of
+        ok -> true;
+        _ -> false
+    end.
 
 tree_arguments(Marker) ->
     Erl = os:find_executable("erl"),
