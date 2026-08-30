@@ -641,6 +641,7 @@ start_root = function(root, restarting)
     pending_discovery = nil,
     summary = nil,
     stopping = false,
+    after_stop = nil,
     restart_attempt = 0,
     started_at_ms = 0,
   }
@@ -662,7 +663,8 @@ start_root = function(root, restarting)
       stdin = "pipe",
       stdout_buffered = false,
       on_stdout = function(job_id, data)
-        if session.job_id ~= job_id or session.protocol_failed then return end
+        if session.job_id ~= job_id or session.stopping
+          or session.protocol_failed then return end
         local ok, failure = stdout_callback(session, data)
         if ok then return end
         session.protocol_failed = true
@@ -672,7 +674,7 @@ start_root = function(root, restarting)
         force_stop_job(job_id)
       end,
       on_stderr = function(job_id, data)
-        if session.job_id ~= job_id then return end
+        if session.job_id ~= job_id or session.stopping then return end
         local text = table.concat(data or {}, "\n"):gsub("^%s+", ""):gsub("%s+$", "")
         if text ~= "" then
           vim.schedule(function()
@@ -691,6 +693,12 @@ start_root = function(root, restarting)
         session.pending_discovery = nil
         session.summary = nil
         clear_diagnostics(session)
+        if session.stopping then
+          local after_stop = session.after_stop
+          session.after_stop = nil
+          if after_stop ~= nil then after_stop() end
+          return
+        end
         local stable = now_ms() - session.started_at_ms >= stable_daemon_ms
         schedule_restart(session, root, stable)
       end,
@@ -751,6 +759,11 @@ local function release_coverage(session, entry)
     coverage_processes[session.root] = nil
   end
   if session.coverage_entry == entry then session.coverage_entry = nil end
+  local after_stop = session.after_coverage_stop
+  if after_stop ~= nil and not coverage_owned(session.root) then
+    session.after_coverage_stop = nil
+    after_stop()
+  end
 end
 
 local function stop_coverage(session)
@@ -762,10 +775,16 @@ local function stop_coverage(session)
   return true
 end
 
-local function stop_session(session)
+local function stop_session(session, after_stop)
   if session == nil then return end
+  if session.stopping then
+    session.after_stop = after_stop
+    return
+  end
   session.stopping = true
-  if alive(session) then
+  session.after_stop = after_stop
+  local was_alive = alive(session)
+  if was_alive then
     request(session, "shutdown")
     local job_id = session.job_id
     pcall(vim.fn.chanclose, job_id, "stdin")
@@ -775,7 +794,7 @@ local function stop_session(session)
       end
     end, shutdown_timeout_ms)
   end
-  session.job_id = nil
+  if not was_alive then session.job_id = nil end
   session.failures = {}
   session.active_operations = {}
   session.operation_order = {}
@@ -785,6 +804,10 @@ local function stop_session(session)
   stop_coverage(session)
   clear_diagnostics(session)
   clear_coverage(session)
+  if not was_alive and after_stop ~= nil then
+    session.after_stop = nil
+    after_stop()
+  end
 end
 
 function M.stop()
@@ -810,14 +833,28 @@ local function same_path(left, right)
   return normalized_left == normalized_right
 end
 
+local function restart_session(root, session)
+  stop_session(session, function()
+    if coverage_owned(root) then
+      session.after_coverage_stop = function()
+        if sessions[root] ~= session then return end
+        sessions[root] = nil
+        start_root(root)
+      end
+      return
+    end
+    if sessions[root] ~= session then return end
+    sessions[root] = nil
+    start_root(root)
+  end)
+end
+
 local function restart_for_manifest(filename)
   local absolute = vim.fn.fnamemodify(filename, ":p")
   local manifest_root = vim.fs.dirname(absolute)
   for root, session in pairs(sessions) do
     if same_path(root, manifest_root) then
-      stop_session(session)
-      sessions[root] = nil
-      start_root(root)
+      restart_session(root, session)
       return true
     end
   end
@@ -1100,13 +1137,9 @@ end
 function M.setup(options)
   local changed = apply_configuration(options)
   if changed then
-    local roots = {}
     for root, session in pairs(sessions) do
-      roots[#roots + 1] = root
-      stop_session(session)
+      restart_session(root, session)
     end
-    sessions = {}
-    for _, root in ipairs(roots) do start_root(root) end
   end
   if configured then return end
   configured = true

@@ -55,6 +55,8 @@ generation, so late output cannot restore stale diagnostics or status.
 Discovery that does not complete within 60 seconds force-stops the process tree
 and restarts the daemon instead of leaving the editor request pending forever.
 Saving `gleam.toml` restarts that package daemon so target changes take effect.
+The replacement waits for the old daemon and any cancelling coverage process
+to exit, preventing two compiler trees from sharing the package at once.
 Only the newest discovery response may replace the package's test list.
 Discovery failure and daemon exit clear stale test IDs until rediscovery.
 Every completed watch generation requests fresh discovery, so added and

@@ -45,7 +45,9 @@ Every completed watch generation refreshes discovery, while unchanged tests
 retain their Testing API identity. Added and removed tests therefore converge
 without a manual refresh.
 Shutdown first asks the daemon to exit cleanly, then force-stops its complete
-process tree if it does not respond.
+process tree if it does not respond. Manifest and package-setting restarts do
+not launch a replacement until the old daemon and any cancelling coverage
+process have actually exited.
 
 Daemon stdout is decoded incrementally with a 128 MiB per-record ceiling,
 large enough for the maximum escaped captured-output event. An oversized or

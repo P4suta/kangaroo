@@ -76,6 +76,9 @@ versioning.
 - Kept editor coverage package-serial until the prior process reaches a
   terminal state, ignored all late cancelled output, and stopped Neovim from
   retaining an entire coverage command's stdout and stderr in memory.
+- Serialized editor manifest and configuration restarts behind the old
+  daemon and coverage process exits so replacement compiler trees cannot
+  overlap in one package.
 - Kept the Gleam, VS Code manifest, and both package-lock versions synchronized
   in release PRs, verified the exact Hex tarball lifecycle offline before
   upload, and made registry publication safe to retry independently.

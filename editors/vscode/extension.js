@@ -55,12 +55,14 @@ class DaemonClient {
     this.logHistory = "";
     this.pendingDiscoveries = new Map();
     this.process = null;
-    this.finishProcess = null;
+    this.activeProcess = null;
+    this.activeProcessExit = Promise.resolve();
     this.stopping = false;
   }
 
   start() {
     if (this.process) return true;
+    if (this.activeProcess) return false;
     this.stopping = false;
     let child;
     try {
@@ -81,16 +83,25 @@ class DaemonClient {
       return false;
     }
     this.process = child;
+    this.activeProcess = child;
+    let resolveProcessExit;
+    const processExit = new Promise((resolve) => {
+      resolveProcessExit = resolve;
+    });
+    this.activeProcessExit = processExit;
     let finished = false;
     const finish = (code, signal) => {
       if (finished) return;
       finished = true;
       this.clearPendingDiscoveries();
       if (this.process === child) this.process = null;
-      if (this.finishProcess === finish) this.finishProcess = null;
+      if (this.activeProcess === child) {
+        this.activeProcess = null;
+        this.activeProcessExit = Promise.resolve();
+      }
+      resolveProcessExit();
       this.onExit({ code, signal, expected: this.stopping });
     };
-    this.finishProcess = finish;
     const decoder = new LineDecoder(this.maxProtocolLineBytes);
     child.stdout.setEncoding?.("utf8");
     child.stderr.setEncoding?.("utf8");
@@ -101,8 +112,7 @@ class DaemonClient {
         lines = decoder.push(chunk);
       } catch (error) {
         this.log(`daemon stdout error: ${error.message}\n`);
-        this.terminateProcess(child);
-        finish(null, null);
+        this.retireProcess(child);
         return;
       }
       for (const line of lines) {
@@ -121,8 +131,7 @@ class DaemonClient {
           else throw new Error("invalid daemon stdout record");
         } catch {
           this.log("invalid daemon stdout record\n");
-          this.terminateProcess(child);
-          finish(null, null);
+          this.retireProcess(child);
           return;
         }
       }
@@ -173,8 +182,14 @@ class DaemonClient {
   handleStdinFailure(error, child) {
     if (!child || this.process !== child) return;
     this.log(`daemon stdin error: ${error.code || error.message}`);
+    this.retireProcess(child);
+  }
+
+  retireProcess(child) {
+    if (!child || this.activeProcess !== child) return;
+    this.clearPendingDiscoveries();
+    if (this.process === child) this.process = null;
     this.terminateProcess(child);
-    this.finishProcess?.(null, null);
   }
 
   watchDiscovery(id, child) {
@@ -182,7 +197,7 @@ class DaemonClient {
     const timer = this.schedule(() => {
       if (this.pendingDiscoveries.get(id) !== timer) return;
       this.log(`kangaroo: discovery timed out after ${this.discoveryTimeoutMs}ms; restarting daemon\n`);
-      this.terminateProcess(child);
+      this.retireProcess(child);
     }, this.discoveryTimeoutMs);
     timer.unref?.();
     this.pendingDiscoveries.set(id, timer);
@@ -206,13 +221,16 @@ class DaemonClient {
   stop() {
     this.stopping = true;
     this.clearPendingDiscoveries();
-    const child = this.process;
-    if (!child) return;
-    this.send(protocolRequest("extension-shutdown", "shutdown"));
+    const child = this.activeProcess;
+    if (!child) return Promise.resolve();
+    if (this.process === child) {
+      this.send(protocolRequest("extension-shutdown", "shutdown"));
+    }
     const timer = setTimeout(() => {
-      if (this.process === child) this.terminateProcess(child);
+      if (this.activeProcess === child) this.retireProcess(child);
     }, 250);
     timer.unref?.();
+    return this.activeProcessExit;
   }
 }
 
@@ -248,6 +266,7 @@ class WorkspaceSession {
     this.diagnosticUris = new Set();
     this.coverageDetails = new WeakMap();
     this.coverageProcesses = new Map();
+    this.disposePromise = null;
     const configuration = this.vscode.workspace
       .getConfiguration("kangaroo", this.folder.uri);
     this.javascriptRuntime = javascriptRuntime(
@@ -489,7 +508,16 @@ class WorkspaceSession {
             env: subprocessEnvironment(),
           },
         );
-        this.coverageProcesses.set(child, cancelCoverage);
+        let resolveProcessExit;
+        const processExit = new Promise((resolveExit) => {
+          resolveProcessExit = resolveExit;
+        });
+        const coverageProcess = {
+          cancel: cancelCoverage,
+          exited: processExit,
+          resolveExit: resolveProcessExit,
+        };
+        this.coverageProcesses.set(child, coverageProcess);
       } catch (error) {
         run.appendOutput(`could not start coverage: ${error.message}\r\n`);
         run.end();
@@ -527,7 +555,9 @@ class WorkspaceSession {
       });
       child.on("error", (error) => {
         if (!claimTerminal()) return;
+        const process = this.coverageProcesses.get(child);
         this.coverageProcesses.delete(child);
+        process?.resolveExit();
         if (!cancelled) {
           run.appendOutput(`coverage process failed: ${error.message}\r\n`);
         }
@@ -535,6 +565,8 @@ class WorkspaceSession {
       });
       child.on("exit", async (code, signal) => {
         if (!claimTerminal()) return;
+        const process = this.coverageProcesses.get(child);
+        process?.resolveExit();
         try {
           if (!cancelled && decoder.remainder()) consume(decoder.remainder());
           if (!cancelled && !this.disposed && !signal && code !== null && code < 2) {
@@ -805,19 +837,22 @@ class WorkspaceSession {
   }
 
   dispose() {
-    if (this.disposed) return;
+    if (this.disposed) return this.disposePromise || Promise.resolve();
     this.disposed = true;
     this.latestRunGeneration += 1;
     for (const { run } of this.activeRuns.values()) run.end?.();
     this.activeRuns.clear();
     this.runState.beginRun();
-    for (const cancelCoverage of Array.from(this.coverageProcesses.values())) {
-      cancelCoverage();
+    const coverageExits = [];
+    for (const coverageProcess of Array.from(this.coverageProcesses.values())) {
+      coverageProcess.cancel();
+      coverageExits.push(coverageProcess.exited);
     }
-    this.coverageProcesses.clear();
-    this.client.stop();
+    const daemonExit = this.client.stop();
     this.clearDiagnostics();
     this.controller.dispose();
+    this.disposePromise = Promise.all([daemonExit, ...coverageExits]);
+    return this.disposePromise;
   }
 }
 
@@ -893,6 +928,7 @@ function terminateProcessTree(child, dependencies = {}) {
 
 function createExtension(vscode, spawnProcess = spawn) {
   const sessions = new Map();
+  const stoppingSessions = new Map();
   let shared;
   let enabled = false;
   let refreshGeneration = 0;
@@ -905,7 +941,24 @@ function createExtension(vscode, spawnProcess = spawn) {
     session.start();
   }
 
-  async function refreshPackages({ restartKey } = {}) {
+  function stopSession(key, session) {
+    sessions.delete(key);
+    const stopped = Promise.resolve(session.dispose()).finally(() => {
+      if (stoppingSessions.get(key) === stopped) stoppingSessions.delete(key);
+    });
+    stoppingSessions.set(key, stopped);
+    return stopped;
+  }
+
+  function stopAllSessions() {
+    const stopped = [];
+    for (const [key, session] of sessions) {
+      stopped.push(stopSession(key, session));
+    }
+    return Promise.all(stopped);
+  }
+
+  async function refreshPackages({ restartKey, restartKeys } = {}) {
     if (!enabled) return;
     const generation = ++refreshGeneration;
     const discovered = await Promise.all(
@@ -917,12 +970,18 @@ function createExtension(vscode, spawnProcess = spawn) {
     for (const packages of discovered) {
       for (const folder of packages) desired.set(folder.uri.toString(), folder);
     }
+    const stopping = new Set();
     for (const [key, session] of sessions) {
-      if (!desired.has(key) || key === restartKey) {
-        session.dispose();
-        sessions.delete(key);
+      if (!desired.has(key) || key === restartKey || restartKeys?.has(key)) {
+        stopping.add(stopSession(key, session));
       }
     }
+    for (const key of desired.keys()) {
+      const barrier = stoppingSessions.get(key);
+      if (barrier) stopping.add(barrier);
+    }
+    await Promise.all(stopping);
+    if (!enabled || generation !== refreshGeneration) return;
     for (const folder of desired.values()) addFolder(folder);
   }
 
@@ -961,11 +1020,7 @@ function createExtension(vscode, spawnProcess = spawn) {
           }
         }
         if (affected.length === 0) return;
-        for (const key of affected) {
-          sessions.get(key)?.dispose();
-          sessions.delete(key);
-        }
-        await refreshPackages();
+        await refreshPackages({ restartKeys: new Set(affected) });
       });
     if (configurationSubscription) {
       context.subscriptions.push(configurationSubscription);
@@ -980,10 +1035,10 @@ function createExtension(vscode, spawnProcess = spawn) {
       vscode.commands.registerCommand("kangaroo.stop", () => {
         enabled = false;
         refreshGeneration += 1;
-        for (const session of sessions.values()) session.dispose();
-        sessions.clear();
+        const stopped = stopAllSessions();
         shared.diagnostics.clear();
         shared.status.text = "Kangaroo: stopped";
+        return stopped;
       }),
       vscode.commands.registerCommand("kangaroo.refresh", () => {
         for (const session of sessions.values()) session.discover();
@@ -995,9 +1050,9 @@ function createExtension(vscode, spawnProcess = spawn) {
   function deactivate() {
     enabled = false;
     refreshGeneration += 1;
-    for (const session of sessions.values()) session.dispose();
-    sessions.clear();
+    const stopped = stopAllSessions();
     shared?.diagnostics.clear();
+    return stopped;
   }
 
   const api = { activate, deactivate, refreshPackages, sessions };
@@ -1012,8 +1067,9 @@ async function activate(context) {
 }
 
 function deactivate() {
-  activeExtension?.deactivate();
+  const stopped = activeExtension?.deactivate();
   activeExtension = undefined;
+  return stopped;
 }
 
 module.exports = {

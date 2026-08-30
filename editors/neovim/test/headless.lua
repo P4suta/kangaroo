@@ -492,6 +492,29 @@ local ok, lifecycle_error = pcall(function()
   jobs[2].options.on_exit(jobs[2].id)
   assert(#deferred == 3)
 
+  local manifest_root = "/tmp/kangaroo-nvim-manifest-test"
+  local manifest_session = test.start_root(manifest_root)
+  local coverage_killed = false
+  local coverage_entry = {
+    cancelled = false,
+    process = {
+      kill = function(_, signal)
+        coverage_killed = signal == 9
+      end,
+    },
+  }
+  assert(test.claim_coverage(manifest_session, coverage_entry))
+  assert(#jobs == 3)
+  assert(test.restart_for_manifest(manifest_root .. "/gleam.toml"))
+  assert(#jobs == 3)
+  assert(coverage_killed)
+  assert(vim.json.decode(writes[#writes].contents).command == "shutdown")
+  running[jobs[3].id] = false
+  jobs[3].options.on_exit(jobs[3].id)
+  assert(#jobs == 3)
+  test.release_coverage(manifest_session, coverage_entry)
+  assert(#jobs == 4)
+
   test.apply_lcov(session,
     "SF:src/stopped.gleam\nDA:1,1\nend_of_record\n")
   stopped_coverage_buffer = vim.fn.bufadd(

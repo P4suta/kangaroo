@@ -116,6 +116,8 @@ test("daemon client fails closed on an oversized unterminated stdout record", ()
   child.stdout.emit("data", "6789");
   assert.equal(child.killed, true);
   assert.equal(client.process, null);
+  assert.equal(exits.length, 0);
+  child.emit("exit", null, "SIGKILL");
   assert.equal(exits.length, 1);
   assert.match(logs.at(-1), /stdout.*exceeded 8 bytes/);
 });
@@ -141,7 +143,7 @@ test("daemon client turns a broken stdin pipe into one recoverable exit", () => 
   )));
   assert.equal(client.process, null);
   assert.equal(child.killed, true);
-  assert.equal(exits.length, 1);
+  assert.equal(exits.length, 0);
   assert.match(logs[0], /stdin.*EPIPE/);
 
   child.emit("exit", null, "SIGKILL");
@@ -171,6 +173,8 @@ test("daemon client contains a synchronous stdin write failure", () => {
   });
   assert.equal(client.process, null);
   assert.equal(child.killed, true);
+  assert.equal(exits.length, 0);
+  child.emit("exit", null, "SIGKILL");
   assert.equal(exits.length, 1);
   assert.match(logs[0], /stdin.*EPIPE/);
 });
@@ -193,6 +197,8 @@ test("daemon client terminates a process whose stdin is no longer writable", () 
   assert.equal(client.send(protocolRequest("run-1", "run")), false);
   assert.equal(child.killed, true);
   assert.equal(client.process, null);
+  assert.equal(exits.length, 0);
+  child.emit("exit", null, "SIGKILL");
   assert.equal(exits.length, 1);
 });
 
@@ -1451,7 +1457,7 @@ test("cancel acknowledgement ends the matching continuous test run", () => {
   }
 });
 
-test("disposing a package ends daemon and coverage runs synchronously", async () => {
+test("disposing waits for both daemon and coverage process exits", async () => {
   const vscode = fakeVscode();
   const daemon = fakeChild();
   const coverage = fakeChild();
@@ -1488,12 +1494,20 @@ test("disposing a package ends daemon and coverage runs synchronously", async ()
     );
     assert.equal(runs.length, 2);
 
-    session.dispose();
+    let disposed = false;
+    const disposal = session.dispose().then(() => { disposed = true; });
 
     assert.equal(runs[0].ended, true);
     assert.equal(runs[1].ended, true);
     assert.equal(session.activeRuns.size, 0);
     await coverageFinished;
+    assert.equal(disposed, false);
+    daemon.emit("exit", 0, null);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(disposed, false);
+    coverage.emit("exit", 1, null);
+    await disposal;
+    assert.equal(disposed, true);
   } finally {
     session.dispose();
   }
@@ -1542,14 +1556,20 @@ test("manifest watcher removes deleted packages and starts newly added packages"
     { name: "repo", uri: vscode.Uri.file("/repo") },
   ];
   const starts = [];
+  const children = new Map();
   const extension = createExtension(vscode, (_executable, _arguments, options) => {
     starts.push(options.cwd);
-    return fakeChild();
+    const child = fakeChild();
+    children.set(options.cwd, child);
+    return child;
   });
   try {
     await extension.activate({ subscriptions: [] });
     manifests.splice(0, 1);
-    await vscode.watcherListeners.delete[0]();
+    const removed = vscode.watcherListeners.delete[0]();
+    await new Promise((resolve) => setImmediate(resolve));
+    children.get("/repo/alpha").emit("exit", 0, null);
+    await removed;
     assert.deepEqual(Array.from(extension.sessions.keys()), ["/repo/beta"]);
 
     manifests.push("/repo/gamma/gleam.toml");
@@ -1564,7 +1584,7 @@ test("manifest watcher removes deleted packages and starts newly added packages"
   }
 });
 
-test("changing a manifest restarts its daemon so target changes take effect", async () => {
+test("changing a manifest waits for the old daemon to exit before restarting", async () => {
   const seed = fakeVscode();
   const vscode = fakeExtensionHostVscode(
     [{ name: "repo", uri: seed.Uri.file("/repo") }],
@@ -1573,13 +1593,25 @@ test("changing a manifest restarts its daemon so target changes take effect", as
   vscode.workspace.workspaceFolders = [
     { name: "repo", uri: vscode.Uri.file("/repo") },
   ];
-  const extension = createExtension(vscode, () => fakeChild());
+  const children = [];
+  const extension = createExtension(vscode, () => {
+    const child = fakeChild();
+    children.push(child);
+    return child;
+  });
   try {
     await extension.activate({ subscriptions: [] });
     const before = extension.sessions.get("/repo");
-    await vscode.watcherListeners.change[0](vscode.Uri.file("/repo/gleam.toml"));
+    const restart = vscode.watcherListeners.change[0](
+      vscode.Uri.file("/repo/gleam.toml"),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(children.length, 1);
+    children[0].emit("exit", 0, null);
+    await restart;
     const after = extension.sessions.get("/repo");
     assert.notEqual(after, before);
+    assert.equal(children.length, 2);
   } finally {
     extension.deactivate();
   }
@@ -1597,20 +1629,49 @@ test("changing package-scoped settings restarts the affected daemon", async () =
     { name: "repo", uri: vscode.Uri.file("/repo") },
   ];
   const executables = [];
+  const children = [];
   const extension = createExtension(vscode, (executable) => {
     executables.push(executable);
-    return fakeChild();
+    const child = fakeChild();
+    children.push(child);
+    return child;
   });
   try {
     await extension.activate({ subscriptions: [] });
     settings.gleamPath = "/tools/gleam-two";
-    await vscode.configurationListeners[0]({
+    const restart = vscode.configurationListeners[0]({
       affectsConfiguration(section, uri) {
         return section === "kangaroo" && uri.toString() === "/repo";
       },
     });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(executables, ["/tools/gleam-one"]);
+    children[0].emit("exit", 0, null);
+    await restart;
     assert.deepEqual(executables, ["/tools/gleam-one", "/tools/gleam-two"]);
   } finally {
     extension.deactivate();
   }
+});
+
+test("extension deactivation waits for package daemon exit", async () => {
+  const seed = fakeVscode();
+  const vscode = fakeExtensionHostVscode(
+    [{ name: "repo", uri: seed.Uri.file("/repo") }],
+    ["/repo/gleam.toml"],
+  );
+  vscode.workspace.workspaceFolders = [
+    { name: "repo", uri: vscode.Uri.file("/repo") },
+  ];
+  const child = fakeChild();
+  const extension = createExtension(vscode, () => child);
+  await extension.activate({ subscriptions: [] });
+
+  let stopped = false;
+  const deactivation = extension.deactivate().then(() => { stopped = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(stopped, false);
+  child.emit("exit", 0, null);
+  await deactivation;
+  assert.equal(stopped, true);
 });
