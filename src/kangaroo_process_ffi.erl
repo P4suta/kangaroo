@@ -172,7 +172,6 @@ process_launch(Directory, Path, Arguments, Environment) ->
     end.
 
 windows_job_launch(Directory, Path, Arguments, Environment) ->
-    Helper = windows_job_executable(),
     PowerShell = case os:find_executable("powershell.exe") of
         false -> erlang:error(
                    {missing_windows_process_wrapper, powershell_exe});
@@ -201,8 +200,7 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
     ],
     PowerShellArguments = [
         "-NoLogo", "-NoProfile", "-NonInteractive",
-        "-ExecutionPolicy", "Bypass", "-File", Script,
-        "-HelperPath", Helper, "-Run"
+        "-ExecutionPolicy", "Bypass", "-File", Script, "-Run"
     ],
     {PowerShell, PowerShellArguments,
      InternalEnvironment ++ CleanEnvironment}.
@@ -264,28 +262,26 @@ prepare_windows_job_helper_worker() ->
     case os:find_executable("powershell.exe") of
         false -> {error, <<"could not find executable: powershell.exe">>};
         PowerShell ->
-            Helper = windows_job_executable(),
             Arguments = [
                 "-NoLogo", "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-File",
                 filename:join(windows_priv_directory(),
                               "kangaroo_windows_job.ps1"),
-                "-HelperPath", Helper, "-Prepare"
+                "-Prepare"
             ],
             try open_port(
                   {spawn_executable, PowerShell},
                   [binary, use_stdio, stderr_to_stdout, exit_status,
                    {args, Arguments}]) of
                 Port -> collect_windows_job_preparation(
-                          Port, [], erlang:monotonic_time(millisecond) + 15000,
-                          Helper)
+                          Port, [], erlang:monotonic_time(millisecond) + 15000)
             catch
                 Class:Reason:Stack ->
                     {error, format_exception(Class, Reason, Stack)}
             end
     end.
 
-collect_windows_job_preparation(Port, Output, Deadline, Helper) ->
+collect_windows_job_preparation(Port, Output, Deadline) ->
     Remaining = erlang:max(
         0, Deadline - erlang:monotonic_time(millisecond)),
     receive
@@ -298,14 +294,9 @@ collect_windows_job_preparation(Port, Output, Deadline, Helper) ->
                               "exceeded 1048576 bytes">>};
                 false ->
                     collect_windows_job_preparation(
-                      Port, Next, Deadline, Helper)
+                      Port, Next, Deadline)
             end;
-        {Port, {exit_status, 0}} ->
-            case filelib:is_regular(Helper) of
-                true -> ok;
-                false ->
-                    {error, <<"Windows process helper was not created">>}
-            end;
+        {Port, {exit_status, 0}} -> ok;
         {Port, {exit_status, Code}} ->
             Message = iolist_to_binary(lists:reverse(Output)),
             {error, <<"Windows process isolation preparation exited ",
@@ -319,21 +310,6 @@ collect_windows_job_preparation(Port, Output, Deadline, Helper) ->
         close_port(Port),
         {error, <<"Windows process isolation preparation timed out">>}
     end.
-
-windows_job_executable() ->
-    Temp = case os:getenv("TEMP") of
-        false ->
-            case os:getenv("TMP") of
-                false ->
-                    case os:getenv("TMPDIR") of
-                        false -> ".";
-                        Value -> Value
-                    end;
-                Value -> Value
-            end;
-        Value -> Value
-    end,
-    filename:join([Temp, "kangaroo", "windows-job-v3-20260831.exe"]).
 
 async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8, OutputBytes,
               Deadline) ->
