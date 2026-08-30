@@ -130,12 +130,19 @@ notify_after_coverage(Parent, Message) ->
     end.
 
 cleanup_descendants(Root) ->
-    Deadline = erlang:monotonic_time(millisecond) +
+    DiscoveryDeadline = erlang:monotonic_time(millisecond) +
         ?DESCENDANT_CLEANUP_TIMEOUT_MS,
     {InitialPending, InitialSeen} =
-        await_initial_trace_delivery(Root, Deadline),
+        await_initial_trace_delivery(Root, DiscoveryDeadline),
     {Pending, Seen} = track_and_kill(Root, InitialPending, InitialSeen),
-    await_descendant_cleanup(Pending, Seen, Deadline).
+    %% Trace delivery and OS-process termination are separate bounded phases.
+    %% A loaded macOS host can spend most of the discovery budget stopping an
+    %% executable port; still give its already-requested termination a full
+    %% settlement window instead of reporting an infrastructure failure at
+    %% the instant the trace barrier completes.
+    SettlementDeadline = erlang:monotonic_time(millisecond) +
+        ?DESCENDANT_CLEANUP_TIMEOUT_MS,
+    await_descendant_cleanup(Pending, Seen, SettlementDeadline).
 
 await_initial_trace_delivery(Root, Deadline) ->
     try erlang:trace_delivered(Root) of

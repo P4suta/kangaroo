@@ -173,6 +173,7 @@ process_launch(Directory, Path, Arguments, Environment) ->
 
 windows_job_launch(Directory, Path, Arguments, Environment) ->
     Helper = windows_job_executable(),
+    WorkingDirectory = filename:absname(to_list(Directory)),
     CleanEnvironment = [
         {Key, Value} || {Key, Value} <- Environment,
         not internal_windows_job_name(Key)
@@ -184,14 +185,15 @@ windows_job_launch(Directory, Path, Arguments, Environment) ->
     end, lists:seq(0, length(Arguments) - 1), Arguments),
     InternalEnvironment = [
         {?WINDOWS_JOB_PREFIX ++ "EXECUTABLE", encode_windows_job_value(Path)},
-        {?WINDOWS_JOB_PREFIX ++ "DIRECTORY", encode_windows_job_value(Directory)},
+        {?WINDOWS_JOB_PREFIX ++ "DIRECTORY",
+         encode_windows_job_value(WorkingDirectory)},
         {?WINDOWS_JOB_PREFIX ++ "ARGV0", encode_windows_job_value(Path)},
         {?WINDOWS_JOB_PREFIX ++ "ARGUMENT_COUNT",
          encode_windows_job_value(integer_to_list(length(Arguments)))}
         | ArgumentEnvironment
     ],
     InheritedRemovals = inherited_windows_job_removals(),
-    {Helper, [],
+    {Helper, ["--kangaroo-job-helper"],
      InheritedRemovals ++ InternalEnvironment ++ CleanEnvironment}.
 
 internal_windows_job_name(Name) ->
@@ -334,7 +336,7 @@ windows_job_executable() ->
             end;
         Value -> Value
     end,
-    filename:join([Temp, "kangaroo", "windows-job-v2-20260831.exe"]).
+    filename:join([Temp, "kangaroo", "windows-job-v3-20260831.exe"]).
 
 async_collect(Parent, Id, Port, OsPid, Output, PendingUtf8, OutputBytes,
               Deadline) ->

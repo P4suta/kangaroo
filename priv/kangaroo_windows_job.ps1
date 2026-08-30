@@ -506,15 +506,17 @@ public static class KangarooWindowsJob
 
     private static Exception LastError(string operation)
     {
+        int code = Marshal.GetLastWin32Error();
         return new Win32Exception(
-            Marshal.GetLastWin32Error(),
-            operation + " failed");
+            code,
+            operation + " failed with Windows error " +
+            code.ToString(CultureInfo.InvariantCulture));
     }
 }
 '@
 
 $prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_"
-$executableName = "windows-job-v2-20260831.exe"
+$executableName = "windows-job-v3-20260831.exe"
 
 function Decode-Value([string] $name) {
     $encoded = [Environment]::GetEnvironmentVariable(

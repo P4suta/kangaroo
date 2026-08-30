@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const prefix = "__KANGAROO_INTERNAL_WINDOWS_JOB_V1_";
@@ -19,11 +19,11 @@ const powershellArguments = [
   script,
 ];
 const prepareWindowsJob = execFileSync;
-const preparedKey = Symbol.for("kangaroo.windowsJobPrepared.v2.20260831");
+const preparedKey = Symbol.for("kangaroo.windowsJobPrepared.v3.20260831");
 const cachedExecutable = join(
   tmpdir(),
   "kangaroo",
-  "windows-job-v2-20260831.exe",
+  "windows-job-v3-20260831.exe",
 );
 
 export function ensureWindowsJobHelper() {
@@ -90,7 +90,10 @@ export function windowsJobLaunch(
   argv0 = executable,
 ) {
   const executablePath = pathValue(executable);
-  const workingDirectory = pathValue(directory);
+  // The helper itself may already be spawned with options.cwd. Resolve from
+  // the calling process before that happens so CreateProcess does not apply a
+  // relative directory a second time (fixture/fixture on Windows).
+  const workingDirectory = resolve(pathValue(directory));
   const argumentZero = pathValue(argv0);
   const cleanEnvironment = {};
   for (const [name, value] of Object.entries(environment || {})) {
@@ -107,7 +110,7 @@ export function windowsJobLaunch(
   );
   return {
     executable: cachedExecutable,
-    arguments: [],
+    arguments: ["--kangaroo-job-helper"],
     environment: cleanEnvironment,
   };
 }
@@ -144,7 +147,7 @@ export function windowsJobSpawnOptions(options) {
   return {
     ...options,
     file: cachedExecutable,
-    args: [cachedExecutable],
+    args: [cachedExecutable, "--kangaroo-job-helper"],
     envPairs: environmentPairs,
     windowsVerbatimArguments: false,
   };

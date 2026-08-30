@@ -169,6 +169,19 @@ pub fn child_process_completion_captures_output_test() {
   assert completed.output == "ready"
 }
 
+pub fn relative_working_directory_is_applied_once_test() {
+  let assert Ok(completed) =
+    process.run(
+      "fixtures/coverage_project",
+      sleeper_executable(),
+      sleeper_arguments(10),
+      [],
+      2000,
+    )
+  assert completed.exit_code == 0
+  assert completed.output == "ready"
+}
+
 pub fn foreground_process_timeout_terminates_descendants_test() {
   let marker = tree_marker()
   assert process.run(".", sleeper_executable(), tree_arguments(marker), [], 100)
