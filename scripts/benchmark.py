@@ -9,6 +9,7 @@ import argparse
 import os
 import platform
 import queue
+import signal
 import shutil
 import subprocess
 import sys
@@ -474,16 +475,35 @@ def _stop_daemon(client: _DaemonClient) -> None:
                 TimeoutError,
                 subprocess.TimeoutExpired,
             ):
-                process.terminate()
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=2)
+                _force_stop_process_tree(process)
+                process.wait(timeout=2)
     finally:
         for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:
                 stream.close()
+
+
+def _force_stop_process_tree(process: subprocess.Popen[str]) -> None:
+    """Force-stop the detached benchmark daemon and all descendants."""
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            completed = subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+            if completed.returncode != 0:
+                raise OSError(f"taskkill exited {completed.returncode}")
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+        return
+    except (OSError, subprocess.SubprocessError):
+        pass
+    process.kill()
 
 
 def copy_fixture_project(source: Path, destination: Path) -> None:
@@ -890,8 +910,13 @@ def collect_metrics(
 
 
 def idle_sample_duration(quick: bool) -> int:
-    """Use enough scheduler ticks for a stable tenth-percent release gate."""
-    return 1 if quick else 10
+    """Use enough scheduler ticks for a stable tenth-percent gate.
+
+    The quick mode reduces repeated latency samples, but a one-second CPU
+    window has roughly one-percent resolution on Linux and can fail the 0.92%
+    regression ceiling solely because one scheduler tick was observed.
+    """
+    return 10
 
 
 def _node_version() -> str:

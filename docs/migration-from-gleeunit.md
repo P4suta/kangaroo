@@ -28,7 +28,8 @@ pub fn main() {
 
 `gleam run -m kangaroo -- init` performs this replacement only when the
 existing file is the exact generated gleeunit/unitest main. It never overwrites
-a custom test entry point.
+a custom test entry point; it prints the suggested contents and exits 2 when
+manual integration is required.
 
 ## 3. Keep or simplify tests
 

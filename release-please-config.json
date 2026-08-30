@@ -15,6 +15,16 @@
           "jsonpath": "$.version"
         },
         {
+          "type": "json",
+          "path": "editors/vscode/package-lock.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "editors/vscode/package-lock.json",
+          "jsonpath": "$.packages[''].version"
+        },
+        {
           "type": "generic",
           "path": "src/kangaroo/internal/command.gleam"
         }

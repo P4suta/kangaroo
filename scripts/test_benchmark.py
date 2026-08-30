@@ -87,7 +87,7 @@ class BenchmarkPolicyTest(unittest.TestCase):
         self.assertTrue(failing["failures"])
 
     def test_idle_window_has_tenth_percent_tick_resolution(self) -> None:
-        self.assertEqual(benchmark.idle_sample_duration(quick=True), 1)
+        self.assertEqual(benchmark.idle_sample_duration(quick=True), 10)
         self.assertEqual(benchmark.idle_sample_duration(quick=False), 10)
 
     def test_production_p95_metrics_use_statistically_meaningful_samples(self) -> None:
@@ -151,6 +151,18 @@ class BenchmarkPolicyTest(unittest.TestCase):
 
 
 class BenchmarkFixtureTest(unittest.TestCase):
+    def test_force_stop_uses_the_detached_unix_process_group(self) -> None:
+        process = mock.Mock()
+        process.pid = 42
+        process.poll.return_value = None
+        with (
+            mock.patch.object(benchmark.os, "name", "posix"),
+            mock.patch.object(benchmark.os, "killpg") as kill_group,
+        ):
+            benchmark._force_stop_process_tree(process)
+        kill_group.assert_called_once_with(42, benchmark.signal.SIGKILL)
+        process.kill.assert_not_called()
+
     def test_instruments_the_watch_fixture_with_a_generation_marker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

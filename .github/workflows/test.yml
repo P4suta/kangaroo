@@ -30,7 +30,7 @@ jobs:
       - name: Download dependencies
         run: gleam deps download
       - name: Check formatting
-        run: gleam format --check src test fixtures
+        run: gleam format --check src dev test fixtures
       - name: Build Erlang with warnings-as-errors
         run: gleam build --target erlang --warnings-as-errors
       - name: Build JavaScript with warnings-as-errors
@@ -47,7 +47,7 @@ jobs:
         run: gleam export hex-tarball
       - name: Test Hex clean-install harness
         run: python3 -W error::ResourceWarning -m unittest scripts/test_hex_clean_install.py
-      - name: Clean-install the exact Hex tarball on Erlang and Node
+      - name: Test the exact Hex tarball lifecycle offline on Erlang and Node
         run: python3 scripts/hex_clean_install_test.py build
 
   erlang:
@@ -70,6 +70,9 @@ jobs:
       - name: Download watch fixture dependencies
         working-directory: fixtures/watch_project
         run: gleam deps download
+      - name: Download daemon fixture dependencies
+        working-directory: fixtures/coverage_project
+        run: gleam deps download
       - run: gleam test --target erlang
 
   javascript:
@@ -80,17 +83,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, runtime: nodejs, version: "22" }
+          - { os: ubuntu-latest, runtime: nodejs, version: "22.12.0" }
           - { os: ubuntu-latest, runtime: nodejs, version: "24" }
           - { os: ubuntu-latest, runtime: nodejs, version: "26" }
           - { os: ubuntu-latest, runtime: bun, version: "1.4.0" }
+          - { os: ubuntu-latest, runtime: bun, version: "latest" }
           - { os: ubuntu-latest, runtime: deno, version: "2.9.0" }
-          - { os: macos-latest, runtime: nodejs, version: "22" }
+          - { os: ubuntu-latest, runtime: deno, version: "latest" }
+          - { os: macos-latest, runtime: nodejs, version: "22.12.0" }
           - { os: macos-latest, runtime: nodejs, version: "24" }
           - { os: macos-latest, runtime: nodejs, version: "26" }
           - { os: macos-latest, runtime: bun, version: "1.4.0" }
           - { os: macos-latest, runtime: deno, version: "2.9.0" }
-          - { os: windows-latest, runtime: nodejs, version: "22" }
+          - { os: windows-latest, runtime: nodejs, version: "22.12.0" }
           - { os: windows-latest, runtime: nodejs, version: "24" }
           - { os: windows-latest, runtime: nodejs, version: "26" }
           - { os: windows-latest, runtime: bun, version: "1.4.0" }
@@ -118,7 +123,77 @@ jobs:
       - name: Download watch fixture dependencies
         working-directory: fixtures/watch_project
         run: gleam deps download
+      - name: Download daemon fixture dependencies
+        working-directory: fixtures/coverage_project
+        run: gleam deps download
       - run: gleam test --target javascript --runtime ${{ matrix.runtime }}
+
+  process-stress:
+    name: process and daemon stress / ${{ matrix.runtime }} ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runtime: nodejs, version: "22.12.0" }
+          - { runtime: bun, version: "1.4.0" }
+          - { runtime: deno, version: "2.9.0" }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: false
+          gleam-version: "1.18.1"
+      - uses: actions/setup-node@v6
+        if: matrix.runtime == 'nodejs'
+        with:
+          node-version: ${{ matrix.version }}
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.runtime == 'bun'
+        with:
+          bun-version: ${{ matrix.version }}
+      - uses: denoland/setup-deno@v2
+        if: matrix.runtime == 'deno'
+        with:
+          deno-version: ${{ matrix.version }}
+      - run: gleam deps download
+      - name: Download daemon fixture dependencies
+        working-directory: fixtures/coverage_project
+        run: gleam deps download
+      - name: Repeat process and daemon lifecycle 20 times
+        run: |
+          for attempt in {1..20}; do
+            echo "lifecycle attempt ${attempt}/20"
+            gleam test --target javascript --runtime "${{ matrix.runtime }}" -- \
+              test/process_test.gleam test/daemon_blackbox_test.gleam \
+              test/helper_test.gleam
+          done
+
+  erlang-process-stress:
+    name: process and daemon stress / erlang OTP 29
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          gleam-version: "1.18.1"
+          rebar3-version: "3"
+      - run: gleam deps download
+      - name: Download daemon fixture dependencies
+        working-directory: fixtures/coverage_project
+        run: gleam deps download
+      - name: Repeat Erlang process and daemon lifecycle 20 times
+        run: |
+          for attempt in {1..20}; do
+            echo "lifecycle attempt ${attempt}/20"
+            gleam test --target erlang -- \
+              test/process_test.gleam test/daemon_blackbox_test.gleam \
+              test/helper_test.gleam
+          done
 
   coverage:
     name: coverage / ${{ matrix.runtime }}

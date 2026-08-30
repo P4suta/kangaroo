@@ -23,7 +23,7 @@ be reproduced deterministically; explain such exceptions in the pull request.
 
 ```sh
 gleam deps download
-gleam format --check src test
+gleam format --check src dev test fixtures
 gleam build --target erlang --warnings-as-errors
 gleam build --target javascript --warnings-as-errors
 gleam test --target erlang
@@ -35,8 +35,10 @@ nvim --headless -u NONE -l editors/neovim/test/headless.lua
 ```
 
 Use `gleam export package-interface` after public-module changes; its module
-list must contain only `kangaroo`. Do not commit generated `build/`, `coverage/`,
-`.vsix`, or temporary coverage workspaces.
+list must contain exactly `kangaroo` and `kangaroo/coverage_probe`. The latter
+is the instrumentation tooling ABI, not a general application API. Do not
+commit generated `build/`, `coverage/`, `.vsix`, or temporary coverage
+workspaces.
 
 ## Changes and reviews
 
@@ -47,3 +49,10 @@ tests, schema/docs updates, and either backward compatibility within v1 or a
 new protocol version.
 
 Never include secrets, production data, or generated dependency caches.
+
+## Release operations
+
+The maintainer procedure for the initial 1.0.0 publication and independently
+rerunning each registry job is in
+[docs/release-checklist.md](docs/release-checklist.md). Do not create a tag,
+GitHub Release, or registry publication from a pull-request checkout.

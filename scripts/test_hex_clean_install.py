@@ -55,6 +55,17 @@ class PackageValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "development-only file"):
             clean_install.validated_members(contents_archive(files))
 
+    def test_rejects_relative_links_in_packaged_readme(self) -> None:
+        files = required_files()
+        files["README.md"] = b"See [runtime details](docs/runtimes.md)."
+        with self.assertRaisesRegex(RuntimeError, "README.md has relative links"):
+            clean_install.validated_members(contents_archive(files))
+
+    def test_accepts_absolute_links_in_packaged_readme(self) -> None:
+        files = required_files()
+        files["README.md"] = b"See [runtime details](https://example.com/runtimes)."
+        clean_install.validated_members(contents_archive(files))
+
     def test_extracts_validated_regular_files(self) -> None:
         contents = contents_archive(required_files())
         with tempfile.TemporaryDirectory() as temporary:
@@ -79,10 +90,12 @@ class PackageValidationTest(unittest.TestCase):
 
 
 class ConsumerContractTest(unittest.TestCase):
-    def test_consumer_uses_the_three_line_public_contract(self) -> None:
-        self.assertIn("import kangaroo", clean_install.CONSUMER_TEST)
-        self.assertIn("kangaroo.main()", clean_install.CONSUMER_TEST)
+    def test_consumer_exercises_init_and_an_ordinary_test(self) -> None:
         self.assertIn("pub fn installed_package_test()", clean_install.CONSUMER_TEST)
+        self.assertIn(
+            ["gleam", "run", "--target", "erlang", "-m", "kangaroo", "--", "init"],
+            clean_install.consumer_commands(),
+        )
 
     def test_runs_warning_builds_and_tests_on_both_primary_targets(self) -> None:
         commands = clean_install.consumer_commands()
@@ -110,6 +123,24 @@ class ConsumerContractTest(unittest.TestCase):
             ],
             commands,
         )
+        for target in clean_install.target_arguments():
+            self.assertIn(
+                clean_install.kangaroo_command(
+                    target, ["run", "--reporter", "ndjson"]
+                ),
+                commands,
+            )
+            self.assertIn(
+                clean_install.kangaroo_command(
+                    target, ["doctor", "--reporter", "ndjson"]
+                ),
+                commands,
+            )
+
+    def test_post_download_environment_disables_common_network_paths(self) -> None:
+        environment = clean_install.offline_environment()
+        self.assertEqual(environment["HTTPS_PROXY"], "http://127.0.0.1:9")
+        self.assertEqual(environment["NO_PROXY"], "")
 
     def test_requires_the_public_coverage_probe_in_the_package(self) -> None:
         self.assertIn(

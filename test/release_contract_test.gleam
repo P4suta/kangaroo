@@ -13,11 +13,16 @@ pub fn required_release_files_test() {
     "docs/integrations.md",
     "docs/troubleshooting.md",
     "docs/protocol-v1.schema.json",
+    "docs/release-checklist.md",
     "benchmarks/v1-baseline.json",
     "editors/vscode/package-lock.json",
     "scripts/hex_clean_install_test.py",
     "scripts/test_hex_clean_install.py",
+    "scripts/publish_hex_tarball.py",
+    "scripts/test_publish_hex_tarball.py",
+    "priv/kangaroo_windows_job.ps1",
     "src/kangaroo_daemon_child.mjs",
+    "src/kangaroo_windows_job.mjs",
   ]
   |> list.each(fn(path) {
     assert fs.exists(path)
@@ -87,6 +92,7 @@ pub fn ci_covers_the_supported_platforms_and_runtimes_test() {
     "bun",
     "deno",
     "gleam format --check",
+    "gleam format --check src dev test fixtures",
     "warnings-as-errors",
     "python3 -W error::ResourceWarning -m unittest scripts/test_benchmark.py",
     "python3 scripts/benchmark.py",
@@ -98,6 +104,9 @@ pub fn ci_covers_the_supported_platforms_and_runtimes_test() {
     "python3 -W error::ResourceWarning -m unittest scripts/test_hex_clean_install.py",
     "python3 scripts/hex_clean_install_test.py",
     "working-directory: fixtures/watch_project",
+    "22.12.0",
+    "Repeat process and daemon lifecycle 20 times",
+    "Repeat Erlang process and daemon lifecycle 20 times",
   ]
   |> list.each(fn(fragment) {
     assert string.contains(workflow, fragment)
@@ -108,28 +117,101 @@ pub fn release_is_one_versioned_package_test() {
   let assert Ok(config) = fs.read_file("release-please-config.json")
   let assert Ok(manifest) = fs.read_file(".release-please-manifest.json")
   let assert Ok(workflow) = fs.read_file(".github/workflows/release-please.yml")
+  let assert Ok(hex_publisher) = fs.read_file("scripts/publish_hex_tarball.py")
   let assert Ok(command_source) =
     fs.read_file("src/kangaroo/internal/command.gleam")
 
   assert !string.contains(config, "cli")
   assert !string.contains(workflow, "cli")
   assert string.contains(config, "src/kangaroo/internal/command.gleam")
+  assert string.contains(config, "editors/vscode/package-lock.json")
+  assert string.contains(config, "$.packages[''].version")
   assert string.contains(command_source, "x-release-please-start-version")
   assert string.contains(command_source, "x-release-please-end")
   assert string.contains(manifest, "1.0.0")
-  assert string.contains(workflow, "gleam publish")
+  assert string.contains(workflow, "scripts/publish_hex_tarball.py")
   assert string.contains(workflow, "vsce publish")
   assert string.contains(workflow, "ovsx publish")
   assert string.contains(workflow, "checksums")
-  assert string.contains(workflow, "sha256sum -- ./*")
+  assert string.contains(workflow, "build-release-artifacts:")
+  assert string.contains(workflow, "publish-github-assets:")
+  assert string.contains(workflow, "publish-hex:")
+  assert string.contains(workflow, "publish-vscode-marketplace:")
+  assert string.contains(workflow, "publish-open-vsx:")
+  assert string.contains(workflow, "actions/upload-artifact@v4")
+  assert string.contains(workflow, "actions/download-artifact@v4")
+  assert string.contains(workflow, "id: release")
+  assert string.contains(workflow, "id: release-bootstrap")
+  assert string.contains(
+    workflow,
+    "if: steps.release-bootstrap.outputs.ready == 'true'",
+  )
+  assert string.contains(workflow, "refs/tags/v${current_version}")
+  assert string.contains(
+    workflow,
+    "needs.release-please.outputs.release_created == 'true'",
+  )
+  assert string.contains(
+    workflow,
+    "needs.build-release-artifacts.outputs.tag_name",
+  )
+  assert string.contains(workflow, "github.event_name == 'push'")
+  assert string.contains(
+    workflow,
+    "test \"${RELEASE_TAG}\" = \"v${release_version}\"",
+  )
+  assert string.contains(workflow, "overwrite: false")
+  assert !string.contains(workflow, "overwrite: true")
+  assert string.contains(workflow, "Restore the immutable release artifact")
+  assert string.contains(
+    workflow,
+    "Protect the canonical artifact from rebuilds",
+  )
+  assert string.contains(workflow, "gh release download")
+  assert string.contains(workflow, "actions/artifacts")
+  assert string.contains(workflow, "if length == 1")
+  assert string.contains(workflow, "Refusing to regenerate publication bytes")
+  assert string.contains(workflow, "GITHUB_RUN_ATTEMPT")
+  assert string.contains(workflow, "sha256sum --check checksums.txt")
+  assert !string.contains(workflow, "sha256sum -- ./*")
+  assert !string.contains(workflow, "--clobber")
+  assert string.contains(workflow, "cmp --silent")
+  assert string.contains(workflow, "Refusing to overwrite it")
   assert string.contains(workflow, "CHANGELOG.md")
   assert string.contains(workflow, "npm ci")
   assert string.contains(workflow, "npm run package")
+  assert string.contains(
+    workflow,
+    "python3 scripts/hex_clean_install_test.py \"build/kangaroo-${RELEASE_VERSION}.tar\"",
+  )
+  assert string.contains(
+    workflow,
+    "require(\"./editors/vscode/package-lock.json\").version",
+  )
+  assert string.contains(
+    workflow,
+    "require(\"./editors/vscode/package-lock.json\").packages[\"\"]?.version",
+  )
+  assert string.contains(workflow, "--repo \"${GITHUB_REPOSITORY}\"")
+  assert string.contains(hex_publisher, "https://repo.hex.pm")
+  assert string.contains(hex_publisher, "application/octet-stream")
+  assert string.contains(hex_publisher, "already-published")
+  assert !string.contains(workflow, "gleam publish")
+  assert string.contains(workflow, "Publish the exact Hex package artifact")
+  assert string.contains(workflow, "repo.hex.pm/docs/kangaroo-")
+  assert string.contains(workflow, "gleam docs publish")
+  assert string.contains(
+    workflow,
+    "vsce publish --skip-duplicate --packagePath",
+  )
+  assert string.contains(workflow, "ovsx publish --skip-duplicate")
+  assert !string.contains(workflow, "--pat \"$OVSX_PAT\"")
   assert !string.contains(workflow, "npx --yes")
   assert string.contains(
     workflow,
-    "RELEASE_TAG: ${{ github.event.release.tag_name }}",
+    "RELEASE_TAG: ${{ needs.build-release-artifacts.outputs.tag_name }}",
   )
+  assert string.contains(workflow, "workflow_dispatch:")
   assert !string.contains(
     workflow,
     "kangaroo-${{ github.event.release.tag_name }}.vsix",
@@ -138,6 +220,30 @@ pub fn release_is_one_versioned_package_test() {
     workflow,
     "gh release upload \"${{ github.event.release.tag_name }}\"",
   )
+}
+
+pub fn first_release_runbook_is_fail_closed_and_rerunnable_test() {
+  let assert Ok(checklist) = fs.read_file("docs/release-checklist.md")
+  let assert Ok(contributing) = fs.read_file("CONTRIBUTING.md")
+
+  [
+    "PR #12",
+    "PR #11",
+    "v1.0.0",
+    "exact merge commit",
+    "HEXPM_API_KEY",
+    "VSCE_PAT",
+    "OVSX_PAT",
+    "workflow_dispatch",
+    "target",
+    "Do not regenerate",
+    "byte-for-byte",
+  ]
+  |> list.each(fn(fragment) {
+    assert string.contains(checklist, fragment)
+  })
+
+  assert string.contains(contributing, "docs/release-checklist.md")
 }
 
 pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
@@ -156,6 +262,9 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   let assert Ok(test_worker) = fs.read_file("src/kangaroo_test_worker.mjs")
   let assert Ok(terminal_ffi) = fs.read_file("src/kangaroo_terminal_ffi.mjs")
   let assert Ok(erlang_isolate) = fs.read_file("src/kangaroo_isolate_ffi.erl")
+  let assert Ok(windows_job) = fs.read_file("priv/kangaroo_windows_job.ps1")
+  let assert Ok(windows_job_bridge) =
+    fs.read_file("src/kangaroo_windows_job.mjs")
 
   assert string.contains(runtime_docs, "Node.js 22.12+")
   assert string.contains(readme, "Node.js 22.12+")
@@ -167,16 +276,41 @@ pub fn runtime_and_ffi_contracts_are_cross_platform_safe_test() {
   )
   assert string.contains(process_worker, "child.stdin.on(\"error\"")
   assert string.contains(process_worker, "child.stdin.on(\"close\"")
+  assert string.contains(process_worker, "globalThis.Bun.spawn")
+  assert string.contains(process_worker, "new TextDecoder()")
   assert string.contains(process_worker, "from \"./kangaroo_process_tree.mjs\"")
-  assert string.contains(process_tree, "execFileSync(\"taskkill\"")
+  assert string.contains(process_tree, "processTreeExecFileSync(\"taskkill\"")
   let assert [taskkill_prefix, ..] =
     string.split(process_tree, "globalThis.process.kill(pid")
-  assert string.contains(taskkill_prefix, "execFileSync(\"taskkill\"")
+  assert string.contains(
+    taskkill_prefix,
+    "processTreeExecFileSync(\"taskkill\"",
+  )
   assert string.contains(erlang_process_ffi, "taskkill /PID")
+  assert string.contains(erlang_process_ffi, "windows_job_launch")
+  assert string.contains(process_worker, "windowsJobLaunch")
+  assert string.contains(test_worker, "windowsJobSpawnOptions")
+  assert string.contains(test_worker, "windowsJobLaunch")
+  assert string.contains(windows_job_bridge, "kangaroo_windows_job.ps1")
+  assert string.contains(windows_job_bridge, "windowsJobSpawnOptions")
+  assert string.contains(windows_job_bridge, "ensureWindowsJobHelper")
+  assert string.contains(erlang_process_ffi, "{Name, false}")
+  assert string.contains(windows_job, "OrdinalIgnoreCase")
+  assert string.contains(windows_job, "CREATE_SUSPENDED")
+  assert string.contains(windows_job, "AssignProcessToJobObject")
+  assert string.contains(windows_job, "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE")
+  assert string.contains(windows_job, "DrainRemainingProcesses(job)")
+  assert string.contains(windows_job, "-OutputAssembly")
+  assert string.contains(windows_job, "windows-job-v1-20260830.dll")
   assert string.contains(process_ffi, "activityBuffer")
   assert string.contains(process_worker, "workerData.activityBuffer")
   assert string.contains(javascript_fs, "observedActivity")
   assert string.contains(stdin_worker, "workerData.activityBuffer")
+  assert string.contains(erlang_fs, "await_input_continue(Parent)")
+  assert string.contains(
+    erlang_fs,
+    "Reader ! {kangaroo_input_continue, self()}",
+  )
   assert string.contains(test_worker, "Atomics.compareExchange(childPids")
   assert !string.contains(terminal_ffi, "readSync")
   assert string.contains(terminal_ffi, "receiveMessageOnPort")
@@ -189,12 +323,14 @@ pub fn coverage_probe_is_a_downstream_importable_tooling_module_test() {
   let assert Ok(config) = fs.read_file("gleam.toml")
   let assert Ok(workflow) = fs.read_file(".github/workflows/test.yml")
   let assert Ok(architecture) = fs.read_file("ARCHITECTURE.md")
+  let assert Ok(contributing) = fs.read_file("CONTRIBUTING.md")
 
   assert fs.exists("src/kangaroo/coverage_probe.gleam")
   assert !string.contains(config, "internal_modules = [\"kangaroo/*\"]")
   assert string.contains(workflow, "\"kangaroo/coverage_probe\"")
   assert string.contains(architecture, "kangaroo/coverage_probe")
   assert string.contains(architecture, "tooling ABI")
+  assert string.contains(contributing, "kangaroo/coverage_probe")
 }
 
 pub fn neovim_installation_uses_a_supported_lazy_nvim_spec_test() {
@@ -202,5 +338,6 @@ pub fn neovim_installation_uses_a_supported_lazy_nvim_spec_test() {
 
   assert !string.contains(readme, "subdir =")
   assert string.contains(readme, "vim.opt.rtp:append")
-  assert string.contains(readme, "require(\"kangaroo\").setup()")
+  assert string.contains(readme, "require(\"kangaroo\").setup({")
+  assert string.contains(readme, "javascript_runtime = \"nodejs\"")
 }

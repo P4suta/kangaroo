@@ -5,9 +5,9 @@ Kangaroo supports Gleam 1.18+ on Linux, macOS, and Windows with:
 | Target | Supported runtime versions | Isolation |
 | --- | --- | --- |
 | Erlang | OTP 27, 28, 29 | one BEAM process per test |
-| JavaScript | Node.js 22.12+, 24, 26 | Worker per generation |
-| JavaScript | Bun 1.4+ | Worker per generation |
-| JavaScript | Deno 2.9+ | Worker per generation |
+| JavaScript | Node.js 22.12+, 24, 26 | Worker per test |
+| JavaScript | Bun 1.4.0+ | Worker per test |
+| JavaScript | Deno 2.9+ | Worker per test |
 
 Use the normal Gleam runtime selector:
 
@@ -21,6 +21,30 @@ gleam test --target javascript --runtime deno
 Watch and coverage preserve the target/runtime of their parent invocation.
 Run `gleam run --target javascript --runtime bun -m kangaroo -- watch`, for
 example, to keep Bun active in child generations.
+
+Bun 1.4.0 can either drop a Node-compatible piped stdin write or return
+`EPERM` while flushing a native `Bun.spawn` FileSink. Kangaroo owns that bridge
+and writes the spawned pipe descriptor completely with bounded backpressure,
+retaining bidirectional daemon/watch operation without raising the supported
+minimum.
+
+JavaScript tests may start asynchronous Node, Bun, or Deno child processes;
+Kangaroo tracks and terminates their complete trees at completion, failure, or
+timeout. Node/Bun synchronous subprocess calls are bounded and placed in an
+isolated process group on Unix. Deno synchronous subprocess APIs, and
+synchronous subprocess APIs on Windows, fail before launch because those
+runtimes cannot expose a live process tree to the test-timeout boundary. Use
+the corresponding asynchronous API in portable test FFI.
+
+On Windows, Kangaroo starts each compiler, test runtime, and daemon command
+suspended, assigns it to a private kill-on-close Job Object, and only then
+allows it to execute. Completion is not published until the Job Object has no
+active descendants. This ownership boundary also applies when a command exits
+successfully after starting background work, and to asynchronous subprocesses
+started by an isolated JavaScript test. The wrapper's private environment
+namespace is removed case-insensitively before user code starts, matching
+Windows environment semantics and preventing inherited values from changing
+or leaking its launch metadata.
 
 ## Deno permissions
 
@@ -43,9 +67,10 @@ code you trust; test functions themselves execute with the same authority.
 Kangaroo does not require network permission at runtime, although Gleam may
 need network access beforehand to download dependencies.
 
-Coverage instruments a disposable clone and deletes only a workspace carrying
-Kangaroo's validated temporary-directory marker. Original project source is
-read-only during instrumentation.
+Coverage instruments a disposable clone and deletes only a real directory
+carrying Kangaroo's validated, path-bound temporary-directory marker. Prefix
+matches and symlinks are rejected. Original project source is read-only during
+instrumentation.
 
 ## Runtime diagnosis
 
