@@ -81,6 +81,9 @@ Watch snapshots always cover Gleam's complete `src`, `dev`, and `test`
 development roots, plus configured extra paths, Gleam FFI, `gleam.toml`, and
 the manifest. Discovery still runs tests only below configured `test_paths`;
 the broader snapshot keeps imported helpers from producing stale results.
+Configured `exclude` patterns remove tests from the runnable set without
+removing their modules or import edges from the dependency graph, so a change
+still propagates through an excluded helper to its active dependants.
 Content equality makes equal-mtime writes, atomic renames, additions, and
 removals observable. Extra roots are refreshed after a configuration change.
 

@@ -41,8 +41,10 @@ package root. `test_paths` must be inside Gleam's compiled `src`, `dev`, or
 Kangaroo cancels old generations and publishes only the newest. Compiler output
 for an invalid save is written to stderr. The complete `src`, `dev`, and `test`
 trees are watched even when `test_paths` narrows discovery, so imported helper
-changes cannot leave stale results. Ensure edited generated/config files outside
-those roots are listed in `[tools.kangaroo.watch].extra_paths`. Changing
+changes cannot leave stale results. Excluding a helper from test discovery
+does not remove its import edges from watch planning. Ensure edited
+generated/config files outside those roots are listed in
+`[tools.kangaroo.watch].extra_paths`. Changing
 `gleam.toml` refreshes extra roots automatically.
 
 On Windows, allow the terminal/editor to terminate child process trees. A

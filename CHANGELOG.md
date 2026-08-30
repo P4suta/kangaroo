@@ -90,6 +90,9 @@ versioning.
 - Watched all standard Gleam source roots while keeping narrowed test-path
   discovery exact, and made cached indexes account for nested packages,
   development modules, and root-set configuration changes.
+- Retained excluded helper modules in the watch dependency graph while
+  removing only their tests from the runnable set, preserving transitive
+  invalidation without executing excluded cases.
 - Made glob matching linear in repeated wildcard states, required an exact
   compile-only handshake, and ordered BEAM coverage flushes causally before
   publishing isolated test results.

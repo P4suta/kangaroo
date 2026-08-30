@@ -237,8 +237,9 @@ fn watch_tui_project(
   use snapshot <- result.try(watcher.snapshot_project(project_dir, roots))
   use index_state <- result.try(
     watch_plan.initialise(
-      watch_plan.sources(snapshot, configured.exclude),
+      watch_plan.sources(snapshot),
       configured.test_paths,
+      configured.exclude,
     )
     |> result.map_error(format_index_errors),
   )
@@ -555,8 +556,9 @@ fn finish_tui_refresh(
     use refresh <- result.try(
       watch_plan.refresh(
         state.index,
-        watch_plan.sources(new_snapshot, configured.exclude),
+        watch_plan.sources(new_snapshot),
         configured.test_paths,
+        configured.exclude,
         list.map(changes, watcher.path),
       )
       |> result.map_error(format_index_errors),
@@ -1081,8 +1083,9 @@ fn watch_plain_project(
   use snapshot <- result.try(watcher.snapshot_project(project_dir, roots))
   use index_state <- result.try(
     watch_plan.initialise(
-      watch_plan.sources(snapshot, configured.exclude),
+      watch_plan.sources(snapshot),
       configured.test_paths,
+      configured.exclude,
     )
     |> result.map_error(format_index_errors),
   )
@@ -1249,8 +1252,9 @@ fn refresh_watch(
     use refresh <- result.try(
       watch_plan.refresh(
         state.index,
-        watch_plan.sources(new_snapshot, configured.exclude),
+        watch_plan.sources(new_snapshot),
         configured.test_paths,
+        configured.exclude,
         list.map(changes, watcher.path),
       )
       |> result.map_error(format_index_errors),
