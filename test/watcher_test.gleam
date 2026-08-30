@@ -16,6 +16,10 @@ fn temporary_directory() -> String
 @external(javascript, "./kangaroo_cli_test_ffi.mjs", "set_file_mode")
 fn set_file_mode(path: String, mode: Int) -> Bool
 
+@external(erlang, "kangaroo_cli_test_ffi", "make_directory_symlink")
+@external(javascript, "./kangaroo_cli_test_ffi.mjs", "make_directory_symlink")
+fn make_directory_symlink(target: String, link: String) -> Bool
+
 pub fn compile_command_compiles_test_modules_without_running_them_test() {
   assert watcher.compile_arguments("erlang", "erlang")
     == ["test", "--target", "erlang"]
@@ -157,6 +161,37 @@ pub fn stale_build_invalidation_cannot_escape_the_package_build_test() {
       Removed("test/user-file.mjs"),
     ])
     == []
+}
+
+pub fn stale_build_invalidation_never_follows_directory_symlinks_test() {
+  let assert Ok(workspace) = fs.copy_to_temporary_workspace(".")
+  let victim = workspace <> "/src/watch_victim.cache_meta"
+  let package_build = workspace <> "/build/dev/javascript/kangaroo"
+  let assert Ok(Nil) = fs.write_file(victim, "preserve")
+  let assert Ok(Nil) = fs.write_file(package_build <> "/placeholder", "")
+  let created =
+    make_directory_symlink(
+      workspace <> "/src",
+      package_build <> "/_gleam_artefacts",
+    )
+  let invalidated =
+    watcher.invalidate_stale_build_files(workspace, "javascript", [
+      Modified("src/watch_victim.gleam"),
+    ])
+  let retained = fs.read_file(victim)
+  let cleaned = fs.remove_tree(workspace)
+  assert cleaned == Ok(Nil)
+
+  case created {
+    True -> {
+      let assert Error(message) = invalidated
+      assert string.contains(message, "symbolic link")
+      assert retained == Ok("preserve")
+    }
+    // Some Windows environments do not grant symlink creation privileges;
+    // Linux and macOS still exercise the destructive boundary.
+    False -> Nil
+  }
 }
 
 pub fn cancellable_child_run_command_is_target_specific_test() {

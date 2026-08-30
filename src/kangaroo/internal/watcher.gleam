@@ -132,7 +132,17 @@ pub fn invalidate_stale_build_files(
   use source <- result.try(fs.read_file(join(project_dir, "gleam.toml")))
   use package_name <- result.try(config.package_name(source))
   stale_build_files(project_dir, package_name, target, changes)
-  |> list.try_each(fs.remove_file)
+  |> list.try_each(fn(path) {
+    // Build products are disposable, but an existing intermediate symlink can
+    // redirect an otherwise safe relative artifact path into user source or
+    // outside the project. Revalidate every component immediately before the
+    // deletion instead of trusting the generated `build/` prefix alone.
+    use safe_path <- result.try(fs.project_file_path(
+      project_dir,
+      relative_to(project_dir, path),
+    ))
+    fs.remove_file(safe_path)
+  })
 }
 
 fn stale_files_for_change(

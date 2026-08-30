@@ -119,6 +119,9 @@ versioning.
 - Watched all standard Gleam source roots while keeping narrowed test-path
   discovery exact, and made cached indexes account for nested packages,
   development modules, and root-set configuration changes.
+- Refused to invalidate stale compiler products through any symbolic-link
+  component, so a replaced `build/` subtree cannot redirect watch cleanup into
+  user source or outside the project.
 - Retained excluded helper modules in the watch dependency graph while
   removing only their tests from the runnable set, preserving transitive
   invalidation without executing excluded cases.
