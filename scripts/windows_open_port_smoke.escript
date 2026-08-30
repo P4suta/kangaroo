@@ -91,12 +91,18 @@ probe_helper_preparation() ->
     PowerShell = require_powershell(),
     Script = filename:absname("priv/kangaroo_windows_job.ps1"),
     Helper = default_helper_path(),
+    Probe = filename:join(
+      filename:dirname(Script), "kangaroo_windows_prepare_probe.txt"),
+    _ = safe_delete(Probe),
     Arguments = [
         "-NoLogo", "-NoProfile", "-NonInteractive",
         "-ExecutionPolicy", "Bypass", "-File", Script,
-        "-Prepare"
+        "-Prepare", "-ProbePreparation"
     ],
-    case prepare_helper_path(PowerShell, Arguments, Helper, 60000) of
+    Result = prepare_helper_path(PowerShell, Arguments, Helper, 60000),
+    report_preparation_probe(Probe),
+    _ = safe_delete(Probe),
+    case Result of
         ok ->
             try
                 case filelib:is_regular(Helper) of
@@ -121,6 +127,15 @@ probe_helper_preparation() ->
                 safe_delete(Helper)
             end;
         error -> error
+    end.
+
+report_preparation_probe(Probe) ->
+    case file:read_file(Probe) of
+        {ok, Contents} ->
+            io:format("open_port helper preparation probe: ~ts~n", [Contents]);
+        {error, Reason} ->
+            io:format("open_port helper preparation probe: missing (~tp)~n",
+                      [Reason])
     end.
 
 prepare_helper_path(PowerShell, Arguments, Helper, Timeout) ->
