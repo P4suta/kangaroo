@@ -97,6 +97,11 @@ versioning.
 - Kept editor coverage package-serial until the prior process reaches a
   terminal state, ignored all late cancelled output, and stopped Neovim from
   retaining an entire coverage command's stdout and stderr in memory.
+- Excluded disposable coverage clones from VS Code monorepo package discovery,
+  preventing nested-package coverage from starting a daemon inside its clone.
+- Registered Neovim's automatic start and exit cleanup from `setup()` itself,
+  so the documented nested-runtimepath lazy.nvim installation receives the
+  complete lifecycle without relying on a late-loaded `plugin/` directory.
 - Waited for VS Code coverage stdout and stderr to close before decoding the
   final event fragment or publishing LCOV, preventing process exit from
   dropping late test results.

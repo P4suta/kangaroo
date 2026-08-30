@@ -1202,6 +1202,21 @@ function M.setup(options)
     end,
     desc = "Restart Kangaroo when the package target changes",
   })
+  local lifecycle_group = vim.api.nvim_create_augroup(
+    "kangaroo-lifecycle",
+    { clear = true }
+  )
+  vim.api.nvim_create_autocmd("FileType", {
+    group = lifecycle_group,
+    pattern = "gleam",
+    callback = M.start,
+    desc = "Start Kangaroo for Gleam buffers",
+  })
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = lifecycle_group,
+    callback = M.stop_all,
+    desc = "Stop Kangaroo package daemons before exiting",
+  })
 end
 
 M._test = {

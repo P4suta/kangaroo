@@ -582,5 +582,16 @@ local manifest_autocmds = vim.api.nvim_get_autocmds({
 })
 assert(#manifest_autocmds == 1)
 assert(manifest_autocmds[1].pattern == "gleam.toml")
+local start_autocmds = vim.api.nvim_get_autocmds({
+  group = "kangaroo-lifecycle",
+  event = "FileType",
+})
+assert(#start_autocmds == 1)
+assert(start_autocmds[1].pattern == "gleam")
+local stop_autocmds = vim.api.nvim_get_autocmds({
+  group = "kangaroo-lifecycle",
+  event = "VimLeavePre",
+})
+assert(#stop_autocmds == 1)
 
 print("kangaroo.nvim headless tests passed")
