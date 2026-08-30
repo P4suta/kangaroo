@@ -179,6 +179,8 @@ versioning.
 - Decoded invalid process output incrementally with ordered UTF-8 replacement,
   applied the 16 MiB limit after replacement expansion, and cancelled sibling
   BEAM workers immediately when a concurrent batch worker crashes.
+- Preserved UTF-8 sequences split across separate captured test stdout or
+  stderr byte writes on Node.js, Bun, and Deno.
 - Failed coverage explicitly when its probe file cannot be opened, completely
   written, or flushed, instead of publishing a plausible but incomplete
   report after silently discarding persistence errors.

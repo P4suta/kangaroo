@@ -79,6 +79,14 @@ pub fn output_fixture() {
   io.println_error("captured stderr")
 }
 
+@external(erlang, "runtime_fixture_ffi", "split_captured_utf8")
+@external(javascript, "./runtime_fixture_ffi.mjs", "split_captured_utf8")
+fn split_captured_utf8() -> Nil
+
+pub fn split_captured_utf8_fixture() {
+  split_captured_utf8()
+}
+
 pub fn oversized_captured_output_fixture() {
   io.println(string.repeat("x", 511))
   io.println_error(string.repeat("y", 512))

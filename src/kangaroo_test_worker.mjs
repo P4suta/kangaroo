@@ -454,14 +454,14 @@ console.error = (...values) => writeOutput(stderrData, 4, formatValue(...values)
 console.warn = (...values) => writeOutput(stderrData, 4, formatValue(...values) + "\n");
 if (globalThis.process?.stdout?.write) {
   globalThis.process.stdout.write = (chunk, ...rest) => {
-    writeOutput(stdoutData, 3, chunkText(chunk));
+    writeOutput(stdoutData, 3, chunk);
     callWriteCallback(rest);
     return true;
   };
 }
 if (globalThis.process?.stderr?.write) {
   globalThis.process.stderr.write = (chunk, ...rest) => {
-    writeOutput(stderrData, 4, chunkText(chunk));
+    writeOutput(stderrData, 4, chunk);
     callWriteCallback(rest);
     return true;
   };
@@ -693,7 +693,7 @@ function signalStarted() {
 
 function writeOutput(target, lengthIndex, value) {
   if (Atomics.load(control, 7) === 1) return;
-  const encoded = new TextEncoder().encode(value);
+  const encoded = outputBytes(value);
   const start = Atomics.load(control, lengthIndex);
   const otherLength = Atomics.load(control, lengthIndex === 3 ? 4 : 3);
   if (
@@ -708,10 +708,11 @@ function writeOutput(target, lengthIndex, value) {
   Atomics.store(control, lengthIndex, start + encoded.length);
 }
 
-function chunkText(chunk) {
-  if (typeof chunk === "string") return chunk;
-  if (chunk instanceof Uint8Array) return new TextDecoder().decode(chunk);
-  return String(chunk);
+function outputBytes(chunk) {
+  if (chunk instanceof Uint8Array) return chunk;
+  return new TextEncoder().encode(
+    typeof chunk === "string" ? chunk : String(chunk),
+  );
 }
 
 function callWriteCallback(values) {

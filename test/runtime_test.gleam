@@ -117,6 +117,13 @@ pub fn stdout_and_stderr_are_captured_without_leaking_test() {
     == CapturedIsolation(Completed, "captured stdout\n", "captured stderr\n")
 }
 
+pub fn captured_utf8_is_decoded_across_byte_writes_test() {
+  let assert Ok(loaded) =
+    runtime.resolve(fixture("split_captured_utf8_fixture"))
+  assert runtime.run_captured(loaded, None)
+    == CapturedIsolation(Completed, "A🦘B", "C🦘D")
+}
+
 pub fn combined_captured_output_above_the_limit_is_an_error_test() {
   kangaroo.serial()
   let assert Ok(loaded) =

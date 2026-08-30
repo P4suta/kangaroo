@@ -77,6 +77,15 @@ export function non_binary_assert() {
   throw error;
 }
 
+export function split_captured_utf8() {
+  const stdout = Buffer.from("A🦘B", "utf8");
+  const stderr = Buffer.from("C🦘D", "utf8");
+  globalThis.process.stdout.write(stdout.subarray(0, 3));
+  globalThis.process.stdout.write(stdout.subarray(3));
+  globalThis.process.stderr.write(stderr.subarray(0, 2));
+  globalThis.process.stderr.write(stderr.subarray(2));
+}
+
 export function spawn_descendant() {
   const code = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(descendantMarker)}, "survived"), 100);`;
   const parentCode = `const { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(code)}], { stdio: "ignore" }); setTimeout(() => {}, 1000);`;

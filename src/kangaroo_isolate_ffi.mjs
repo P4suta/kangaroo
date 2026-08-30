@@ -265,26 +265,26 @@ function captureOutput() {
     stdoutWrite: globalThis.process?.stdout?.write,
     stderrWrite: globalThis.process?.stderr?.write,
   };
-  console.log = (...values) => stdout.push(formatValue(...values) + "\n");
-  console.error = (...values) => stderr.push(formatValue(...values) + "\n");
-  console.warn = (...values) => stderr.push(formatValue(...values) + "\n");
+  console.log = (...values) => pushOutput(stdout, formatValue(...values) + "\n");
+  console.error = (...values) => pushOutput(stderr, formatValue(...values) + "\n");
+  console.warn = (...values) => pushOutput(stderr, formatValue(...values) + "\n");
   if (globalThis.process?.stdout?.write) {
     globalThis.process.stdout.write = (chunk, ...rest) => {
-      stdout.push(chunkText(chunk));
+      pushOutput(stdout, chunk);
       callWriteCallback(rest);
       return true;
     };
   }
   if (globalThis.process?.stderr?.write) {
     globalThis.process.stderr.write = (chunk, ...rest) => {
-      stderr.push(chunkText(chunk));
+      pushOutput(stderr, chunk);
       callWriteCallback(rest);
       return true;
     };
   }
   return {
-    stdout: () => stdout.join(""),
-    stderr: () => stderr.join(""),
+    stdout: () => decodeOutput(stdout),
+    stderr: () => decodeOutput(stderr),
     restore: () => {
       console.log = original.log;
       console.error = original.error;
@@ -295,10 +295,24 @@ function captureOutput() {
   };
 }
 
-function chunkText(chunk) {
-  if (typeof chunk === "string") return chunk;
-  if (chunk instanceof Uint8Array) return new TextDecoder().decode(chunk);
-  return String(chunk);
+function pushOutput(chunks, chunk) {
+  const bytes = chunk instanceof Uint8Array
+    ? chunk
+    : new TextEncoder().encode(
+      typeof chunk === "string" ? chunk : String(chunk),
+    );
+  chunks.push(bytes.slice());
+}
+
+function decodeOutput(chunks) {
+  const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 function callWriteCallback(values) {
