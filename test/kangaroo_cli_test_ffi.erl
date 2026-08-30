@@ -157,9 +157,14 @@ closed_stdin_tree_arguments(Marker) ->
         {win32, _} -> [];
         _ ->
             [<<"-c">>,
-             <<"(sleep 0.4; printf survived > \"$1\") "
+             %% Close the root's input before forking the marker process.
+             %% Forking first leaves a brief reader alive until the child's
+             %% /dev/null redirection completes, making a write legitimately
+             %% succeed even though the shell has already printed `ready`.
+             <<"exec 0<&-; "
+               "(sleep 0.4; printf survived > \"$1\") "
                ">/dev/null 2>&1 </dev/null & "
-               "exec 0<&-; printf ready; sleep 5">>,
+               "printf ready; sleep 5">>,
              <<"kangaroo-closed-stdin">>, Marker]
     end.
 
