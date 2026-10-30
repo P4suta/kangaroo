@@ -1,0 +1,16 @@
+name = "Kangaroo"
+summary = "Continuous test runner for Gleam with affected-test selection"
+install = """
+git clone https://github.com/P4suta/kangaroo.git
+cd kangaroo/cli
+gleam deps download
+"""
+usage = """
+gleam run -m kangaroo_cli -- --help
+"""
+documentation_index = true
+license = "Apache-2.0"
+
+[[preserved_licenses.assets]]
+path = "LICENSE"
+sha256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
